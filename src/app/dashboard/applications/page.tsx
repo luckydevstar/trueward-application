@@ -15,7 +15,7 @@ export default async function ApplicationsPage() {
       <Alert
         type="warning"
         showIcon
-        message="No team"
+        title="No team"
         description="Your account isn't attached to a team, so there's nowhere to record applications. An admin needs to set your account up."
       />
     );

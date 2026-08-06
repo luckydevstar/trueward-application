@@ -108,7 +108,7 @@ export function UsersPanel({
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="User creation is disabled"
+          title="User creation is disabled"
           description="Set SUPABASE_SERVICE_ROLE_KEY in the environment to create accounts from here. Without it, people can still sign themselves up on the login page — but they'll have no team until an admin assigns one."
         />
       )}

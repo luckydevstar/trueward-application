@@ -11,9 +11,7 @@ import {
   Empty,
   Input,
   Row,
-  Segmented,
   Select,
-  Slider,
   Space,
   Tag,
   Tooltip,
@@ -22,6 +20,10 @@ import {
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import {
+  DEFAULT_STYLE,
+  ResumeStyleToolbar,
+} from "@/components/resume-style-toolbar";
 import {
   EXAMPLE_DOCUMENT,
   EXAMPLE_PROFILE_ID,
@@ -64,15 +66,14 @@ type Props = {
   userId: string;
 };
 
-const TEMPLATES = ["classic", "modern", "compact"];
-const ACCENTS = ["slate", "blue", "emerald"];
-
-const DEFAULT_STYLE: ResumeStyle = {
-  fontScale: 100,
-  headerPosition: "center",
-  accent: "slate",
-  lineSpacing: 1.4,
-};
+/**
+ * Both panels are pinned to the viewport rather than growing with content.
+ *
+ * The editor and the preview are read against each other, so a page that grows
+ * downwards means scrolling to compare the two. Fixed height, scroll inside.
+ * The offset covers the dashboard's padding, the page header and the toolbar.
+ */
+const PANEL_HEIGHT = "calc(100dvh - 236px)";
 
 /** Strips the ```json fence a model wraps its output in. */
 function unfence(value: string) {
@@ -286,10 +287,23 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
         </Space>
       </Space>
 
+      <ResumeStyleToolbar
+        template={template}
+        style={style}
+        onTemplateChange={setTemplate}
+        onStyleChange={setStyle}
+      />
+
       <Row gutter={16}>
-        <Col xs={24} lg={11}>
-          <Card title="Content" size="small">
-            <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        <Col xs={24} lg={10}>
+          <Card
+            title="Content"
+            size="small"
+            styles={{
+              body: { height: PANEL_HEIGHT, overflowY: "auto" },
+            }}
+          >
+            <Space orientation="vertical" style={{ width: "100%" }} size="middle">
               <div>
                 <Typography.Text type="secondary">Profile</Typography.Text>
                 <Select
@@ -309,7 +323,7 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                 <Alert
                   type="info"
                   showIcon
-                  message="You're looking at the demo profile"
+                  title="You're looking at the demo profile"
                   description={
                     profiles.length
                       ? "Pick a real candidate above to build something you can save."
@@ -322,7 +336,7 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                 <Alert
                   type="error"
                   showIcon
-                  message="This profile can't be used"
+                  title="This profile can't be used"
                   description={selectedProfile.error}
                 />
               )}
@@ -356,7 +370,7 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
               {employmentIds.length > 0 && (
                 <Alert
                   type="info"
-                  message={
+                  title={
                     <Space size={4} wrap>
                       <Typography.Text style={{ fontSize: 12 }}>
                         Reference employers by id:
@@ -389,20 +403,20 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
               />
 
               {parsed.kind === "noprofile" && (
-                <Alert type="info" showIcon message="Choose a profile to begin." />
+                <Alert type="info" showIcon title="Choose a profile to begin." />
               )}
               {parsed.kind === "empty" && (
                 <Alert
                   type="info"
                   showIcon
-                  message="Paste the tailored content JSON here."
+                  title="Paste the tailored content JSON here."
                 />
               )}
               {parsed.kind === "syntax" && (
                 <Alert
                   type="error"
                   showIcon
-                  message="Not valid JSON"
+                  title="Not valid JSON"
                   description={parsed.message}
                 />
               )}
@@ -410,7 +424,7 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                 <Alert
                   type="error"
                   showIcon
-                  message="Doesn't match the schema"
+                  title="Doesn't match the schema"
                   description={
                     <ul style={{ margin: 0, paddingLeft: 18 }}>
                       {parsed.errors.map((e) => (
@@ -423,88 +437,46 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                 />
               )}
               {parsed.kind === "ok" && (
-                <Alert type="success" showIcon message="Valid — ready to download." />
+                <Alert type="success" showIcon title="Valid — ready to download." />
               )}
             </Space>
           </Card>
         </Col>
 
-        <Col xs={24} lg={13}>
-          <Card title="Preview" size="small" style={{ marginBottom: 16 }}>
+        <Col xs={24} lg={14}>
+          <Card
+            title="Preview"
+            size="small"
+            extra={
+              parsed.kind === "ok" && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {template} · {style.accent ?? "slate"} ·{" "}
+                  {style.fontScale ?? 100}%
+                </Typography.Text>
+              )
+            }
+            styles={{
+              body: {
+                height: PANEL_HEIGHT,
+                overflowY: "auto",
+                // The sheet reads as paper against the dashboard's grey.
+                background: "#fafafa",
+              },
+            }}
+          >
             {parsed.kind === "ok" ? (
               <Preview document={parsed.document} />
             ) : (
-              <Empty description="A valid document renders here." />
+              <div
+                style={{
+                  height: "100%",
+                  display: "grid",
+                  placeItems: "center",
+                }}
+              >
+                <Empty description="A valid document renders here." />
+              </div>
             )}
-          </Card>
-
-          <Card title="Style" size="small">
-            <Row gutter={[16, 12]}>
-              <Col xs={24} sm={12}>
-                <Typography.Text type="secondary">Template</Typography.Text>
-                <Segmented
-                  block
-                  value={template}
-                  onChange={(v) => setTemplate(String(v))}
-                  options={TEMPLATES}
-                />
-              </Col>
-              <Col xs={24} sm={12}>
-                <Typography.Text type="secondary">Header</Typography.Text>
-                <Segmented
-                  block
-                  value={style.headerPosition ?? "center"}
-                  onChange={(v) =>
-                    setStyle((s) => ({
-                      ...s,
-                      headerPosition: v as "left" | "center",
-                    }))
-                  }
-                  options={["left", "center"]}
-                />
-              </Col>
-              <Col xs={24} sm={12}>
-                <Typography.Text type="secondary">Accent</Typography.Text>
-                <Segmented
-                  block
-                  value={style.accent ?? "slate"}
-                  onChange={(v) => setStyle((s) => ({ ...s, accent: String(v) }))}
-                  options={ACCENTS}
-                />
-              </Col>
-              <Col xs={24} sm={12}>
-                <Typography.Text type="secondary">
-                  Font size — {style.fontScale ?? 100}%
-                </Typography.Text>
-                <Slider
-                  min={80}
-                  max={120}
-                  value={style.fontScale ?? 100}
-                  onChange={(v) => setStyle((s) => ({ ...s, fontScale: v }))}
-                />
-              </Col>
-              <Col xs={24} sm={12}>
-                <Typography.Text type="secondary">
-                  Line spacing — {style.lineSpacing ?? 1.4}
-                </Typography.Text>
-                <Slider
-                  min={1.1}
-                  max={1.8}
-                  step={0.05}
-                  value={style.lineSpacing ?? 1.4}
-                  onChange={(v) => setStyle((s) => ({ ...s, lineSpacing: v }))}
-                />
-              </Col>
-              <Col xs={24} sm={12}>
-                <Button
-                  size="small"
-                  onClick={() => setStyle(DEFAULT_STYLE)}
-                  style={{ marginTop: 22 }}
-                >
-                  Reset style
-                </Button>
-              </Col>
-            </Row>
           </Card>
         </Col>
       </Row>
@@ -522,7 +494,16 @@ function Preview({ document }: { document: ResumeDocument }) {
   const { profile, content } = document;
 
   return (
-    <div style={{ maxHeight: "46vh", overflowY: "auto" }}>
+    // No height or overflow here — the Card body owns the scroll now, and a
+    // second scroller inside it would strand the bottom of a long resume.
+    <div
+      style={{
+        background: "#fff",
+        padding: "24px 28px",
+        border: "1px solid #eef0f2",
+        borderRadius: 6,
+      }}
+    >
       <Typography.Title level={4} style={{ marginBottom: 0 }}>
         {profile.fullName}
       </Typography.Title>

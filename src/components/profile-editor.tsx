@@ -441,7 +441,7 @@ function SsnField({
       </Form.Item>
 
       {hasSsn && profileId && (
-        <Space direction="vertical" style={{ width: "100%", marginBottom: 16 }}>
+        <Space orientation="vertical" style={{ width: "100%", marginBottom: 16 }}>
           <Tooltip title="Decrypts server-side and writes an audit entry">
             <Button size="small" loading={loading} onClick={reveal}>
               Reveal stored number
@@ -451,7 +451,7 @@ function SsnField({
             <Alert
               type="warning"
               showIcon
-              message={
+              title={
                 <Typography.Text copyable code>
                   {revealed.replace(/^(\d{3})(\d{2})(\d{4})$/, "$1-$2-$3")}
                 </Typography.Text>

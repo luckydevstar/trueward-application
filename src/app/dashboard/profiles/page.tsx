@@ -15,7 +15,7 @@ export default async function ProfilesPage() {
       <Alert
         type="warning"
         showIcon
-        message="No team"
+        title="No team"
         description="Your account isn't attached to a team, so there are no profiles to show."
       />
     );

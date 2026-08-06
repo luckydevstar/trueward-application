@@ -15,7 +15,7 @@ export default async function UsersPage() {
       <Alert
         type="warning"
         showIcon
-        message="Not available"
+        title="Not available"
         description="Only admins and super admins manage accounts."
       />
     );
