@@ -1,5 +1,3 @@
-import { Alert } from "antd";
-
 import { ResumeBuilder } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { profileSchema } from "@/lib/document/schema";
@@ -25,21 +23,10 @@ export default async function ResumesPage() {
       .order("updated_at", { ascending: false }),
   ]);
 
-  if (!profiles.data?.length) {
-    return (
-      <Alert
-        type="info"
-        showIcon
-        message="No profiles available"
-        description="A resume is built from a candidate profile. Ask an admin to assign one to you, or create one on the Profiles page."
-      />
-    );
-  }
-
   // Parsed on the server so a profile that no longer satisfies the schema
   // surfaces as a disabled option with a reason, rather than crashing the
   // renderer once someone selects it.
-  const parsed = profiles.data.map((p) => {
+  const parsed = (profiles.data ?? []).map((p) => {
     const result = profileSchema.safeParse(p.profile);
     return {
       id: p.id,

@@ -1,27 +1,30 @@
 "use client";
 
-import { DeleteOutlined, PlusOutlined, TeamOutlined } from "@ant-design/icons";
+import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import {
   App,
   Button,
   Card,
-  Empty,
-  List,
+  Input,
   Popconfirm,
   Select,
   Space,
+  Table,
   Tag,
   Typography,
 } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
+import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
+import { ResizableTitle } from "@/components/grid/resizable-title";
 import {
   ProfileEditor,
   type ProfileFormValues,
 } from "@/components/profile-editor";
-import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
+import { useColumnWidths } from "@/lib/column-widths";
 import { toProfileRow } from "@/lib/profile-form";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/status";
@@ -30,8 +33,10 @@ export type ProfileRow = {
   id: string;
   full_name: string;
   email: string | null;
+  phone: string | null;
   city: string | null;
   state: string | null;
+  country: string | null;
   updated_at: string;
   has_ssn: boolean;
   assignee_ids: string[];
@@ -45,6 +50,18 @@ type Props = {
   teamMembers: Array<{ id: string; label: string }>;
 };
 
+const WIDTH_STORAGE_KEY = "tw.profiles.columnWidths";
+
+const DEFAULT_WIDTHS: Record<string, number> = {
+  full_name: 200,
+  email: 220,
+  phone: 150,
+  location: 190,
+  assignees: 260,
+  updated_at: 130,
+  actions: 90,
+};
+
 export function ProfilesList({
   teamId,
   userId,
@@ -56,6 +73,18 @@ export function ProfilesList({
   const { message } = App.useApp();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
+
+  const data = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.full_name.toLowerCase().includes(q) ||
+        (r.email ?? "").toLowerCase().includes(q),
+    );
+  }, [rows, query]);
 
   const create = async (values: ProfileFormValues) => {
     let row;
@@ -70,13 +99,13 @@ export function ProfilesList({
 
     setBusy(true);
     const supabase = createClient();
-    const { data, error } = await supabase
+    const { data: created, error } = await supabase
       .from("candidate_profile")
       .insert({ ...row, team_id: teamId, created_by: userId })
       .select("id")
       .single();
 
-    if (error || !data) {
+    if (error || !created) {
       setBusy(false);
       message.error(error?.message ?? "Could not create the profile.");
       return;
@@ -85,7 +114,7 @@ export function ProfilesList({
     // Separate call: the plaintext has exactly one entry point into the system,
     // and it is never part of an ordinary row write.
     if (values.ssn?.trim()) {
-      const result = await setSsn(data.id, values.ssn);
+      const result = await setSsn(created.id, values.ssn);
       if (!result.ok) message.warning(`Profile saved, but: ${result.error}`);
     }
 
@@ -97,10 +126,7 @@ export function ProfilesList({
 
   const remove = async (id: string) => {
     const supabase = createClient();
-    const { error } = await supabase
-      .from("candidate_profile")
-      .delete()
-      .eq("id", id);
+    const { error } = await supabase.from("candidate_profile").delete().eq("id", id);
     if (error) {
       message.error(error.message);
       return;
@@ -110,9 +136,9 @@ export function ProfilesList({
   };
 
   /**
-   * Assignment is a set: the Select hands back the whole desired membership,
-   * so this diffs against what's stored rather than trying to track individual
-   * add and remove events.
+   * Assignment is a set: the Select hands back the whole desired membership, so
+   * this diffs against what's stored rather than tracking individual add and
+   * remove events.
    */
   const setAssignees = async (profileId: string, next: string[]) => {
     const supabase = createClient();
@@ -151,6 +177,114 @@ export function ProfilesList({
     router.refresh();
   };
 
+  const baseColumns: ColumnsType<ProfileRow> = [
+    {
+      key: "full_name",
+      title: "Name",
+      dataIndex: "full_name",
+      ellipsis: true,
+      sorter: (a, b) => a.full_name.localeCompare(b.full_name),
+      defaultSortOrder: "ascend",
+      render: (value: string, row) => (
+        <Space size={6}>
+          <Link href={`/dashboard/profiles/${row.id}`}>{value}</Link>
+          {row.has_ssn && <Tag color="orange">SSN</Tag>}
+        </Space>
+      ),
+    },
+    {
+      key: "email",
+      title: "Email",
+      dataIndex: "email",
+      ellipsis: true,
+      render: (value: string | null) => value || <Muted />,
+    },
+    {
+      key: "phone",
+      title: "Phone",
+      dataIndex: "phone",
+      ellipsis: true,
+      render: (value: string | null) => value || <Muted />,
+    },
+    {
+      key: "location",
+      title: "Location",
+      ellipsis: true,
+      render: (_, row) => {
+        const parts = [row.city, row.state, row.country].filter(Boolean);
+        return parts.length ? parts.join(", ") : <Muted />;
+      },
+    },
+    ...(canEdit
+      ? ([
+          {
+            key: "assignees",
+            title: "Assigned to",
+            render: (_, row) => (
+              <Select
+                mode="multiple"
+                allowClear
+                size="small"
+                variant="borderless"
+                placeholder="Nobody"
+                style={{ width: "100%" }}
+                value={row.assignee_ids}
+                onChange={(next) => setAssignees(row.id, next)}
+                options={teamMembers.map((m) => ({
+                  value: m.id,
+                  label: m.label,
+                }))}
+              />
+            ),
+          },
+        ] satisfies ColumnsType<ProfileRow>)
+      : []),
+    {
+      key: "updated_at",
+      title: "Updated",
+      dataIndex: "updated_at",
+      sorter: (a, b) => a.updated_at.localeCompare(b.updated_at),
+      render: (value: string) => formatDate(value),
+    },
+    {
+      key: "actions",
+      title: "",
+      fixed: "right",
+      render: (_, row) => (
+        <Space size={0}>
+          <Link href={`/dashboard/profiles/${row.id}`}>
+            <Button type="link" size="small">
+              Open
+            </Button>
+          </Link>
+          {canEdit && (
+            <Popconfirm
+              title="Delete this profile?"
+              description="Its resume documents and attachments go too."
+              onConfirm={() => remove(row.id)}
+              okButtonProps={{ danger: true }}
+            >
+              <Button type="text" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  const columns = baseColumns.map((col) => {
+    const key = String(col.key);
+    return {
+      ...col,
+      width: widths[key] ?? DEFAULT_WIDTHS[key],
+      onHeaderCell: () => ({
+        width: widths[key] ?? DEFAULT_WIDTHS[key],
+        onResize: (_e: unknown, { size }: { size: { width: number } }) =>
+          setWidth(key, size.width),
+      }),
+    };
+  }) as ColumnsType<ProfileRow>;
+
   return (
     <>
       <Space
@@ -169,92 +303,40 @@ export function ProfilesList({
             here is rewritten when you tailor for a job.
           </Typography.Text>
         </div>
-        {canEdit && (
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setOpen(true)}
-          >
-            New profile
-          </Button>
-        )}
+        <Space>
+          <Input.Search
+            allowClear
+            placeholder="Filter by name or email"
+            style={{ width: 240 }}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {canEdit && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setOpen(true)}
+            >
+              New profile
+            </Button>
+          )}
+        </Space>
       </Space>
 
-      <Card>
-        {rows.length === 0 ? (
-          <Empty
-            description={
-              canEdit
-                ? "No profiles yet. Create one to start building resumes."
-                : "No profiles have been assigned to you yet."
-            }
-          />
-        ) : (
-          <List
-            dataSource={rows}
-            renderItem={(row) => (
-              <List.Item
-                actions={[
-                  <Link key="open" href={`/dashboard/profiles/${row.id}`}>
-                    Edit
-                  </Link>,
-                  ...(canEdit
-                    ? [
-                        <Popconfirm
-                          key="delete"
-                          title="Delete this profile?"
-                          description="Its resume documents and attachments go too."
-                          onConfirm={() => remove(row.id)}
-                          okButtonProps={{ danger: true }}
-                        >
-                          <Button type="text" danger icon={<DeleteOutlined />} />
-                        </Popconfirm>,
-                      ]
-                    : []),
-                ]}
-              >
-                <List.Item.Meta
-                  title={
-                    <Space>
-                      <Link href={`/dashboard/profiles/${row.id}`}>
-                        {row.full_name}
-                      </Link>
-                      {row.has_ssn && <Tag color="orange">SSN on file</Tag>}
-                    </Space>
-                  }
-                  description={
-                    <Space direction="vertical" size={4} style={{ width: "100%" }}>
-                      <span>
-                        {[row.email, [row.city, row.state].filter(Boolean).join(", ")]
-                          .filter(Boolean)
-                          .join(" · ")}
-                        {` · updated ${formatDate(row.updated_at)}`}
-                      </span>
-                      {canEdit && (
-                        <Space size={6}>
-                          <TeamOutlined style={{ color: "#94a3b8" }} />
-                          <Select
-                            mode="multiple"
-                            allowClear
-                            size="small"
-                            placeholder="Assign to bidders"
-                            style={{ minWidth: 260 }}
-                            value={row.assignee_ids}
-                            onChange={(next) => setAssignees(row.id, next)}
-                            options={teamMembers.map((m) => ({
-                              value: m.id,
-                              label: m.label,
-                            }))}
-                          />
-                        </Space>
-                      )}
-                    </Space>
-                  }
-                />
-              </List.Item>
-            )}
-          />
-        )}
+      <Card styles={{ body: { padding: 0 } }}>
+        <Table<ProfileRow>
+          rowKey="id"
+          size="small"
+          dataSource={data}
+          columns={columns}
+          components={{ header: { cell: ResizableTitle } }}
+          pagination={{ pageSize: 25, hideOnSinglePage: true }}
+          scroll={{ x: "max-content" }}
+          locale={{
+            emptyText: canEdit
+              ? "No profiles yet. Create one to start building resumes."
+              : "No profiles have been assigned to you yet.",
+          }}
+        />
       </Card>
 
       <ProfileEditor
@@ -267,3 +349,5 @@ export function ProfilesList({
     </>
   );
 }
+
+const Muted = () => <Typography.Text type="secondary">—</Typography.Text>;

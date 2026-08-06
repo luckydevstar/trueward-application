@@ -29,7 +29,9 @@ export default async function ProfilesPage() {
       .from("candidate_profile")
       // ssn_encrypted is never selected. The list only needs to know *whether*
       // one exists, which the boolean below answers without moving ciphertext.
-      .select("id, full_name, email, city, state, updated_at, ssn_encrypted")
+      .select(
+        "id, full_name, email, phone, city, state, country, updated_at, ssn_encrypted",
+      )
       .order("full_name"),
     supabase.from("profile_assignment").select("profile_id, user_id"),
     canEdit
@@ -49,9 +51,12 @@ export default async function ProfilesPage() {
     id: p.id,
     full_name: p.full_name,
     email: p.email,
+    phone: p.phone,
     city: p.city,
     state: p.state,
+    country: p.country,
     updated_at: p.updated_at,
+    // Only whether one exists — the ciphertext never leaves the server.
     has_ssn: p.ssn_encrypted !== null,
     assignee_ids: byProfile.get(p.id) ?? [],
   }));
