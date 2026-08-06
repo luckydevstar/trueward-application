@@ -42,7 +42,7 @@ import {
   type ResumeProfile,
 } from "@/lib/document/schema";
 import { downloadResumePdf, renderResumePdfUrl } from "@/lib/pdf/resume-pdf";
-import { displayUrl } from "@/lib/profile";
+import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/status";
 import type { ResumeStyle } from "@/lib/supabase/types";
@@ -722,7 +722,10 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                * content to render anything at all made a correctly-working page
                * look broken — you pick a candidate and stare at an empty box.
                */
-              <ProfileOnlyPreview profile={selectedProfile.profile} />
+              <ProfileOnlyPreview
+                profile={selectedProfile.profile}
+                style={style}
+              />
             ) : (
               <div
                 style={{ height: "100%", display: "grid", placeItems: "center" }}
@@ -751,7 +754,13 @@ const SHEET: React.CSSProperties = {
  * than a blank panel — you can see at a glance that the identity and dates are
  * right before spending a model call on the positioning.
  */
-function ProfileOnlyPreview({ profile }: { profile: ResumeProfile }) {
+function ProfileOnlyPreview({
+  profile,
+  style,
+}: {
+  profile: ResumeProfile;
+  style: ResumeStyle;
+}) {
   const employments = [...profile.employments].sort(
     (a, b) => monthYearKey(b.startDate) - monthYearKey(a.startDate),
   );
@@ -767,14 +776,10 @@ function ProfileOnlyPreview({ profile }: { profile: ResumeProfile }) {
 
       <div style={{ marginTop: 4 }}>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {[
-            profile.contact.email,
-            profile.contact.phone,
-            profile.contact.location,
-            // Same short form the PDF prints, so the two panes agree.
-            ...profile.contact.links.map((l) => displayUrl(l.url)),
-          ]
-            .filter(Boolean)
+          {/* Same builder the PDF uses, so the header settings behave
+              identically here and in the rendered document. */}
+          {headerSegments(profile.contact, resolveHeaderFields(style.header))
+            .map((s) => s.text)
             .join("  ·  ")}
         </Typography.Text>
       </div>

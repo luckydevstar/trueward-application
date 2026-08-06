@@ -3,10 +3,25 @@
 import {
   AlignLeftOutlined,
   MenuOutlined,
+  SettingOutlined,
   UndoOutlined,
 } from "@ant-design/icons";
-import { Button, Divider, Segmented, Slider, Tooltip, Typography } from "antd";
+import {
+  Button,
+  Checkbox,
+  Divider,
+  Dropdown,
+  Segmented,
+  Slider,
+  Space,
+  Tooltip,
+  Typography,
+} from "antd";
 
+import {
+  HEADER_FIELD_LABELS,
+  resolveHeaderFields,
+} from "@/lib/resume-header";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
 export const TEMPLATES = ["classic", "modern", "compact"];
@@ -44,6 +59,8 @@ export function ResumeStyleToolbar({
   const patch = (values: Partial<ResumeStyle>) =>
     onStyleChange({ ...style, ...values });
 
+  const fields = resolveHeaderFields(style.header);
+
   return (
     <div
       style={{
@@ -74,14 +91,51 @@ export function ResumeStyleToolbar({
       <Bar />
 
       <Field label="Header">
-        <Segmented
-          size="small"
-          value={style.headerPosition ?? "center"}
-          onChange={(v) =>
-            patch({ headerPosition: v as "left" | "center" })
-          }
-          options={["left", "center"]}
-        />
+        <Space.Compact size="small">
+          <Segmented
+            size="small"
+            value={style.headerPosition ?? "center"}
+            onChange={(v) => patch({ headerPosition: v as "left" | "center" })}
+            options={["left", "center"]}
+          />
+          <Dropdown
+            trigger={["click"]}
+            placement="bottomRight"
+            popupRender={() => (
+              <div
+                style={{
+                  background: "#fff",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                  padding: 12,
+                  boxShadow: "0 6px 16px rgba(0,0,0,.08)",
+                }}
+              >
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 11, display: "block", marginBottom: 8 }}
+                >
+                  Show in header
+                </Typography.Text>
+                <Space orientation="vertical" size={4}>
+                  {HEADER_FIELD_LABELS.map(({ key, label }) => (
+                    <Checkbox
+                      key={key}
+                      checked={fields[key]}
+                      onChange={(e) =>
+                        patch({ header: { ...fields, [key]: e.target.checked } })
+                      }
+                    >
+                      {label}
+                    </Checkbox>
+                  ))}
+                </Space>
+              </div>
+            )}
+          >
+            <Button size="small" icon={<SettingOutlined />} />
+          </Dropdown>
+        </Space.Compact>
       </Field>
 
       <Bar />

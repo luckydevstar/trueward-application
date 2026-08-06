@@ -86,17 +86,6 @@ export function displayUrl(input: string): string {
   }
 }
 
-/** "Boston, MA" — what a resume shows, assembled from the structured fields. */
-export function displayLocation(identity: {
-  city?: string | null;
-  state?: string | null;
-  country?: string | null;
-}): string | null {
-  const parts = [identity.city, identity.state, identity.country]
-    .map((p) => p?.trim())
-    .filter((p): p is string => Boolean(p));
-  return parts.length ? parts.join(", ") : null;
-}
 
 /**
  * Projects the identity onto the resume document's `profile` half and validates
@@ -116,7 +105,12 @@ export function buildProfileDocument(identity: ProfileIdentity): ResumeProfile {
     contact: {
       email: identity.email,
       phone: identity.phone || null,
-      location: displayLocation(identity),
+      // Parts, not a joined string: which of them prints is decided per resume
+      // in the header settings, and a pre-joined value can't be filtered.
+      city: identity.city || null,
+      state: identity.state || null,
+      postalCode: identity.postalCode || null,
+      country: identity.country || null,
       links,
     },
     employments: identity.employments,

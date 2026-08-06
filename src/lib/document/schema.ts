@@ -147,6 +147,24 @@ export const linkSchema = z.object({
 export const contactSchema = z.object({
   email: z.string().min(1),
   phone: z.string().nullish(),
+  /**
+   * Address parts are carried separately rather than pre-joined, because which
+   * of them belongs in the header is a per-resume decision — a US resume
+   * conventionally shows city and state and omits the country, which a single
+   * "Boston, MA, United States" string can no longer walk back.
+   *
+   * Street address is deliberately absent: it is on the profile for records,
+   * not on the resume.
+   */
+  city: z.string().nullish(),
+  state: z.string().nullish(),
+  postalCode: z.string().nullish(),
+  country: z.string().nullish(),
+  /**
+   * Legacy pre-joined form. Documents written before the split still carry it,
+   * so it stays readable and is used as a fallback when no parts are present.
+   * Nothing writes it any more.
+   */
   location: z.string().nullish(),
   links: z.array(linkSchema).default([]),
 });

@@ -1,4 +1,5 @@
 import type { ResumeContent, ResumeProfile } from "@/lib/document/schema";
+import type { HeaderFields } from "@/lib/resume-header";
 import type { UserRole } from "@/lib/roles";
 import type { ApplicationStatus, BillingStatus } from "@/lib/status";
 
@@ -99,6 +100,11 @@ export type ResumeStyle = {
   lineSpacing?: number;
   /** Stretch body copy to the full measure, last line of each block excepted. */
   justify?: boolean;
+  /**
+   * Which contact details print in the header. Partial — anything unset falls
+   * back to HEADER_DEFAULTS in src/lib/resume-header.ts.
+   */
+  header?: Partial<HeaderFields>;
 };
 
 export type ResumeDocumentRow = Owned &

@@ -20,7 +20,10 @@ export const EXAMPLE_DOCUMENT: ResumeDocument = resumeDocumentSchema.parse({
     contact: {
       email: "jane@example.com",
       phone: "+1 555 0100",
-      location: "Boston, MA",
+      city: "Boston",
+      state: "MA",
+      postalCode: "02108",
+      country: "United States",
       links: [
         { label: "GitHub", url: "github.com/janedoe" },
         { label: "LinkedIn", url: "linkedin.com/in/janedoe" },

@@ -5,7 +5,7 @@ import {
   renderedExperiences,
   type ResumeDocument,
 } from "@/lib/document/schema";
-import { displayUrl, normalizeUrl } from "@/lib/profile";
+import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
 /**
@@ -166,14 +166,12 @@ export function renderResumePdf(
    */
   const CONTACT_SEP = "  ·  ";
 
-  const contactParts: Array<{ text: string; href?: string }> = [
-    ...[profile.contact.email, profile.contact.phone, profile.contact.location]
-      .filter((v): v is string => Boolean(v && v.trim()))
-      .map((value) => ({ text: value.trim() })),
-    ...profile.contact.links
-      .filter((l) => l.url?.trim())
-      .map((l) => ({ text: displayUrl(l.url), href: normalizeUrl(l.url) ?? l.url })),
-  ];
+  // Built by the same function the on-screen profile pane uses, so what the
+  // header settings do is identical in both places.
+  const contactParts = headerSegments(
+    profile.contact,
+    resolveHeaderFields(style.header),
+  );
 
   if (contactParts.length) {
     const size = 8.5 * s.fontScale;
