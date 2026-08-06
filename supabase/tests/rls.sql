@@ -213,42 +213,6 @@ select 'log cannot be edited' as check,
 reset role;
 
 \echo ''
-\echo '=== 9f. resume storage is team-scoped by the first path segment ==='
-grant usage on schema storage to authenticated;
-grant all on all tables in schema storage to authenticated;
-
-set role authenticated;
-set test.uid = '00000000-0000-0000-0000-0000000000b1';
--- Own team's folder: allowed.
-insert into storage.objects (bucket_id, name)
-values ('resumes', app_team_id()::text || '/abc-cv.pdf');
-select 'upload into own team' as check, count(*) = 1 as expect_true from storage.objects;
-
-do $$
-begin
-  insert into storage.objects (bucket_id, name)
-  values ('resumes', '00000000-0000-0000-0000-00000000000c/sneaky.pdf');
-  raise exception 'FAIL: wrote into another team''s folder';
-exception
-  when insufficient_privilege then
-    raise notice 'PASS: cross-team upload rejected';
-end
-$$;
-reset role;
-
-set role authenticated;
-set test.uid = '00000000-0000-0000-0000-00000000000c';
-select 'other team sees nothing' as check, count(*) = 0 as expect_true
-  from storage.objects;
-delete from storage.objects where bucket_id = 'resumes';
--- Checked back as a member of the owning team: admin_c can see nothing either
--- way, so counting from there would pass whether or not the delete went through.
-set test.uid = '00000000-0000-0000-0000-00000000000a';
-select 'other team cannot delete' as check, count(*) = 1 as expect_true
-  from storage.objects;
-reset role;
-
-\echo ''
 \echo '=== 9. blocklist is team-wide readable, bidder cannot delete ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000000a';

@@ -31,6 +31,7 @@ import { useMemo, useRef, useState } from "react";
 import { ResizableTitle } from "@/components/grid/resizable-title";
 import { useColumnWidths } from "@/lib/column-widths";
 import { createClient } from "@/lib/supabase/client";
+import { useUploadThing } from "@/lib/uploadthing";
 import {
   APPLICATION_STATUSES,
   BILLING_META,
@@ -368,8 +369,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
         const editing = editingId === row.id;
         return (
           <ResumeCell
-            teamId={teamId}
-            name={editing ? (editBuffer?.resume_name ?? null) : row.resume_name}
+                        name={editing ? (editBuffer?.resume_name ?? null) : row.resume_name}
             url={editing ? (editBuffer?.resume_url ?? null) : row.resume_url}
             onAttached={(file) =>
               editing ? patchEdit(file) : quickPatch(row.id, file)
@@ -514,8 +514,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
     ),
     resume: (
       <ResumeCell
-        teamId={teamId}
-        name={draft.resume_name}
+                name={draft.resume_name}
         url={draft.resume_url}
         // Held in the draft rather than written straight away: there is no row
         // yet for it to attach to, so it lands with the insert.
@@ -684,12 +683,10 @@ function BillingSelect({
  * pending state.
  */
 function ResumeCell({
-  teamId,
   name,
   url,
   onAttached,
 }: {
-  teamId: string;
   name: string | null;
   url: string | null;
   onAttached: (file: {
@@ -702,52 +699,41 @@ function ResumeCell({
   const input = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
+  const { startUpload } = useUploadThing("applicationResume", {
+    onUploadError: (error) => {
+      message.error(error.message);
+    },
+  });
+
   /**
-   * Straight to Supabase Storage — one authenticated PUT, no hop through this
-   * app.
+   * Upload, take the URL off the result, and hand it up.
    *
-   * The previous route went client → our server to authorize → UploadThing's
-   * API → client → UploadThing's callback → our server, and the spinner only
-   * cleared when that last callback arrived. In local development it has to
-   * reach localhost, which it generally cannot, so the button stayed loading
-   * (and therefore disabled) even though the file had uploaded fine.
+   * `startUpload` is awaited rather than handled through
+   * `onClientUploadComplete`, so the resolved value is the only thing this
+   * depends on. Combined with `awaitServerData: false` on the route, it
+   * resolves once the bytes are stored — no waiting on UploadThing's callback
+   * into this app, which is what previously left the control spinning after the
+   * file had already arrived.
    *
-   * `uploading` is local state cleared in a finally, so no network outcome can
-   * leave the control stuck.
+   * `uploading` is local state cleared in a finally, so no outcome — error,
+   * rejection, or a resolve with nothing in it — can strand the button.
    */
   const upload = async (file: File) => {
-    if (!teamId) {
-      message.error("Your account isn't attached to a team.");
-      return;
-    }
-
     setUploading(true);
     try {
-      const supabase = createClient();
+      const result = await startUpload([file]);
+      const uploaded = result?.[0];
 
-      // Team id first: the storage policy checks that segment. The uuid keeps
-      // the URL unguessable, and the name is sanitised because storage keys
-      // reject the characters a filename happily carries.
-      const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-      const path = `${teamId}/${crypto.randomUUID()}-${safeName}`;
-
-      const { error } = await supabase.storage
-        .from("resumes")
-        .upload(path, file, { contentType: file.type, upsert: false });
-
-      if (error) {
-        message.error(error.message);
+      if (!uploaded) {
+        // startUpload resolves undefined when the route's middleware rejects,
+        // which onUploadError has already reported.
         return;
       }
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("resumes").getPublicUrl(path);
-
       onAttached({
-        resume_key: path,
-        resume_url: publicUrl,
-        resume_name: file.name,
+        resume_key: uploaded.key,
+        resume_url: uploaded.ufsUrl,
+        resume_name: uploaded.name,
       });
       message.success("Resume attached.");
     } catch (error) {

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { cache } from "react";
 
 import type { Database } from "./types";
 
@@ -10,8 +11,12 @@ import type { Database } from "./types";
  * Must be created per request and never hoisted into a module-level constant:
  * `cookies()` is request-scoped, so a shared client would serve one user's
  * session to everyone.
+ *
+ * cache() memoises it *within* a request, which is the safe middle ground —
+ * one client per request instead of one per call site, without the cross-user
+ * leak a module-level constant would cause.
  */
-export async function createClient() {
+export const createClient = cache(async () => {
   const cookieStore = await cookies();
 
   return createServerClient<Database>(
@@ -35,7 +40,7 @@ export async function createClient() {
       },
     },
   );
-}
+});
 
 /**
  * The signed-in user, or null. Uses getUser() rather than getSession(): the

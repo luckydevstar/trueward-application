@@ -69,21 +69,40 @@ export function ProfileDetail({
   const [progress, setProgress] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const { startUpload, isUploading } = useUploadThing("profileAttachment", {
-    onUploadProgress: setProgress,
-    onClientUploadComplete: async (res) => {
-      setProgress(null);
-      const supabase = createClient();
+  const [uploading, setUploading] = useState(false);
 
+  const { startUpload } = useUploadThing("profileAttachment", {
+    onUploadProgress: setProgress,
+    onUploadError: (error) => {
+      setProgress(null);
+      message.error(error.message);
+    },
+  });
+
+  /**
+   * Awaits the upload rather than reacting to onClientUploadComplete.
+   *
+   * The route sets `awaitServerData: false`, so `serverData` is null and the
+   * file's details come off the upload result itself. That is the whole point:
+   * nothing here waits on UploadThing calling back into this app, which is a
+   * leg that cannot complete against a dev server on localhost.
+   */
+  const upload = async (files: File[]) => {
+    setUploading(true);
+    try {
+      const uploaded = await startUpload(files);
+      if (!uploaded?.length) return;
+
+      const supabase = createClient();
       const { error } = await supabase.from("profile_attachment").insert(
-        (res ?? []).map((r) => ({
+        uploaded.map((file) => ({
           profile_id: profileId,
-          label: r.serverData.name.replace(/\.[^.]+$/, ""),
-          file_key: r.serverData.key,
-          file_url: r.serverData.url,
-          file_name: r.serverData.name,
-          file_type: r.serverData.type,
-          file_size: r.serverData.size,
+          label: file.name.replace(/\.[^.]+$/, ""),
+          file_key: file.key,
+          file_url: file.ufsUrl,
+          file_name: file.name,
+          file_type: file.type,
+          file_size: file.size,
           team_id: teamId,
           created_by: userId,
         })),
@@ -95,12 +114,15 @@ export function ProfileDetail({
       }
       message.success("Attached.");
       router.refresh();
-    },
-    onUploadError: (error) => {
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "Could not upload the files.",
+      );
+    } finally {
       setProgress(null);
-      message.error(error.message);
-    },
-  });
+      setUploading(false);
+    }
+  };
 
   const save = async (values: ProfileFormValues) => {
     let next;
@@ -261,7 +283,7 @@ export function ProfileDetail({
                   <Button
                     size="small"
                     icon={<UploadOutlined />}
-                    loading={isUploading}
+                    loading={uploading}
                     onClick={() => fileInput.current?.click()}
                   >
                     Upload
@@ -274,7 +296,7 @@ export function ProfileDetail({
                     hidden
                     onChange={(event) => {
                       const files = Array.from(event.target.files ?? []);
-                      if (files.length) void startUpload(files);
+                      if (files.length) void upload(files);
                       event.target.value = "";
                     }}
                   />

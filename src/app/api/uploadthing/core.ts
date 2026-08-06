@@ -41,30 +41,46 @@ const DOCUMENT_TYPES = {
   },
 } as const;
 
+/**
+ * `awaitServerData: false` is what makes these usable.
+ *
+ * By default the client waits for onUploadComplete's return value before
+ * resolving, which means waiting on a server-to-server callback from
+ * UploadThing back into this app. Against a dev server on localhost that
+ * callback cannot arrive at all, so the upload control span forever even though
+ * the file had already landed.
+ *
+ * With it off, the upload resolves as soon as the bytes are stored, and the
+ * client reads `key` and `ufsUrl` off the upload result directly — which is all
+ * either caller needs. The trade is that `serverData` is null, so nothing may
+ * be computed server-side and handed back; neither route wants that.
+ */
+const ROUTE_OPTIONS = { awaitServerData: false } as const;
+
 export const uploadRouter = {
-  /**
-   * Photos and supporting documents on a candidate profile.
-   *
-   * Application resumes used to live here too. They now go straight to Supabase
-   * Storage instead — see src/components/applications-grid.tsx — because the
-   * round trip through this route and back via UploadThing's callback is slow,
-   * and the callback leg cannot reach a dev server on localhost at all, which
-   * left the upload control spinning after the file had already arrived.
-   */
-  profileAttachment: f({
-    ...DOCUMENT_TYPES,
-    image: { maxFileSize: "8MB", maxFileCount: 5 },
-    "application/vnd.ms-excel": { maxFileSize: "8MB", maxFileCount: 5 },
-    text: { maxFileSize: "2MB", maxFileCount: 5 },
-  })
+  /** The resume sent with one application, uploaded from its grid cell. */
+  applicationResume: f(DOCUMENT_TYPES, ROUTE_OPTIONS)
     .middleware(authorize)
-    .onUploadComplete(({ file }) => ({
-      key: file.key,
-      url: file.ufsUrl,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-    })),
+    .onUploadComplete(() => {
+      // Nothing to do server-side: the browser records the file against the
+      // row it belongs to, which may not exist yet when the upload starts.
+    }),
+
+  /** Photos and supporting documents on a candidate profile. */
+  profileAttachment: f(
+    {
+      ...DOCUMENT_TYPES,
+      image: { maxFileSize: "8MB", maxFileCount: 5 },
+      "application/vnd.ms-excel": { maxFileSize: "8MB", maxFileCount: 5 },
+      text: { maxFileSize: "2MB", maxFileCount: 5 },
+    },
+    ROUTE_OPTIONS,
+  )
+    .middleware(authorize)
+    .onUploadComplete(() => {
+      // As above — the browser writes the profile_attachment row from the
+      // upload result, so there is nothing to hand back.
+    }),
 } satisfies FileRouter;
 
 export type UploadRouter = typeof uploadRouter;

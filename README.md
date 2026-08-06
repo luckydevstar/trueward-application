@@ -96,18 +96,25 @@ File **uploads** avoid the serverless path for the same reason — the browser
 posts bytes straight to storage, so no request body crosses a function and
 Vercel's 4.5 MB body limit never applies.
 
-**Application resumes go to Supabase Storage**, in one authenticated PUT from
-the browser. They used to go through UploadThing, which meant client → this app
-to authorize → UploadThing's API → client → UploadThing's callback → this app,
-before the row could be written. Five hops, and the callback leg cannot reach a
-dev server on `localhost` at all — so the upload control stayed spinning after
-the file had already landed. The `resumes` bucket is public, which makes a
-resume URL a capability: unguessable via the uuid in its path, but not
-access-controlled. That matches what the UploadThing URLs it replaced already
-were. Make the bucket private and stream through a route handler if that ever
-needs to change.
+Uploads go to **UploadThing** with `awaitServerData: false` on the route. That
+flag matters: by default the client waits for `onUploadComplete`'s return value,
+which means waiting on a server-to-server callback from UploadThing back into
+this app — a leg that cannot complete against a dev server on `localhost`, so
+the upload control span forever even though the file had already landed. With it
+off, the upload resolves as soon as the bytes are stored and the browser reads
+the key and URL straight off the result.
 
-**Profile attachments still use UploadThing** and still carry that round trip.
+## Request latency
+
+A dashboard navigation costs a round trip to the auth server before it can read
+anything, because the session has to be validated rather than trusted from a
+cookie. `requireActor()` and the server Supabase client are both wrapped in
+React's `cache()`, so the layout and the page inside it share one — otherwise
+each navigation paid for two `getUser()` calls and two `app_user` reads instead
+of one apiece.
+
+`cache()` is per-request, so it never leaks one user's actor into another's
+request the way a module-level singleton would.
 
 ## Authorization
 
