@@ -19,6 +19,39 @@ as $$
   select nullif(current_setting('test.uid', true), '')::uuid
 $$;
 
+-- --------------------------------------------------------------------------
+-- Storage
+--
+-- Enough of Supabase Storage for the resume bucket's policies to be created and
+-- exercised. foldername() splits on "/" here; the real one drops the filename,
+-- but both agree on segment [1], which is all the policies read.
+-- --------------------------------------------------------------------------
+
+create schema if not exists storage;
+
+create table storage.buckets (
+  id     text primary key,
+  name   text not null,
+  public boolean not null default false
+);
+
+create table storage.objects (
+  id        uuid primary key default gen_random_uuid(),
+  bucket_id text references storage.buckets (id),
+  name      text not null,
+  owner     uuid
+);
+
+alter table storage.objects enable row level security;
+
+create or replace function storage.foldername(name text)
+returns text[]
+language sql
+immutable
+as $$
+  select string_to_array(name, '/')
+$$;
+
 -- The anon/authenticated role every client request runs as. Non-superuser, so
 -- RLS is actually enforced (a superuser bypasses every policy).
 do $$

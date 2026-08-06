@@ -43,6 +43,7 @@ import {
 } from "@/lib/document/schema";
 import { downloadResumePdf, renderResumePdfUrl } from "@/lib/pdf/resume-pdf";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
+import { usePersistentState } from "@/lib/persistent-state";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/status";
 import type { ResumeStyle } from "@/lib/supabase/types";
@@ -79,6 +80,13 @@ type Props = {
  * The offset covers the dashboard's padding, the page header and the toolbar.
  */
 const PANEL_HEIGHT = "calc(100dvh - 236px)";
+
+/** Template and styling, remembered together so they can't fall out of step. */
+type Preset = { template: string; style: ResumeStyle };
+
+const STYLE_STORAGE_KEY = "tw.resume.style";
+
+const DEFAULT_PRESET: Preset = { template: "classic", style: DEFAULT_STYLE };
 
 /** Strips the ```json fence a model wraps its output in. */
 function unfence(value: string) {
@@ -120,8 +128,29 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
   const [json, setJson] = useState(() =>
     profiles.length ? "" : JSON.stringify(EXAMPLE_DOCUMENT.content, null, 2),
   );
-  const [template, setTemplate] = useState("classic");
-  const [style, setStyle] = useState<ResumeStyle>(DEFAULT_STYLE);
+  /**
+   * Styling survives navigation.
+   *
+   * It is a working preference, not a property of any one resume — you settle
+   * on a template and a leading you like and then produce several documents
+   * with it. Resetting to defaults on every visit meant redoing that each time.
+   *
+   * Opening a saved resume still overrides this with that document's own style,
+   * and doing so updates the remembered preference, which is the behaviour you
+   * want: the last thing you looked at is where you carry on from.
+   */
+  const [preset, setPreset] = usePersistentState<Preset>(
+    STYLE_STORAGE_KEY,
+    DEFAULT_PRESET,
+  );
+  const { template, style } = preset;
+  const setTemplate = (next: string) => setPreset((p) => ({ ...p, template: next }));
+  const setStyle = (next: ResumeStyle | ((previous: ResumeStyle) => ResumeStyle)) =>
+    setPreset((p) => ({
+      ...p,
+      style: typeof next === "function" ? next(p.style) : next,
+    }));
+
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -146,8 +175,12 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
     setDocumentId(id);
     setTitle(doc?.title ?? "");
     setJson(doc ? JSON.stringify(doc.content, null, 2) : "");
-    setTemplate(doc?.template ?? "classic");
-    setStyle({ ...DEFAULT_STYLE, ...(doc?.style ?? {}) });
+    // One write rather than two, so the persisted preset never briefly holds a
+    // document's template against the previous style.
+    setPreset({
+      template: doc?.template ?? DEFAULT_PRESET.template,
+      style: { ...DEFAULT_STYLE, ...(doc?.style ?? {}) },
+    });
   };
 
   /**

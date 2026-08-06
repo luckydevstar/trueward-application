@@ -42,18 +42,15 @@ const DOCUMENT_TYPES = {
 } as const;
 
 export const uploadRouter = {
-  /** The resume sent with one application, uploaded from its grid cell. */
-  applicationResume: f(DOCUMENT_TYPES)
-    .middleware(authorize)
-    .onUploadComplete(({ file }) => ({
-      key: file.key,
-      url: file.ufsUrl,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-    })),
-
-  /** Photos and supporting documents on a candidate profile. */
+  /**
+   * Photos and supporting documents on a candidate profile.
+   *
+   * Application resumes used to live here too. They now go straight to Supabase
+   * Storage instead — see src/components/applications-grid.tsx — because the
+   * round trip through this route and back via UploadThing's callback is slow,
+   * and the callback leg cannot reach a dev server on localhost at all, which
+   * left the upload control spinning after the file had already arrived.
+   */
   profileAttachment: f({
     ...DOCUMENT_TYPES,
     image: { maxFileSize: "8MB", maxFileCount: 5 },

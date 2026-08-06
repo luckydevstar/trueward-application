@@ -93,8 +93,21 @@ pagination strategy. `npm run render:fixture` runs the same code under Node so
 you can check a layout change without clicking through the UI.
 
 File **uploads** avoid the serverless path for the same reason — the browser
-posts bytes straight to UploadThing, so no request body crosses a function and
+posts bytes straight to storage, so no request body crosses a function and
 Vercel's 4.5 MB body limit never applies.
+
+**Application resumes go to Supabase Storage**, in one authenticated PUT from
+the browser. They used to go through UploadThing, which meant client → this app
+to authorize → UploadThing's API → client → UploadThing's callback → this app,
+before the row could be written. Five hops, and the callback leg cannot reach a
+dev server on `localhost` at all — so the upload control stayed spinning after
+the file had already landed. The `resumes` bucket is public, which makes a
+resume URL a capability: unguessable via the uuid in its path, but not
+access-controlled. That matches what the UploadThing URLs it replaced already
+were. Make the bucket private and stream through a route handler if that ever
+needs to change.
+
+**Profile attachments still use UploadThing** and still carry that round trip.
 
 ## Authorization
 

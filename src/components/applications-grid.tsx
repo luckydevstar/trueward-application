@@ -42,7 +42,6 @@ import {
   type ApplicationStatus,
   type BillingStatus,
 } from "@/lib/status";
-import { useUploadThing } from "@/lib/uploadthing";
 
 export type Row = {
   id: string;
@@ -369,6 +368,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
         const editing = editingId === row.id;
         return (
           <ResumeCell
+            teamId={teamId}
             name={editing ? (editBuffer?.resume_name ?? null) : row.resume_name}
             url={editing ? (editBuffer?.resume_url ?? null) : row.resume_url}
             onAttached={(file) =>
@@ -514,6 +514,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
     ),
     resume: (
       <ResumeCell
+        teamId={teamId}
         name={draft.resume_name}
         url={draft.resume_url}
         // Held in the draft rather than written straight away: there is no row
@@ -683,10 +684,12 @@ function BillingSelect({
  * pending state.
  */
 function ResumeCell({
+  teamId,
   name,
   url,
   onAttached,
 }: {
+  teamId: string;
   name: string | null;
   url: string | null;
   onAttached: (file: {
@@ -697,22 +700,64 @@ function ResumeCell({
 }) {
   const { message } = App.useApp();
   const input = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
-  const { startUpload, isUploading } = useUploadThing("applicationResume", {
-    onClientUploadComplete: (res) => {
-      const file = res?.[0]?.serverData;
-      if (!file) return;
+  /**
+   * Straight to Supabase Storage — one authenticated PUT, no hop through this
+   * app.
+   *
+   * The previous route went client → our server to authorize → UploadThing's
+   * API → client → UploadThing's callback → our server, and the spinner only
+   * cleared when that last callback arrived. In local development it has to
+   * reach localhost, which it generally cannot, so the button stayed loading
+   * (and therefore disabled) even though the file had uploaded fine.
+   *
+   * `uploading` is local state cleared in a finally, so no network outcome can
+   * leave the control stuck.
+   */
+  const upload = async (file: File) => {
+    if (!teamId) {
+      message.error("Your account isn't attached to a team.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const supabase = createClient();
+
+      // Team id first: the storage policy checks that segment. The uuid keeps
+      // the URL unguessable, and the name is sanitised because storage keys
+      // reject the characters a filename happily carries.
+      const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+      const path = `${teamId}/${crypto.randomUUID()}-${safeName}`;
+
+      const { error } = await supabase.storage
+        .from("resumes")
+        .upload(path, file, { contentType: file.type, upsert: false });
+
+      if (error) {
+        message.error(error.message);
+        return;
+      }
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("resumes").getPublicUrl(path);
+
       onAttached({
-        resume_key: file.key,
-        resume_url: file.url,
+        resume_key: path,
+        resume_url: publicUrl,
         resume_name: file.name,
       });
       message.success("Resume attached.");
-    },
-    onUploadError: (error) => {
-      message.error(error.message);
-    },
-  });
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "Could not upload the file.",
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
     <Space size={4}>
@@ -734,7 +779,7 @@ function ResumeCell({
           type="text"
           size="small"
           icon={<UploadOutlined />}
-          loading={isUploading}
+          loading={uploading}
           onClick={() => input.current?.click()}
         />
       </Tooltip>
@@ -745,9 +790,10 @@ function ResumeCell({
         hidden
         onChange={(event) => {
           const file = event.target.files?.[0];
-          if (file) void startUpload([file]);
-          // Reset so re-picking the same file fires change again.
+          // Reset before awaiting, so re-picking the same file fires change
+          // again even while this upload is still running.
           event.target.value = "";
+          if (file) void upload(file);
         }}
       />
     </Space>
