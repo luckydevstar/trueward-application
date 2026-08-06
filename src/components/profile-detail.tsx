@@ -29,6 +29,7 @@ import {
   ProfileEditor,
   type ProfileFormValues,
 } from "@/components/profile-editor";
+import { displayUrl } from "@/lib/profile";
 import { toFormValues, toProfileRow } from "@/lib/profile-form";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/status";
@@ -194,7 +195,7 @@ export function ProfileDetail({
               <Descriptions.Item label="GitHub">
                 {row.github_url ? (
                   <a href={row.github_url} target="_blank" rel="noopener noreferrer">
-                    {row.github_url}
+                    {displayUrl(row.github_url)}
                   </a>
                 ) : (
                   "—"
@@ -203,7 +204,7 @@ export function ProfileDetail({
               <Descriptions.Item label="LinkedIn">
                 {row.linkedin_url ? (
                   <a href={row.linkedin_url} target="_blank" rel="noopener noreferrer">
-                    {row.linkedin_url}
+                    {displayUrl(row.linkedin_url)}
                   </a>
                 ) : (
                   "—"

@@ -6,7 +6,11 @@ import type {
   ProfileFormValues,
 } from "@/components/profile-editor";
 import { formatMonthYear, type ResumeProfile } from "@/lib/document/schema";
-import { buildProfileDocument, type ProfileIdentity } from "@/lib/profile";
+import {
+  buildProfileDocument,
+  normalizeUrl,
+  type ProfileIdentity,
+} from "@/lib/profile";
 
 /**
  * Translation between the antd form (dayjs objects) and the stored shapes.
@@ -53,8 +57,10 @@ export function toProfileRow(values: ProfileFormValues): ProfileRowValues {
     state: blank(values.state),
     postalCode: blank(values.postalCode),
     country: blank(values.country),
-    githubUrl: blank(values.githubUrl),
-    linkedinUrl: blank(values.linkedinUrl),
+    // Canonicalised on the way in, so what's stored is always absolute and the
+    // display form can be derived from it anywhere.
+    githubUrl: normalizeUrl(values.githubUrl),
+    linkedinUrl: normalizeUrl(values.linkedinUrl),
     employments: (values.employments ?? []).map((e: EmploymentValues) => ({
       id: e.id.trim(),
       company: e.company.trim(),

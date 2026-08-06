@@ -42,6 +42,7 @@ import {
   type ResumeProfile,
 } from "@/lib/document/schema";
 import { downloadResumePdf, renderResumePdfUrl } from "@/lib/pdf/resume-pdf";
+import { displayUrl } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/status";
 import type { ResumeStyle } from "@/lib/supabase/types";
@@ -770,7 +771,8 @@ function ProfileOnlyPreview({ profile }: { profile: ResumeProfile }) {
             profile.contact.email,
             profile.contact.phone,
             profile.contact.location,
-            ...profile.contact.links.map((l) => l.url),
+            // Same short form the PDF prints, so the two panes agree.
+            ...profile.contact.links.map((l) => displayUrl(l.url)),
           ]
             .filter(Boolean)
             .join("  ·  ")}

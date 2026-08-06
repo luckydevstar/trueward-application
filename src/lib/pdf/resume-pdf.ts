@@ -5,6 +5,7 @@ import {
   renderedExperiences,
   type ResumeDocument,
 } from "@/lib/document/schema";
+import { displayUrl, normalizeUrl } from "@/lib/profile";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
 /**
@@ -151,19 +152,60 @@ export function renderResumePdf(
   text(content.targetTitle, anchor, titleSize, { color: s.accent, align });
   y += titleSize * s.lineSpacing;
 
-  // Contact line. Filtered before joining so a missing phone doesn't leave a
-  // dangling separator.
-  const contactBits = [
-    profile.contact.email,
-    profile.contact.phone,
-    profile.contact.location,
-    ...profile.contact.links.map((l) => l.url),
-  ].filter((v): v is string => Boolean(v && v.trim()));
+  /**
+   * Contact line.
+   *
+   * Links print in their short form — "linkedin.com/in/janedoe" rather than
+   * "https://www.linkedin.com/in/janedoe/" — because the scheme and www carry
+   * nothing a reader wants and cost a third of the line. The full URL is not
+   * lost: it goes on as a link annotation below, so the short text is still
+   * clickable and still resolves to the right place.
+   *
+   * Filtered before joining so a missing phone doesn't leave a dangling
+   * separator.
+   */
+  const CONTACT_SEP = "  ·  ";
 
-  if (contactBits.length) {
+  const contactParts: Array<{ text: string; href?: string }> = [
+    ...[profile.contact.email, profile.contact.phone, profile.contact.location]
+      .filter((v): v is string => Boolean(v && v.trim()))
+      .map((value) => ({ text: value.trim() })),
+    ...profile.contact.links
+      .filter((l) => l.url?.trim())
+      .map((l) => ({ text: displayUrl(l.url), href: normalizeUrl(l.url) ?? l.url })),
+  ];
+
+  if (contactParts.length) {
     const size = 8.5 * s.fontScale;
-    const lines = wrap(contactBits.join("  ·  "), size);
+    const joined = contactParts.map((p) => p.text).join(CONTACT_SEP);
+    const lines = wrap(joined, size);
     text(lines, anchor, size, { color: MUTED, align });
+
+    /**
+     * Link annotations, only when the line didn't wrap.
+     *
+     * A segment's box is derived by measuring the text before it, which is only
+     * valid while everything sits on one line. If it wrapped, the boxes would
+     * land on the wrong words — a link that points somewhere unexpected is
+     * worse than no link, so it degrades to plain text instead.
+     */
+    if (lines.length === 1 && contactParts.some((p) => p.href)) {
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(size);
+
+      const sepWidth = pdf.getTextWidth(CONTACT_SEP);
+      let x = centered ? anchor - pdf.getTextWidth(joined) / 2 : anchor;
+
+      for (const part of contactParts) {
+        const width = pdf.getTextWidth(part.text);
+        if (part.href) {
+          // y is the baseline, so the box starts a line-height above it.
+          pdf.link(x, y - size, width, size * 1.2, { url: part.href });
+        }
+        x += width + sepWidth;
+      }
+    }
+
     y += lines.length * size * s.lineSpacing;
   }
 

@@ -36,6 +36,56 @@ export type ProfileIdentity = {
   education: Array<Partial<EducationBlock> & { school: string; degree: string }>;
 };
 
+/**
+ * Canonicalises whatever someone typed into an absolute URL.
+ *
+ * Accepts "linkedin.com/in/jane" as readily as the full form — asking for a
+ * scheme is a pointless hurdle when it can only ever be https here. Returns
+ * null for anything that isn't a plausible host, so a stray word doesn't become
+ * a dead link on a resume.
+ */
+export function normalizeUrl(input: string | null | undefined): string | null {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return null;
+
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(withScheme);
+    // "https://foo" parses fine but is not a real destination.
+    return url.hostname.includes(".") ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The short form a resume should print: "linkedin.com/in/janedoe".
+ *
+ * Derived rather than stored alongside the URL. A separate "handle" field would
+ * be a second copy of the same fact — free to disagree with the URL the moment
+ * someone edits one and not the other, and one more box to fill for every link.
+ * There is nothing in "https://www." a reader needs, and the full URL is still
+ * carried as the PDF's link annotation, so nothing is lost by hiding it.
+ */
+export function displayUrl(input: string): string {
+  const fallback = input
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/\/+$/, "");
+
+  const normalized = normalizeUrl(input);
+  if (!normalized) return fallback;
+
+  try {
+    const url = new URL(normalized);
+    const host = url.hostname.replace(/^www\./i, "");
+    const path = url.pathname.replace(/\/+$/, "");
+    return `${host}${path}${url.search}`;
+  } catch {
+    return fallback;
+  }
+}
+
 /** "Boston, MA" — what a resume shows, assembled from the structured fields. */
 export function displayLocation(identity: {
   city?: string | null;
@@ -57,11 +107,9 @@ export function buildProfileDocument(identity: ProfileIdentity): ResumeProfile {
   // Only the two links the form offers, and only when filled in — an empty
   // "GitHub" would print a bare label with no URL.
   const links = [
-    { label: "GitHub", url: identity.githubUrl },
-    { label: "LinkedIn", url: identity.linkedinUrl },
-  ]
-    .filter((l): l is { label: string; url: string } => Boolean(l.url?.trim()))
-    .map((l) => ({ label: l.label, url: l.url.trim() }));
+    { label: "GitHub", url: normalizeUrl(identity.githubUrl) },
+    { label: "LinkedIn", url: normalizeUrl(identity.linkedinUrl) },
+  ].filter((l): l is { label: string; url: string } => Boolean(l.url));
 
   return profileSchema.parse({
     fullName: identity.fullName,

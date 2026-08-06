@@ -27,6 +27,7 @@ import dayjs from "dayjs";
 import { useState } from "react";
 
 import { revealSsn } from "@/app/dashboard/profiles/ssn-actions";
+import { normalizeUrl } from "@/lib/profile";
 
 export type EmploymentValues = {
   id: string;
@@ -73,6 +74,16 @@ type Props = {
   onCancel: () => void;
   onSubmit: (values: ProfileFormValues) => void;
 };
+
+/**
+ * Accepts a bare host too — "linkedin.com/in/jane" is what people copy out of a
+ * browser bar, and antd's built-in `type: "url"` rejects it for want of a
+ * scheme that can only ever be https here. normalizeUrl adds it on save.
+ */
+const urlValidator = (_rule: unknown, value: string) =>
+  !value?.trim() || normalizeUrl(value)
+    ? Promise.resolve()
+    : Promise.reject(new Error("That doesn't look like a link"));
 
 export function ProfileEditor({
   open,
@@ -178,20 +189,22 @@ export function ProfileEditor({
             <Form.Item
               name="githubUrl"
               label="GitHub"
-              rules={[{ type: "url", message: "Enter a full URL" }]}
+              extra="The resume prints this as github.com/you"
+              rules={[{ validator: urlValidator }]}
             >
-              <Input prefix={<GithubOutlined />} placeholder="https://github.com/…" />
+              <Input prefix={<GithubOutlined />} placeholder="github.com/you" />
             </Form.Item>
           </Col>
           <Col xs={24} sm={12}>
             <Form.Item
               name="linkedinUrl"
               label="LinkedIn"
-              rules={[{ type: "url", message: "Enter a full URL" }]}
+              extra="Paste the whole link; the scheme is optional"
+              rules={[{ validator: urlValidator }]}
             >
               <Input
                 prefix={<LinkedinOutlined />}
-                placeholder="https://linkedin.com/in/…"
+                placeholder="linkedin.com/in/you"
               />
             </Form.Item>
           </Col>
