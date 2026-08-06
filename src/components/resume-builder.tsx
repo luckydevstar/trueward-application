@@ -18,12 +18,13 @@ import {
   Row,
   Select,
   Space,
+  Spin,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   DEFAULT_STYLE,
@@ -38,12 +39,10 @@ import {
   fieldErrors,
   formatMonthYear,
   monthYearKey,
-  renderedExperiences,
   resumeDocumentSchema,
-  type ResumeDocument,
   type ResumeProfile,
 } from "@/lib/document/schema";
-import { downloadResumePdf } from "@/lib/pdf/resume-pdf";
+import { downloadResumePdf, renderResumePdfUrl } from "@/lib/pdf/resume-pdf";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/status";
 import type { ResumeStyle } from "@/lib/supabase/types";
@@ -267,6 +266,73 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
       setDownloading(false);
     }
   };
+
+  /**
+   * The preview is the real PDF, re-rendered as you type.
+   *
+   * Debounced because each render allocates a document and a blob URL; 250ms
+   * keeps typing smooth while still feeling live for a slider drag. The
+   * setState happens inside the timer rather than in the effect body, which is
+   * both what makes the debounce work and what keeps this out of a cascading
+   * render.
+   *
+   * Every URL is revoked — on replacement and on unmount — or a long editing
+   * session leaks one document per keystroke.
+   */
+  const [preview, setPreview] = useState<{ url: string; sig: string } | null>(
+    null,
+  );
+
+  const validDocument = parsed.kind === "ok" ? parsed.document : null;
+
+  // Everything that changes the output. Comparing against the signature the
+  // current blob was rendered from is what tells us whether it is still
+  // current — derived rather than cleared from inside the effect, which would
+  // be a setState cascade on every keystroke.
+  const sig = validDocument ? `${template}|${JSON.stringify(style)}|${json}` : "";
+  const previewUrl = preview?.sig === sig ? preview.url : null;
+
+  useEffect(() => {
+    if (!validDocument) return;
+
+    let stale = false;
+
+    const timer = setTimeout(() => {
+      renderResumePdfUrl(validDocument, style, template)
+        .then((url) => {
+          // The inputs changed while this render was in flight.
+          if (stale) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          setPreview((previous) => {
+            if (previous) URL.revokeObjectURL(previous.url);
+            return { url, sig };
+          });
+        })
+        .catch(() => {
+          // A document that validated should always render; if it somehow
+          // doesn't, the panel shows its spinner rather than breaking.
+        });
+    }, 250);
+
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [validDocument, style, template, sig]);
+
+  // Release the last blob when the page goes away; the effect above only
+  // revokes on replacement, so without this the final one outlives the view.
+  useEffect(
+    () => () => {
+      setPreview((previous) => {
+        if (previous) URL.revokeObjectURL(previous.url);
+        return null;
+      });
+    },
+    [],
+  );
 
   const employmentIds = selectedProfile?.profile?.employments.map((e) => e.id) ?? [];
 
@@ -696,7 +762,22 @@ Job description:
             }}
           >
             {parsed.kind === "ok" ? (
-              <Preview document={parsed.document} />
+              previewUrl ? (
+                <iframe
+                  // Keyed on the URL so the viewer reloads rather than caching
+                  // the previous document.
+                  key={previewUrl}
+                  src={`${previewUrl}#toolbar=0&navpanes=0&view=FitH`}
+                  title="Resume preview"
+                  style={{ width: "100%", height: "100%", border: 0 }}
+                />
+              ) : (
+                <div
+                  style={{ height: "100%", display: "grid", placeItems: "center" }}
+                >
+                  <Spin description="Rendering…" />
+                </div>
+              )
             ) : selectedProfile?.profile ? (
               /*
                * Identity and employment history come from the profile, so they
@@ -806,60 +887,3 @@ function ProfileOnlyPreview({ profile }: { profile: ResumeProfile }) {
   );
 }
 
-/**
- * A readable rendering of the joined document — deliberately not a facsimile of
- * the PDF. Two renderers claiming to be pixel-identical drift, and the one that
- * matters is the one that produces the file.
- */
-function Preview({ document }: { document: ResumeDocument }) {
-  const experiences = renderedExperiences(document);
-  const { profile, content } = document;
-
-  return (
-    // No height or overflow here — the Card body owns the scroll now, and a
-    // second scroller inside it would strand the bottom of a long resume.
-    <div style={SHEET}>
-      <Typography.Title level={4} style={{ marginBottom: 0 }}>
-        {profile.fullName}
-      </Typography.Title>
-      <Typography.Text type="secondary">{content.targetTitle}</Typography.Text>
-
-      <Divider style={{ margin: "12px 0" }} />
-      <Typography.Paragraph>{content.summary}</Typography.Paragraph>
-
-      {content.skills.length > 0 && (
-        <>
-          <Typography.Text strong>Skills</Typography.Text>
-          {content.skills.map((group) => (
-            <div key={group.name} style={{ margin: "6px 0" }}>
-              <Typography.Text type="secondary">{group.name}: </Typography.Text>
-              {group.items.map((item) => (
-                <Tag key={item}>{item}</Tag>
-              ))}
-            </div>
-          ))}
-          <Divider style={{ margin: "12px 0" }} />
-        </>
-      )}
-
-      {experiences.map(({ employment, title, bullets }) => (
-        <div key={employment.id} style={{ marginBottom: 16 }}>
-          <Typography.Text strong>{title}</Typography.Text>
-          <div>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {employment.company}
-              {employment.location ? ` · ${employment.location}` : ""} ·{" "}
-              {formatMonthYear(employment.startDate)} –{" "}
-              {formatMonthYear(employment.endDate ?? null, "Present")}
-            </Typography.Text>
-          </div>
-          <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-            {bullets.map((b, i) => (
-              <li key={i}>{b.text}</li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}

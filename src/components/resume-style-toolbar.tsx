@@ -1,6 +1,10 @@
 "use client";
 
-import { UndoOutlined } from "@ant-design/icons";
+import {
+  AlignLeftOutlined,
+  MenuOutlined,
+  UndoOutlined,
+} from "@ant-design/icons";
 import { Button, Divider, Segmented, Slider, Tooltip, Typography } from "antd";
 
 import type { ResumeStyle } from "@/lib/supabase/types";
@@ -13,6 +17,7 @@ export const DEFAULT_STYLE: ResumeStyle = {
   headerPosition: "center",
   accent: "slate",
   lineSpacing: 1.4,
+  justify: false,
 };
 
 type Props = {
@@ -87,6 +92,20 @@ export function ResumeStyleToolbar({
           value={style.accent ?? "slate"}
           onChange={(v) => patch({ accent: String(v) })}
           options={ACCENTS}
+        />
+      </Field>
+
+      <Bar />
+
+      <Field label="Body text">
+        <Segmented
+          size="small"
+          value={style.justify ? "justify" : "left"}
+          onChange={(v) => patch({ justify: v === "justify" })}
+          options={[
+            { value: "left", icon: <AlignLeftOutlined /> },
+            { value: "justify", icon: <MenuOutlined /> },
+          ]}
         />
       </Field>
 

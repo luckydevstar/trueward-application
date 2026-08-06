@@ -68,6 +68,13 @@ The cost is manual layout — no flexbox, no page-break control. `ensure()` is t
 whole pagination strategy. Check changes with `npm run render:fixture`, which
 runs the same renderer under Node and writes a file you can open.
 
+**There is exactly one renderer.** The builder's preview is the real PDF in an
+iframe, not an HTML approximation — `renderResumePdfUrl` and
+`downloadResumePdf` both call `renderResumePdf`. Do not add an HTML preview
+back. The previous one drifted immediately: template, header position and
+accent were wired to the PDF and silently did nothing on screen, so what you
+styled was not what you downloaded.
+
 ## The profile / content split
 
 `src/lib/document/schema.ts` splits a resume in two:

@@ -39,6 +39,7 @@ type Resolved = {
   lineSpacing: number;
   margin: number;
   sectionGap: number;
+  justify: boolean;
 };
 
 function resolve(style: ResumeStyle, template: string): Resolved {
@@ -50,6 +51,7 @@ function resolve(style: ResumeStyle, template: string): Resolved {
     lineSpacing: style.lineSpacing ?? 1.4,
     margin: template === "compact" ? 42 : template === "modern" ? 58 : 52,
     sectionGap: template === "compact" ? 10 : 15,
+    justify: style.justify ?? false,
   };
 }
 
@@ -95,6 +97,43 @@ export function renderResumePdf(
     pdf.text(value, x, y, {
       lineHeightFactor: s.lineSpacing,
       align: opts.align ?? "left",
+    });
+  };
+
+  /**
+   * A block of body copy, justified when the style asks for it.
+   *
+   * Every line but the last is stretched to `width`; the last is left as-is.
+   * jsPDF will happily justify a final three-word line across the full measure
+   * if handed the whole array at once, which is the classic broken-looking
+   * paragraph — so the last line is drawn separately.
+   *
+   * Lines are positioned one at a time rather than in a single call, because
+   * jsPDF's justify needs a per-line maxWidth to stretch against.
+   */
+  const block = (
+    lines: string[],
+    x: number,
+    size: number,
+    width: number,
+    opts: { color?: [number, number, number] } = {},
+  ) => {
+    if (!s.justify || lines.length < 2) {
+      text(lines, x, size, opts);
+      return;
+    }
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(size);
+    pdf.setTextColor(...(opts.color ?? INK));
+
+    const lineHeight = size * s.lineSpacing;
+    lines.forEach((line, i) => {
+      const last = i === lines.length - 1;
+      pdf.text(line, x, y + i * lineHeight, {
+        lineHeightFactor: s.lineSpacing,
+        ...(last ? {} : { align: "justify", maxWidth: width }),
+      });
     });
   };
 
@@ -149,21 +188,23 @@ export function renderResumePdf(
   };
 
   const paragraph = (value: string, size = 9.5 * s.fontScale, indent = 0) => {
-    const lines = wrap(value, size, contentWidth - indent);
+    const width = contentWidth - indent;
+    const lines = wrap(value, size, width);
     ensure(lines.length * size * s.lineSpacing);
-    text(lines, s.margin + indent, size);
+    block(lines, s.margin + indent, size, width);
     y += lines.length * size * s.lineSpacing;
   };
 
   const bullet = (value: string) => {
     const size = 9 * s.fontScale;
-    const lines = wrap(value, size, contentWidth - 18);
+    const width = contentWidth - 18;
+    const lines = wrap(value, size, width);
     const height = lines.length * size * s.lineSpacing + 3;
     ensure(height);
     pdf.setFillColor(...INK);
     // -2.3 lifts the dot from the text baseline to the middle of the x-height.
     pdf.circle(s.margin + 3, y - 2.3, 1.25, "F");
-    text(lines, s.margin + 13, size);
+    block(lines, s.margin + 13, size, width);
     y += height;
   };
 
@@ -259,6 +300,34 @@ export function renderResumePdf(
       y += 8.5 * s.fontScale * s.lineSpacing + 2;
     }
   }
+}
+
+/**
+ * Renders to a blob URL for on-screen preview.
+ *
+ * The preview shows the real PDF rather than an HTML approximation of it. Two
+ * renderers drift — the styling controls silently did nothing to the old HTML
+ * preview, which is exactly the failure this avoids — and a render costs a few
+ * milliseconds, so there is no reason to maintain a second one.
+ *
+ * The caller owns the returned URL and must revokeObjectURL it, or every
+ * keystroke leaks a document.
+ */
+export async function renderResumePdfUrl(
+  doc: ResumeDocument,
+  style: ResumeStyle = {},
+  template = "classic",
+): Promise<string> {
+  const { jsPDF } = await import("jspdf");
+  const pdf = new jsPDF({
+    orientation: "portrait",
+    unit: "pt",
+    format: "a4",
+    compress: true,
+  });
+
+  renderResumePdf(pdf, doc, style, template);
+  return URL.createObjectURL(pdf.output("blob"));
 }
 
 /**

@@ -97,6 +97,8 @@ export type ResumeStyle = {
   headerPosition?: "left" | "center";
   accent?: string;
   lineSpacing?: number;
+  /** Stretch body copy to the full measure, last line of each block excepted. */
+  justify?: boolean;
 };
 
 export type ResumeDocumentRow = Owned &
