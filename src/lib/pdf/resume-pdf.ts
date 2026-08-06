@@ -103,13 +103,15 @@ export function renderResumePdf(
   /**
    * A block of body copy, justified when the style asks for it.
    *
-   * Every line but the last is stretched to `width`; the last is left as-is.
-   * jsPDF will happily justify a final three-word line across the full measure
-   * if handed the whole array at once, which is the classic broken-looking
-   * paragraph — so the last line is drawn separately.
+   * The whole array goes to jsPDF in one call. That is load-bearing: jsPDF
+   * decides word spacing per line by comparing each line against maxWidth, and
+   * it deliberately leaves the *last* line unjustified. Drawing line-by-line
+   * makes every call look like a single, final line, so the computed spacing is
+   * zero and justification silently does nothing — which is exactly the bug
+   * this replaced.
    *
-   * Lines are positioned one at a time rather than in a single call, because
-   * jsPDF's justify needs a per-line maxWidth to stretch against.
+   * The lines are already wrapped to `width`, so passing maxWidth here re-splits
+   * at the same measure and changes nothing about the breaks.
    */
   const block = (
     lines: string[],
@@ -118,7 +120,7 @@ export function renderResumePdf(
     width: number,
     opts: { color?: [number, number, number] } = {},
   ) => {
-    if (!s.justify || lines.length < 2) {
+    if (!s.justify) {
       text(lines, x, size, opts);
       return;
     }
@@ -126,14 +128,10 @@ export function renderResumePdf(
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(size);
     pdf.setTextColor(...(opts.color ?? INK));
-
-    const lineHeight = size * s.lineSpacing;
-    lines.forEach((line, i) => {
-      const last = i === lines.length - 1;
-      pdf.text(line, x, y + i * lineHeight, {
-        lineHeightFactor: s.lineSpacing,
-        ...(last ? {} : { align: "justify", maxWidth: width }),
-      });
+    pdf.text(lines, x, y, {
+      lineHeightFactor: s.lineSpacing,
+      align: "justify",
+      maxWidth: width,
     });
   };
 

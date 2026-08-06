@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  CopyOutlined,
   DownloadOutlined,
   SaveOutlined,
   ThunderboltOutlined,
@@ -377,50 +376,6 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
     }
   };
 
-  /**
-   * A prompt that pins the model to this profile's ids.
-   *
-   * The whole class of failure above comes from the model never being told what
-   * ids exist. Handing it the list, and the employers they refer to, is the
-   * upstream fix.
-   */
-  const copyPrompt = () => {
-    const profile = selectedProfile?.profile;
-    if (!profile) return;
-
-    const roster = orderedEmployments
-      .map(
-        (e) =>
-          `  - "${e.id}" → ${e.company}${e.location ? `, ${e.location}` : ""} (${formatMonthYear(
-            e.startDate,
-          )} – ${formatMonthYear(e.endDate ?? null, "Present")})`,
-      )
-      .join("\n");
-
-    void navigator.clipboard.writeText(
-      `Write tailored resume content as JSON for ${profile.fullName}.
-
-Return ONLY a JSON object with exactly these keys:
-  targetTitle  string  — the role being applied for
-  summary      string  — one paragraph, no line breaks
-  skills       array   — [{ "name": string, "items": [string, ...] }]
-  experiences  array   — [{ "employmentId": string, "title": string,
-                            "bullets": [{ "text": string }, ...] }]
-
-employmentId MUST be one of these exact values — do not invent, rename or
-abbreviate them, and do not add employers that are not listed:
-${roster}
-
-List experiences most-recent-first, in the order shown above. Do not include
-the candidate's name, contact details, employers, or dates — those are already
-on file and are added automatically.
-
-Job description:
-[paste the job description here]`,
-    );
-    message.success("Prompt copied — paste it into your model with the job description.");
-  };
-
   const startFromProfile = () => {
     if (!selectedProfile?.profile) return;
 
@@ -584,22 +539,6 @@ Job description:
                       ))}
                     </Space>
                   }
-                  description={
-                    <Space size={4} wrap style={{ marginTop: 4 }}>
-                      <Button
-                        size="small"
-                        type="primary"
-                        ghost
-                        icon={<CopyOutlined />}
-                        onClick={copyPrompt}
-                      >
-                        Copy prompt
-                      </Button>
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        Includes the ids and the exact shape to return.
-                      </Typography.Text>
-                    </Space>
-                  }
                 />
               )}
 
@@ -694,25 +633,22 @@ Job description:
                           </Typography.Text>
                         )}
                       </div>
-                      <Space wrap>
-                        {parsed.remappable && (
-                          <Tooltip
-                            title={orderedEmployments
-                              .map(
-                                (e, i) =>
-                                  `${i + 1}. → ${e.id} (${e.company})`,
-                              )
-                              .join("   ")}
-                          >
-                            <Button size="small" type="primary" onClick={remapIds}>
-                              Remap in order
-                            </Button>
-                          </Tooltip>
-                        )}
-                        <Button size="small" onClick={copyPrompt}>
-                          Copy a prompt that uses the right ids
-                        </Button>
-                      </Space>
+                      {parsed.remappable ? (
+                        <Tooltip
+                          title={orderedEmployments
+                            .map((e, i) => `${i + 1}. → ${e.id} (${e.company})`)
+                            .join("   ")}
+                        >
+                          <Button size="small" type="primary" onClick={remapIds}>
+                            Remap in order
+                          </Button>
+                        </Tooltip>
+                      ) : (
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          Edit the ids above to match, or fix the profile&apos;s
+                          employment entries.
+                        </Typography.Text>
+                      )}
                     </>
                   }
                 />
