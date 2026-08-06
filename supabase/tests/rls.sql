@@ -332,6 +332,50 @@ select 'reapply after 14 days allowed' as check, count(*) = 1 as expect_true
 reset role;
 
 \echo ''
+\echo '=== 11. billing status is admin-only ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+
+do $$
+begin
+  update application set billing = 'billed'
+   where id = '00000000-0000-0000-0000-00000000a001';
+  raise exception 'FAIL: bidder changed billing';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: bidder cannot change billing';
+end
+$$;
+
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, billing, team_id, created_by)
+  values ('Presumptuous', 'Umbrella', 'https://example.com/u1',
+          '00000000-0000-0000-0000-0000000000f2', 'billed', app_team_id(), auth.uid());
+  raise exception 'FAIL: bidder inserted a billed application';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: bidder cannot insert non-default billing';
+end
+$$;
+
+-- A bidder editing their own row without touching billing must still work.
+update application set title = 'Renamed by owner'
+ where id = '00000000-0000-0000-0000-00000000a001';
+select 'bidder can still edit own row' as check,
+       (select title from application
+         where id = '00000000-0000-0000-0000-00000000a001') = 'Renamed by owner' as expect_true;
+
+-- And an admin may set it.
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+update application set billing = 'billed'
+ where id = '00000000-0000-0000-0000-00000000a001';
+select 'admin can change billing' as check,
+       (select billing from application
+         where id = '00000000-0000-0000-0000-00000000a001') = 'billed' as expect_true;
+reset role;
+
+\echo ''
 \echo '=== 9. blocklist is team-wide readable, bidder cannot delete ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000000a';

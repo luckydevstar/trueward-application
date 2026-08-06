@@ -479,7 +479,13 @@ export function ApplicationsGrid({
       render: (value: BillingStatus, row) => (
         <BillingSelect
           value={editingId === row.id ? (editBuffer?.billing ?? value) : value}
-          disabled={!canAct(row)}
+          // Billing is a commercial call about someone else's output, so it is
+          // an admin decision. A trigger enforces it; this only saves a bidder
+          // from a control that would always be refused.
+          disabled={!canAct(row) || !isAdmin}
+          reason={
+            isAdmin ? "Recorded by a teammate" : "Only an admin can set billing"
+          }
           onChange={(next) =>
             editingId === row.id
               ? patchEdit({ billing: next })
@@ -671,6 +677,8 @@ export function ApplicationsGrid({
     billing: (
       <BillingSelect
         value={draft.billing}
+        disabled={!isAdmin}
+        reason="Only an admin can set billing" 
         onChange={(billing) => patchDraft({ billing })}
       />
     ),
@@ -826,13 +834,16 @@ function StatusSelect({
 function BillingSelect({
   value,
   disabled,
+  reason,
   onChange,
 }: {
   value: BillingStatus;
   disabled?: boolean;
+  /** Why it's disabled. A greyed control with no explanation just reads broken. */
+  reason?: string;
   onChange: (value: BillingStatus) => void;
 }) {
-  return (
+  const select = (
     <Select
       value={value}
       variant="borderless"
@@ -844,6 +855,16 @@ function BillingSelect({
         label: <Tag color={BILLING_META[b].color}>{BILLING_META[b].label}</Tag>,
       }))}
     />
+  );
+
+  // A disabled antd control swallows pointer events, so the tooltip needs a
+  // wrapper of its own to hang off.
+  return disabled && reason ? (
+    <Tooltip title={reason}>
+      <span style={{ display: "block", cursor: "not-allowed" }}>{select}</span>
+    </Tooltip>
+  ) : (
+    select
   );
 }
 
