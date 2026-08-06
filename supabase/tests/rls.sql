@@ -213,6 +213,125 @@ select 'log cannot be edited' as check,
 reset role;
 
 \echo ''
+\echo '=== 10a. sharing a profile shares its application history ==='
+-- b2 is assigned the same profile as b1, then b1 records against it.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+values ('00000000-0000-0000-0000-0000000000f1',
+        '00000000-0000-0000-0000-0000000000b2', app_team_id(), auth.uid());
+
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+insert into application (id, title, company, job_url, profile_id, team_id, created_by)
+values ('00000000-0000-0000-0000-00000000a001', 'Backend Eng', 'Globex',
+        'https://example.com/g1', '00000000-0000-0000-0000-0000000000f1',
+        app_team_id(), auth.uid());
+
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+select 'teammate sees shared-profile row' as check, count(*) = 1 as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a001';
+reset role;
+
+\echo ''
+\echo '=== 10b. ...but cannot change or delete it ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+update application set title = 'Hijacked'
+ where id = '00000000-0000-0000-0000-00000000a001';
+select 'teammate edit blocked' as check,
+       (select title from application
+         where id = '00000000-0000-0000-0000-00000000a001') = 'Backend Eng' as expect_true;
+delete from application where id = '00000000-0000-0000-0000-00000000a001';
+select 'teammate delete blocked' as check, count(*) = 1 as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a001';
+reset role;
+
+\echo ''
+\echo '=== 10c. an unshared profile stays private ==='
+-- A second profile, assigned to b1 only.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+insert into candidate_profile (id, full_name, email, profile, team_id, created_by)
+values ('00000000-0000-0000-0000-0000000000f2', 'Solo Candidate', 'solo@example.com',
+        '{"fullName":"Solo","contact":{"email":"solo@example.com","links":[]},"employments":[],"education":[]}'::jsonb,
+        app_team_id(), auth.uid());
+insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+values ('00000000-0000-0000-0000-0000000000f2',
+        '00000000-0000-0000-0000-0000000000b1', app_team_id(), auth.uid());
+
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+insert into application (id, title, company, job_url, profile_id, team_id, created_by)
+values ('00000000-0000-0000-0000-00000000a002', 'Solo Role', 'Initech',
+        'https://example.com/i1', '00000000-0000-0000-0000-0000000000f2',
+        app_team_id(), auth.uid());
+
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+select 'unshared profile row hidden' as check, count(*) = 0 as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a002';
+reset role;
+
+\echo ''
+\echo '=== 10d. 14-day cooldown blocks a repeat for the same profile ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+do $$
+begin
+  -- Same profile, same company, different person and different role.
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('Platform Eng', 'globex', 'https://example.com/g2',
+          '00000000-0000-0000-0000-0000000000f1', app_team_id(), auth.uid());
+  raise exception 'FAIL: duplicate within the window was allowed';
+exception
+  when check_violation then
+    raise notice 'PASS: repeat inside 14 days rejected';
+end
+$$;
+reset role;
+
+\echo ''
+\echo '=== 10e. ...matches on normalised company name ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('Any', 'Globex, Inc.', 'https://example.com/g3',
+          '00000000-0000-0000-0000-0000000000f1', app_team_id(), auth.uid());
+  raise exception 'FAIL: punctuation walked around the cooldown';
+exception
+  when check_violation then
+    raise notice 'PASS: "Globex, Inc." matched "Globex"';
+end
+$$;
+reset role;
+
+\echo ''
+\echo '=== 10f. a different profile, and an expired window, are both fine ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+-- Same company, different profile: allowed.
+insert into application (title, company, job_url, profile_id, team_id, created_by)
+values ('Other Candidate', 'Globex', 'https://example.com/g4',
+        '00000000-0000-0000-0000-0000000000f2', app_team_id(), auth.uid());
+select 'other profile allowed' as check, count(*) = 1 as expect_true
+  from application
+ where company = 'Globex' and profile_id = '00000000-0000-0000-0000-0000000000f2';
+
+-- Age the original past the window, then the same company reopens.
+reset role;
+update application set applied_at = now() - interval '15 days'
+ where id = '00000000-0000-0000-0000-00000000a001';
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+insert into application (title, company, job_url, profile_id, team_id, created_by)
+values ('Reapply', 'Globex', 'https://example.com/g5',
+        '00000000-0000-0000-0000-0000000000f1', app_team_id(), auth.uid());
+select 'reapply after 14 days allowed' as check, count(*) = 1 as expect_true
+  from application where title = 'Reapply';
+reset role;
+
+\echo ''
 \echo '=== 9. blocklist is team-wide readable, bidder cannot delete ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000000a';

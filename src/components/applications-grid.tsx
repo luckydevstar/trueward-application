@@ -56,23 +56,40 @@ export type Row = {
   resume_key: string | null;
   resume_url: string | null;
   resume_name: string | null;
+  profile_id: string | null;
+  created_by: string | null;
 };
 
-type Draft = Omit<Row, "id">;
+/** The draft owns no author — that is stamped from the session on insert. */
+type Draft = Omit<Row, "id" | "created_by">;
+
+type Option = { id: string; label: string };
 
 type Props = {
   teamId: string;
   userId: string;
+  isAdmin: boolean;
   rows: Row[];
+  profiles: Option[];
+  appliers: Option[];
   blockedNames: string[];
 };
 
 const WIDTH_STORAGE_KEY = "tw.applications.columnWidths";
 
+/**
+ * Must match application_cooldown_days() in
+ * supabase/migrations/0003_application_scope_and_cooldown.sql. The trigger is
+ * the enforcement; this is only so the grid can warn before a rejected write.
+ */
+const COOLDOWN_DAYS = 14;
+
 /** Column order. The entry row below renders one cell per key, in this order. */
 const COLUMN_KEYS = [
   "title",
   "company",
+  "profile",
+  "applier",
   "job_url",
   "status",
   "billing",
@@ -83,9 +100,11 @@ const COLUMN_KEYS = [
 ] as const;
 
 const DEFAULT_WIDTHS: Record<string, number> = {
-  title: 220,
-  company: 170,
-  job_url: 190,
+  title: 200,
+  company: 160,
+  profile: 160,
+  applier: 140,
+  job_url: 150,
   status: 150,
   billing: 140,
   resume: 170,
@@ -106,10 +125,19 @@ function emptyDraft(): Draft {
     resume_key: null,
     resume_url: null,
     resume_name: null,
+    profile_id: null,
   };
 }
 
-export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) {
+export function ApplicationsGrid({
+  teamId,
+  userId,
+  isAdmin,
+  rows,
+  profiles,
+  appliers,
+  blockedNames,
+}: Props) {
   const router = useRouter();
   const { message } = App.useApp();
 
@@ -158,6 +186,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
       resume_key: row.resume_key,
       resume_url: row.resume_url,
       resume_name: row.resume_name,
+      profile_id: row.profile_id,
     });
     setEditingId(row.id);
   };
@@ -173,13 +202,68 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
   const patchDraft = (values: Partial<Draft>) =>
     setDraft((d) => ({ ...d, ...values }));
 
+  const profileName = useMemo(
+    () => new Map(profiles.map((p) => [p.id, p.label])),
+    [profiles],
+  );
+  const applierName = useMemo(
+    () => new Map(appliers.map((a) => [a.id, a.label])),
+    [appliers],
+  );
+
+  /** You may change your own rows; admins may change any in their team. */
+  const canAct = (row: Row) => isAdmin || row.created_by === userId;
+
+  /**
+   * The most recent application for a (profile, company) still inside the
+   * cooldown, or null.
+   *
+   * A courtesy check only — the database trigger is the rule, and it can see
+   * teammates' rows this list may not include. Catching it here turns a
+   * rejected save into a warning while you are still typing.
+   */
+  const cooldownClash = (value: Draft, ignoreId?: string) => {
+    if (!value.profile_id || !value.company.trim()) return null;
+
+    const key = normalizeCompany(value.company);
+    const when = new Date(value.applied_at).getTime();
+    const window = COOLDOWN_DAYS * 86_400_000;
+
+    // Distance between the two applications, matching the trigger. Also what
+    // keeps this pure: no clock reading during render.
+    return (
+      rows.find(
+        (r) =>
+          r.id !== ignoreId &&
+          r.profile_id === value.profile_id &&
+          normalizeCompany(r.company) === key &&
+          Math.abs(new Date(r.applied_at).getTime() - when) < window,
+      ) ?? null
+    );
+  };
+
+  const draftClash = cooldownClash(draft);
+
   /** Shared validation — the same rules whether adding or editing. */
-  const invalidReason = (value: Draft): string | null => {
+  const invalidReason = (value: Draft, ignoreId?: string): string | null => {
     if (!value.title.trim() || !value.company.trim() || !value.job_url.trim()) {
       return "Role, company and job URL are required.";
     }
+    if (!value.profile_id) {
+      return "Choose which profile this application is for.";
+    }
     if (blocked.has(normalizeCompany(value.company))) {
       return `${value.company} is on the blocklist.`;
+    }
+
+    const clash = cooldownClash(value, ignoreId);
+    if (clash) {
+      const reopens = new Date(
+        new Date(clash.applied_at).getTime() + COOLDOWN_DAYS * 86_400_000,
+      );
+      return `${clash.company} was already applied to for this profile on ${formatDate(
+        clash.applied_at,
+      )}. It reopens on ${formatDate(reopens)}.`;
     }
     return null;
   };
@@ -195,6 +279,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
     resume_key: value.resume_key,
     resume_url: value.resume_url,
     resume_name: value.resume_name,
+    profile_id: value.profile_id,
   });
 
   const addDraft = async () => {
@@ -209,7 +294,6 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
     const { error } = await supabase.from("application").insert({
       ...payloadOf(draft),
       resume_document_id: null,
-      profile_id: null,
       // RLS asserts both of these in its WITH CHECK clause.
       team_id: teamId,
       created_by: userId,
@@ -228,7 +312,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
 
   const saveEdit = async () => {
     if (!editBuffer || !editingId) return;
-    const reason = invalidReason(editBuffer);
+    const reason = invalidReason(editBuffer, editingId);
     if (reason) {
       message.error(reason);
       return;
@@ -309,6 +393,45 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
         ),
     },
     {
+      key: "profile",
+      title: "Profile",
+      dataIndex: "profile_id",
+      ellipsis: true,
+      filters: profiles.map((p) => ({ text: p.label, value: p.id })),
+      onFilter: (value, row) => row.profile_id === value,
+      render: (value: string | null, row) =>
+        editingId === row.id ? (
+          <Select
+            value={editBuffer?.profile_id ?? undefined}
+            variant="borderless"
+            placeholder="Choose"
+            style={{ width: "100%" }}
+            onChange={(next) => patchEdit({ profile_id: next })}
+            options={profiles.map((p) => ({ value: p.id, label: p.label }))}
+          />
+        ) : value ? (
+          profileName.get(value) ?? <Muted>unknown</Muted>
+        ) : (
+          <Muted>none</Muted>
+        ),
+    },
+    {
+      key: "applier",
+      title: "Applier",
+      dataIndex: "created_by",
+      ellipsis: true,
+      filters: appliers.map((a) => ({ text: a.label, value: a.id })),
+      onFilter: (value, row) => row.created_by === value,
+      // Never editable: authorship is stamped from the session, and letting it
+      // be reassigned would make the audit trail decorative.
+      render: (value: string | null) =>
+        value ? (
+          <Typography.Text>{applierName.get(value) ?? "—"}</Typography.Text>
+        ) : (
+          <Muted>—</Muted>
+        ),
+    },
+    {
       key: "job_url",
       title: "Posting",
       dataIndex: "job_url",
@@ -338,6 +461,9 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
       render: (value: ApplicationStatus, row) => (
         <StatusSelect
           value={editingId === row.id ? (editBuffer?.status ?? value) : value}
+          // One-click status changes are a shortcut past edit mode, so they
+          // need the same ownership check edit mode has.
+          disabled={!canAct(row)}
           onChange={(next) =>
             editingId === row.id
               ? patchEdit({ status: next })
@@ -353,6 +479,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
       render: (value: BillingStatus, row) => (
         <BillingSelect
           value={editingId === row.id ? (editBuffer?.billing ?? value) : value}
+          disabled={!canAct(row)}
           onChange={(next) =>
             editingId === row.id
               ? patchEdit({ billing: next })
@@ -420,18 +547,34 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
       key: "actions",
       title: "",
       fixed: "right",
-      render: (_, row) =>
-        editingId === row.id ? (
-          <Space size={0}>
-            <Button
-              type="text"
-              icon={<CheckOutlined />}
-              loading={saving}
-              onClick={saveEdit}
-            />
-            <Button type="text" icon={<CloseOutlined />} onClick={cancelEdit} />
-          </Space>
-        ) : (
+      render: (_, row) => {
+        if (editingId === row.id) {
+          return (
+            <Space size={0}>
+              <Button
+                type="text"
+                icon={<CheckOutlined />}
+                loading={saving}
+                onClick={saveEdit}
+              />
+              <Button type="text" icon={<CloseOutlined />} onClick={cancelEdit} />
+            </Space>
+          );
+        }
+        // A teammate's row is visible because you share the candidate, which is
+        // about not duplicating their work — not about editing it. RLS refuses
+        // the write regardless; hiding the controls means you find that out
+        // before clicking rather than after.
+        if (!canAct(row)) {
+          return (
+            <Tooltip title="Recorded by a teammate — read only">
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                view only
+              </Typography.Text>
+            </Tooltip>
+          );
+        }
+        return (
           <Space size={0}>
             <Button
               type="text"
@@ -447,7 +590,8 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
               <Button type="text" danger icon={<DeleteOutlined />} />
             </Popconfirm>
           </Space>
-        ),
+        );
+      },
     },
   ];
 
@@ -490,6 +634,24 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
         onChange={(e) => patchDraft({ company: e.target.value })}
         onPressEnter={addDraft}
       />
+    ),
+    profile: (
+      <Select
+        variant="borderless"
+        placeholder="Profile"
+        style={{ width: "100%" }}
+        value={draft.profile_id ?? undefined}
+        onChange={(profile_id) => patchDraft({ profile_id })}
+        options={profiles.map((p) => ({ value: p.id, label: p.label }))}
+        status={draftClash ? "warning" : undefined}
+      />
+    ),
+    // Authorship is stamped from the session on insert, so there is nothing to
+    // choose here — showing who it will be is more honest than a blank cell.
+    applier: (
+      <Typography.Text type="secondary" style={{ paddingLeft: 8 }}>
+        {applierName.get(userId) ?? "You"}
+      </Typography.Text>
     ),
     job_url: (
       <Input
@@ -598,7 +760,7 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
           sticky
           onRow={(row) => ({
             onDoubleClick: () => {
-              if (editingId === null) startEdit(row);
+              if (editingId === null && canAct(row)) startEdit(row);
             },
           })}
           columns={columns}
@@ -633,17 +795,24 @@ export function ApplicationsGrid({ teamId, userId, rows, blockedNames }: Props) 
   );
 }
 
+const Muted = ({ children }: { children?: React.ReactNode }) => (
+  <Typography.Text type="secondary">{children ?? "—"}</Typography.Text>
+);
+
 function StatusSelect({
   value,
+  disabled,
   onChange,
 }: {
   value: ApplicationStatus;
+  disabled?: boolean;
   onChange: (value: ApplicationStatus) => void;
 }) {
   return (
     <Select
       value={value}
       variant="borderless"
+      disabled={disabled}
       style={{ width: "100%" }}
       onChange={onChange}
       options={APPLICATION_STATUSES.map((s) => ({
@@ -656,15 +825,18 @@ function StatusSelect({
 
 function BillingSelect({
   value,
+  disabled,
   onChange,
 }: {
   value: BillingStatus;
+  disabled?: boolean;
   onChange: (value: BillingStatus) => void;
 }) {
   return (
     <Select
       value={value}
       variant="borderless"
+      disabled={disabled}
       style={{ width: "100%" }}
       onChange={onChange}
       options={BILLING_STATUSES.map((b) => ({
@@ -685,10 +857,12 @@ function BillingSelect({
 function ResumeCell({
   name,
   url,
+  readOnly,
   onAttached,
 }: {
   name: string | null;
   url: string | null;
+  readOnly?: boolean;
   onAttached: (file: {
     resume_key: string;
     resume_url: string;
@@ -760,15 +934,17 @@ function ResumeCell({
       ) : (
         <Typography.Text type="secondary">—</Typography.Text>
       )}
-      <Tooltip title={name ? "Replace" : "Attach a resume"}>
-        <Button
-          type="text"
-          size="small"
-          icon={<UploadOutlined />}
-          loading={uploading}
-          onClick={() => input.current?.click()}
-        />
-      </Tooltip>
+      {!readOnly && (
+        <Tooltip title={name ? "Replace" : "Attach a resume"}>
+          <Button
+            type="text"
+            size="small"
+            icon={<UploadOutlined />}
+            loading={uploading}
+            onClick={() => input.current?.click()}
+          />
+        </Tooltip>
+      )}
       <input
         ref={input}
         type="file"

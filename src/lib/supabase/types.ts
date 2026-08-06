@@ -177,7 +177,25 @@ export type Database = {
       blocked_company: Table<BlockedCompanyRow>;
       application: Table<ApplicationRow>;
     };
-    Views: Record<never, never>;
+    Views: {
+      /**
+       * Derived from recent applications — one row per (profile, company) still
+       * inside the cooldown window. security_invoker, so the caller's own
+       * application and profile policies decide what they see.
+       */
+      application_cooldown: {
+        Row: {
+          profile_id: string;
+          profile_name: string;
+          company: string;
+          applied_at: string;
+          reopens_at: string;
+          created_by: string | null;
+          team_id: string;
+        };
+        Relationships: [];
+      };
+    };
     Functions: {
       app_role: { Args: Record<never, never>; Returns: UserRole };
       app_team_id: { Args: Record<never, never>; Returns: string | null };

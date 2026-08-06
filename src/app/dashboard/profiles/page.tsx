@@ -34,11 +34,18 @@ export default async function ProfilesPage() {
       )
       .order("full_name"),
     supabase.from("profile_assignment").select("profile_id, user_id"),
+    // Every team member, not just bidders. Restricting this to bidders left an
+    // all-admin team with an empty dropdown and no way to assign anything —
+    // which read as the feature being missing.
+    //
+    // Super admins are excluded: they hold no team, so an assignment to one
+    // would reference somebody who can never see the profile anyway.
     canEdit
       ? supabase
           .from("app_user")
           .select("id, name, email, role")
-          .eq("role", "bidder")
+          .neq("role", "super_admin")
+          .order("name")
       : Promise.resolve({ data: [] as never[] }),
   ]);
 
@@ -69,7 +76,7 @@ export default async function ProfilesPage() {
       rows={rows}
       teamMembers={(members.data ?? []).map((m) => ({
         id: m.id,
-        label: m.name ?? m.email,
+        label: `${m.name ?? m.email}${m.role === "admin" ? " (admin)" : ""}`,
       }))}
     />
   );

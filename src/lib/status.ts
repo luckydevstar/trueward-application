@@ -55,13 +55,30 @@ export function hostOf(url: string): string {
   }
 }
 
-/** Comparison key for the blocklist and duplicate detection. */
+/**
+ * Comparison key for the blocklist and the cooldown.
+ *
+ * Must stay in step with `normalize_company` in
+ * supabase/migrations/0003_application_scope_and_cooldown.sql. The database is
+ * the enforcement — this exists so the UI can warn before a write the trigger
+ * would refuse, and a divergence shows up as a rejected save with no warning.
+ *
+ * Trailing legal suffixes are dropped, so "Globex", "globex inc" and
+ * "Globex, Inc." are one employer. A name made only of suffixes keeps its
+ * unstripped form rather than normalising to nothing.
+ */
+const COMPANY_SUFFIXES =
+  /(\s+(inc|incorporated|llc|llp|lp|ltd|limited|corp|corporation|co|company|holdings|group|gmbh|plc|ag|sa|nv|bv|ab|oy|as|pty|srl|spa))+$/g;
+
 export function normalizeCompany(name: string): string {
-  return name
+  const squashed = name
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+
+  const stripped = squashed.replace(COMPANY_SUFFIXES, "").trim();
+  return stripped || squashed;
 }
 
 /**
