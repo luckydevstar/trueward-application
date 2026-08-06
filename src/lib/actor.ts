@@ -25,15 +25,18 @@ export const requireActor = cache(async (): Promise<
 > => {
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  // getClaims() verifies the JWT's signature the same way getUser() does, but
+  // does it locally against a cached JWKS when the project signs
+  // asymmetrically. All this needs from it is `sub`, so paying a round trip to
+  // the auth server for the rest of the user record was waste on every page.
+  const { data: auth } = await supabase.auth.getClaims();
+  const userId = auth?.claims?.sub;
+  if (!userId) redirect("/login");
 
   const { data } = await supabase
     .from("app_user")
     .select("id, email, name, role, created_by_id")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single();
 
   // No app_user row means the handle_new_user trigger didn't fire — an account

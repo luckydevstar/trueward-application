@@ -106,15 +106,39 @@ the key and URL straight off the result.
 
 ## Request latency
 
-A dashboard navigation costs a round trip to the auth server before it can read
-anything, because the session has to be validated rather than trusted from a
-cookie. `requireActor()` and the server Supabase client are both wrapped in
-React's `cache()`, so the layout and the page inside it share one — otherwise
-each navigation paid for two `getUser()` calls and two `app_user` reads instead
-of one apiece.
+**Measure in production before chasing this.** `next dev` compiles each route
+the first time you visit it, and disables `<Link>` prefetching. Measured here:
 
-`cache()` is per-request, so it never leaks one user's actor into another's
-request the way a module-level singleton would.
+| | |
+| --- | --- |
+| Dev, first visit to a route | 2.66 s |
+| Dev, once compiled | ~40 ms |
+| `next build && next start` | ~0.3 ms |
+
+Clicking through a dashboard in dev pays that first-visit cost once per route,
+which is most of what "slow transitions" usually is.
+
+Beyond that, three things keep navigation cheap:
+
+- **`getClaims()`, not `getUser()`.** Both verify the token rather than trusting
+  the cookie, so it isn't a security trade — but with asymmetric signing keys
+  `getClaims` checks the signature locally against a cached JWKS instead of
+  calling the auth server. That call was on the critical path of every
+  navigation, in both the proxy and `requireActor()`. On a project still using
+  a legacy symmetric (HS256) secret it falls back to a round trip; enabling
+  asymmetric signing keys in the Supabase dashboard is what unlocks the gain.
+- **`cache()` on `requireActor()` and the server client**, so the layout and the
+  page inside it share one call rather than repeating it. It's per-request, so
+  it never leaks one user's actor into another's request the way a module-level
+  singleton would.
+- **`dashboard/loading.tsx`**, so a click paints immediately. Without it the App
+  Router holds the old page on screen until the new one's data returns, which
+  reads as a dead click and then a jump.
+
+These pages stay server-rendered rather than moving to client-side fetching.
+The data they need is behind RLS either way, so CSR would trade one server round
+trip for a client one and give up the server-side gate — `loading.tsx` gets the
+same perceived speed without that.
 
 ## Authorization
 

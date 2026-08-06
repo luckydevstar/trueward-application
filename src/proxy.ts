@@ -40,12 +40,24 @@ export async function proxy(request: NextRequest) {
     },
   );
 
-  // getUser(), not getSession(): this call is what actually performs the
-  // refresh, and it validates the token against the auth server rather than
-  // trusting the cookie's contents.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  /**
+   * getClaims(), not getUser().
+   *
+   * Both verify the token rather than trusting the cookie, so this is not a
+   * security trade. The difference is where: with asymmetric signing keys
+   * getClaims checks the signature locally through WebCrypto against a cached
+   * JWKS, while getUser always calls the auth server. That call sat on the
+   * critical path of every single navigation.
+   *
+   * It still refreshes a session that is about to expire, which is the other
+   * job this proxy exists for.
+   *
+   * On a project still using a legacy symmetric (HS256) secret, getClaims falls
+   * back to a server round trip — no worse than before, just no faster. Turning
+   * on asymmetric signing keys in the Supabase dashboard is what unlocks it.
+   */
+  const { data } = await supabase.auth.getClaims();
+  const user = data?.claims;
 
   const { pathname } = request.nextUrl;
   const isPublic =
