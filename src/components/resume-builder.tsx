@@ -179,6 +179,30 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
       return { kind: "invalid" as const, errors: fieldErrors(content.error) };
     }
 
+    /**
+     * Unresolvable employmentIds get their own branch rather than joining the
+     * generic error list.
+     *
+     * It is by far the most common failure — a model writes whatever id it
+     * likes unless told the profile's — and it is the one with an obvious fix,
+     * so it earns a specific message and a remap action instead of four
+     * identical "unknown employmentId" lines.
+     */
+    const known = new Set(selectedProfile.profile.employments.map((e) => e.id));
+    const unknown = content.data.experiences
+      .map((x) => x.employmentId)
+      .filter((id) => !known.has(id));
+
+    if (unknown.length) {
+      return {
+        kind: "idmismatch" as const,
+        unknown,
+        expected: [...known],
+        // Positional remap is only meaningful when the two lists line up.
+        remappable: content.data.experiences.length === known.size,
+      };
+    }
+
     // The document-level parse is the one that matters: it checks every
     // employmentId against the profile and rejects experiences that aren't
     // most-recent-first. contentSchema alone cannot see the profile.
@@ -254,13 +278,85 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
    * is the most common reason a pasted document won't validate. Everything else
    * is obvious placeholder prose to be replaced or pasted over.
    */
-  const startFromProfile = () => {
+  /** Profile employments, newest first — the order experiences must follow. */
+  const orderedEmployments = useMemo(
+    () =>
+      [...(selectedProfile?.profile?.employments ?? [])].sort(
+        (a, b) => monthYearKey(b.startDate) - monthYearKey(a.startDate),
+      ),
+    [selectedProfile],
+  );
+
+  /**
+   * Rewrites the pasted experiences' ids onto the profile's, by position.
+   *
+   * Positional, because that is the only correspondence available — the ids
+   * don't match, so there is nothing to match *on*. It is offered only when the
+   * counts are equal, and the mapping is shown before it is applied, because
+   * getting it wrong attaches someone's bullets to the wrong employer.
+   */
+  const remapIds = () => {
+    try {
+      const value = JSON.parse(unfence(json));
+      value.experiences = (value.experiences ?? []).map(
+        (x: { employmentId: string }, i: number) => ({
+          ...x,
+          employmentId: orderedEmployments[i]?.id ?? x.employmentId,
+        }),
+      );
+      setJson(JSON.stringify(value, null, 2));
+      message.success("Ids remapped to this profile.");
+    } catch {
+      message.error("Couldn't rewrite the JSON.");
+    }
+  };
+
+  /**
+   * A prompt that pins the model to this profile's ids.
+   *
+   * The whole class of failure above comes from the model never being told what
+   * ids exist. Handing it the list, and the employers they refer to, is the
+   * upstream fix.
+   */
+  const copyPrompt = () => {
     const profile = selectedProfile?.profile;
     if (!profile) return;
 
-    const ordered = [...profile.employments].sort(
-      (a, b) => monthYearKey(b.startDate) - monthYearKey(a.startDate),
+    const roster = orderedEmployments
+      .map(
+        (e) =>
+          `  - "${e.id}" → ${e.company}${e.location ? `, ${e.location}` : ""} (${formatMonthYear(
+            e.startDate,
+          )} – ${formatMonthYear(e.endDate ?? null, "Present")})`,
+      )
+      .join("\n");
+
+    void navigator.clipboard.writeText(
+      `Write tailored resume content as JSON for ${profile.fullName}.
+
+Return ONLY a JSON object with exactly these keys:
+  targetTitle  string  — the role being applied for
+  summary      string  — one paragraph, no line breaks
+  skills       array   — [{ "name": string, "items": [string, ...] }]
+  experiences  array   — [{ "employmentId": string, "title": string,
+                            "bullets": [{ "text": string }, ...] }]
+
+employmentId MUST be one of these exact values — do not invent, rename or
+abbreviate them, and do not add employers that are not listed:
+${roster}
+
+List experiences most-recent-first, in the order shown above. Do not include
+the candidate's name, contact details, employers, or dates — those are already
+on file and are added automatically.
+
+Job description:
+[paste the job description here]`,
     );
+    message.success("Prompt copied — paste it into your model with the job description.");
+  };
+
+  const startFromProfile = () => {
+    if (!selectedProfile?.profile) return;
 
     setJson(
       JSON.stringify(
@@ -268,7 +364,7 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
           targetTitle: "Target role",
           summary: "One paragraph on how this candidate fits the role.",
           skills: [{ name: "Category", items: ["Skill"] }],
-          experiences: ordered.map((e) => ({
+          experiences: orderedEmployments.map((e) => ({
             employmentId: e.id,
             title: "Role title",
             bullets: [{ text: `What they did at ${e.company}, with a metric.` }],
@@ -413,22 +509,29 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                   title={
                     <Space size={4} wrap>
                       <Typography.Text style={{ fontSize: 12 }}>
-                        Reference employers by id:
+                        Your model must use these employment ids:
                       </Typography.Text>
                       {employmentIds.map((id) => (
                         <Tag key={id} style={{ margin: 0 }}>
                           {id}
                         </Tag>
                       ))}
+                    </Space>
+                  }
+                  description={
+                    <Space size={4} wrap style={{ marginTop: 4 }}>
                       <Button
-                        type="text"
                         size="small"
+                        type="primary"
+                        ghost
                         icon={<CopyOutlined />}
-                        onClick={() => {
-                          void navigator.clipboard.writeText(employmentIds.join(", "));
-                          message.success("Ids copied.");
-                        }}
-                      />
+                        onClick={copyPrompt}
+                      >
+                        Copy prompt
+                      </Button>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        Includes the ids and the exact shape to return.
+                      </Typography.Text>
                     </Space>
                   }
                 />
@@ -489,6 +592,63 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                   showIcon
                   title="Not valid JSON"
                   description={parsed.message}
+                />
+              )}
+              {parsed.kind === "idmismatch" && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="These employment ids aren't on this profile"
+                  description={
+                    <>
+                      <Typography.Paragraph style={{ marginBottom: 8 }}>
+                        Your JSON is otherwise fine. Experiences are linked to
+                        employers by id, and these don&apos;t resolve:
+                      </Typography.Paragraph>
+                      <div style={{ marginBottom: 8 }}>
+                        {parsed.unknown.map((id) => (
+                          <Tag key={id} color="red">
+                            {id}
+                          </Tag>
+                        ))}
+                      </div>
+                      <Typography.Paragraph style={{ marginBottom: 8 }}>
+                        This profile defines:
+                      </Typography.Paragraph>
+                      <div style={{ marginBottom: 12 }}>
+                        {parsed.expected.length ? (
+                          parsed.expected.map((id) => (
+                            <Tag key={id} color="blue">
+                              {id}
+                            </Tag>
+                          ))
+                        ) : (
+                          <Typography.Text type="secondary">
+                            none — this profile has no employment recorded yet
+                          </Typography.Text>
+                        )}
+                      </div>
+                      <Space wrap>
+                        {parsed.remappable && (
+                          <Tooltip
+                            title={orderedEmployments
+                              .map(
+                                (e, i) =>
+                                  `${i + 1}. → ${e.id} (${e.company})`,
+                              )
+                              .join("   ")}
+                          >
+                            <Button size="small" type="primary" onClick={remapIds}>
+                              Remap in order
+                            </Button>
+                          </Tooltip>
+                        )}
+                        <Button size="small" onClick={copyPrompt}>
+                          Copy a prompt that uses the right ids
+                        </Button>
+                      </Space>
+                    </>
+                  }
                 />
               )}
               {parsed.kind === "invalid" && (
