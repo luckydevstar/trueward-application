@@ -49,6 +49,7 @@ create table app_user (
   created_at    timestamptz not null default now()
 );
 
+
 create index app_user_created_by_idx on app_user (created_by_id);
 
 /**
