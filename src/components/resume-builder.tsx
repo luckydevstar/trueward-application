@@ -1,6 +1,11 @@
 "use client";
 
-import { CopyOutlined, DownloadOutlined, SaveOutlined } from "@ant-design/icons";
+import {
+  CopyOutlined,
+  DownloadOutlined,
+  SaveOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import {
   Alert,
   App,
@@ -32,6 +37,7 @@ import {
   contentSchema,
   fieldErrors,
   formatMonthYear,
+  monthYearKey,
   renderedExperiences,
   resumeDocumentSchema,
   type ResumeDocument,
@@ -240,6 +246,40 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
 
   const employmentIds = selectedProfile?.profile?.employments.map((e) => e.id) ?? [];
 
+  /**
+   * Seeds the editor with a content skeleton for the selected profile.
+   *
+   * The employmentIds are the part worth generating: they must match the
+   * profile exactly and be ordered most-recent-first, and getting either wrong
+   * is the most common reason a pasted document won't validate. Everything else
+   * is obvious placeholder prose to be replaced or pasted over.
+   */
+  const startFromProfile = () => {
+    const profile = selectedProfile?.profile;
+    if (!profile) return;
+
+    const ordered = [...profile.employments].sort(
+      (a, b) => monthYearKey(b.startDate) - monthYearKey(a.startDate),
+    );
+
+    setJson(
+      JSON.stringify(
+        {
+          targetTitle: "Target role",
+          summary: "One paragraph on how this candidate fits the role.",
+          skills: [{ name: "Category", items: ["Skill"] }],
+          experiences: ordered.map((e) => ({
+            employmentId: e.id,
+            title: "Role title",
+            bullets: [{ text: `What they did at ${e.company}, with a metric.` }],
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+  };
+
   return (
     <>
       <Space
@@ -394,8 +434,38 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                 />
               )}
 
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Tailored content
+                </Typography.Text>
+                <Space size={4}>
+                  <Tooltip title="Fill in the skeleton — employment ids in the right order, ready to edit or paste over">
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<ThunderboltOutlined />}
+                      disabled={!selectedProfile?.profile}
+                      onClick={startFromProfile}
+                    >
+                      Start from profile
+                    </Button>
+                  </Tooltip>
+                  {json && (
+                    <Button size="small" type="text" onClick={() => setJson("")}>
+                      Clear
+                    </Button>
+                  )}
+                </Space>
+              </div>
+
               <Input.TextArea
-                rows={16}
+                rows={14}
                 value={json}
                 onChange={(e) => setJson(e.target.value)}
                 placeholder='{ "targetTitle": "…", "summary": "…", "skills": [], "experiences": [] }'
@@ -409,7 +479,8 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
                 <Alert
                   type="info"
                   showIcon
-                  title="Paste the tailored content JSON here."
+                  title="Paste your model's content JSON, or press “Start from profile”."
+                  description="Until then the preview shows what the profile already knows — identity, employers and dates."
                 />
               )}
               {parsed.kind === "syntax" && (
@@ -466,21 +537,112 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
           >
             {parsed.kind === "ok" ? (
               <Preview document={parsed.document} />
+            ) : selectedProfile?.profile ? (
+              /*
+               * Identity and employment history come from the profile, so they
+               * can be shown the moment one is picked. Waiting for valid
+               * content to render anything at all made a correctly-working page
+               * look broken — you pick a candidate and stare at an empty box.
+               */
+              <ProfileOnlyPreview profile={selectedProfile.profile} />
             ) : (
               <div
-                style={{
-                  height: "100%",
-                  display: "grid",
-                  placeItems: "center",
-                }}
+                style={{ height: "100%", display: "grid", placeItems: "center" }}
               >
-                <Empty description="A valid document renders here." />
+                <Empty description="Choose a profile to see it here." />
               </div>
             )}
           </Card>
         </Col>
       </Row>
     </>
+  );
+}
+
+const SHEET: React.CSSProperties = {
+  background: "#fff",
+  padding: "24px 28px",
+  border: "1px solid #eef0f2",
+  borderRadius: 6,
+};
+
+/**
+ * The resume before any content exists: everything the profile already knows.
+ *
+ * The greyed placeholders are the shape of what's missing, which is more useful
+ * than a blank panel — you can see at a glance that the identity and dates are
+ * right before spending a model call on the positioning.
+ */
+function ProfileOnlyPreview({ profile }: { profile: ResumeProfile }) {
+  const employments = [...profile.employments].sort(
+    (a, b) => monthYearKey(b.startDate) - monthYearKey(a.startDate),
+  );
+
+  return (
+    <div style={SHEET}>
+      <Typography.Title level={4} style={{ marginBottom: 0 }}>
+        {profile.fullName}
+      </Typography.Title>
+      <Typography.Text type="secondary" italic>
+        Target role — from your content JSON
+      </Typography.Text>
+
+      <div style={{ marginTop: 4 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {[
+            profile.contact.email,
+            profile.contact.phone,
+            profile.contact.location,
+            ...profile.contact.links.map((l) => l.url),
+          ]
+            .filter(Boolean)
+            .join("  ·  ")}
+        </Typography.Text>
+      </div>
+
+      <Divider style={{ margin: "12px 0" }} />
+      <Typography.Paragraph type="secondary" italic style={{ marginBottom: 8 }}>
+        Summary, skills and bullet points come from the content JSON on the
+        left. Everything below is already on file.
+      </Typography.Paragraph>
+
+      {employments.length > 0 && (
+        <>
+          <Typography.Text strong>Experience</Typography.Text>
+          {employments.map((e) => (
+            <div key={e.id} style={{ margin: "8px 0 12px" }}>
+              <Typography.Text>{e.company}</Typography.Text>
+              <Tag style={{ marginLeft: 6 }}>{e.id}</Tag>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {e.location ? `${e.location} · ` : ""}
+                  {formatMonthYear(e.startDate)} –{" "}
+                  {formatMonthYear(e.endDate ?? null, "Present")}
+                </Typography.Text>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {profile.education.length > 0 && (
+        <>
+          <Divider style={{ margin: "12px 0" }} />
+          <Typography.Text strong>Education</Typography.Text>
+          {profile.education.map((e) => (
+            <div key={`${e.school}-${e.degree}`} style={{ marginTop: 6 }}>
+              <Typography.Text>{e.degree}</Typography.Text>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {e.school}
+                  {e.year ? ` · ${formatMonthYear(e.year)}` : ""}
+                </Typography.Text>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -496,14 +658,7 @@ function Preview({ document }: { document: ResumeDocument }) {
   return (
     // No height or overflow here — the Card body owns the scroll now, and a
     // second scroller inside it would strand the bottom of a long resume.
-    <div
-      style={{
-        background: "#fff",
-        padding: "24px 28px",
-        border: "1px solid #eef0f2",
-        borderRadius: 6,
-      }}
-    >
+    <div style={SHEET}>
       <Typography.Title level={4} style={{ marginBottom: 0 }}>
         {profile.fullName}
       </Typography.Title>
