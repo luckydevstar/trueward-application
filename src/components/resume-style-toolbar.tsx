@@ -12,20 +12,28 @@ import {
   Divider,
   Dropdown,
   Segmented,
+  Select,
   Slider,
   Space,
   Tooltip,
   Typography,
 } from "antd";
 
+import { ACCENT_NAMES } from "@/lib/pdf/resume-pdf";
+import { TEMPLATES } from "@/lib/pdf/templates";
 import {
   HEADER_FIELD_LABELS,
   resolveHeaderFields,
 } from "@/lib/resume-header";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
-export const TEMPLATES = ["classic", "modern", "compact"];
-export const ACCENTS = ["slate", "blue", "emerald"];
+/**
+ * Re-exported so the builder keeps importing its style vocabulary from one
+ * place. Imported above as well — a bare `export … from` re-exports without
+ * binding the name locally, and this file uses both.
+ */
+export { TEMPLATES };
+export const ACCENTS = ACCENT_NAMES;
 
 export const DEFAULT_STYLE: ResumeStyle = {
   fontScale: 100,
@@ -80,11 +88,28 @@ export function ResumeStyleToolbar({
       }}
     >
       <Field label="Template">
-        <Segmented
+        <Select
           size="small"
           value={template}
-          onChange={(v) => onTemplateChange(String(v))}
-          options={TEMPLATES}
+          onChange={onTemplateChange}
+          style={{ width: 150 }}
+          // A dropdown rather than a segmented control: five templates with a
+          // sentence each don't fit on one strip, and the hint is what makes
+          // them choosable without rendering each in turn.
+          optionLabelProp="label"
+          options={TEMPLATES.map((t) => ({
+            value: t.id,
+            label: t.label,
+            title: t.hint,
+            children: (
+              <div>
+                <div>{t.label}</div>
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  {t.hint}
+                </Typography.Text>
+              </div>
+            ),
+          }))}
         />
       </Field>
 

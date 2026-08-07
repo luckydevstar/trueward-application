@@ -67,7 +67,7 @@ From then on, the Users page creates the rest of the team.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run seed:user` | Creates/updates an account with a known password and role |
 | `npm run test:rls` | Applies the migration to a throwaway Postgres and asserts the policies |
-| `npm run render:fixture` | Renders a sample resume to `fixture.pdf` |
+| `npm run render:fixture` | Renders the sample resume once per template into `fixtures/` |
 
 `test:rls` needs `postgresql` on PATH (`brew install postgresql@16`).
 
@@ -88,9 +88,33 @@ size limit, no cold start, and nothing to time out. Text uses Helvetica — a PD
 base-14 font — so nothing is embedded and the output stays selectable.
 
 The tradeoff is real: layout is manual coordinates, not CSS. No flexbox, no
-`page-break-inside`, no widow control. `ensure()` in that file is the entire
-pagination strategy. `npm run render:fixture` runs the same code under Node so
-you can check a layout change without clicking through the UI.
+`page-break-inside`, no widow control. Text flows through `Flow` cursors — a
+column with its own vertical position *and page* — which is the entire
+pagination strategy, and what makes the two-column sidebar template possible at
+all: the columns fill independently, so the sidebar can run onto page two while
+the main column is still on page one.
+
+`npm run render:fixture` runs the same code under Node and writes one PDF per
+template, so a layout change can be checked without clicking through the UI.
+
+### Templates
+
+`src/lib/pdf/templates.ts` holds the specs. Each varies the header treatment
+(plain / filled banner / coloured sidebar), the section-heading style (hairline
+rule / accent bar / filled chip), margins and spacing:
+
+| | |
+| --- | --- |
+| Classic | Plain header, hairline rules |
+| Modern | Accent name, heavier section bars |
+| Compact | Tighter margins, for a long history |
+| Banner | Full-width colour block behind the name |
+| Sidebar | Coloured column carrying contact, skills, education |
+
+Text drawn on a filled panel picks its own colour: `prefersLightText` computes
+WCAG relative luminance, so a pale accent gets dark text rather than
+white-on-yellow. That is also why the sidebar's headings use the panel's text
+colour rather than the accent — the accent *is* the fill there.
 
 File **uploads** avoid the serverless path for the same reason — the browser
 posts bytes straight to storage, so no request body crosses a function and
