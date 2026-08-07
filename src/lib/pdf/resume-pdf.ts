@@ -7,6 +7,7 @@ import {
 } from "@/lib/document/schema";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
 import {
+  mix,
   prefersLightText,
   shade,
   templateSpec,
@@ -40,6 +41,7 @@ const ACCENTS: Record<string, RGB> = {
   blue: [29, 78, 216],
   emerald: [4, 120, 87],
   plum: [109, 40, 217],
+  rose: [190, 24, 93],
   rust: [154, 52, 18],
 };
 
@@ -111,16 +113,93 @@ export function renderResumePdf(
       pdf.setFillColor(...sidebarFill);
       pdf.rect(0, 0, sidebarWidth, pageHeight, "F");
     }
-    // The banner belongs to the first page only. Repeating it on page two
-    // reads as a second resume rather than a continuation.
+    // The banner and the wave belong to the first page only. Repeating either
+    // on page two reads as a second resume rather than a continuation.
     if (spec.header === "banner" && page === 1) {
       pdf.setFillColor(...s.accent);
       pdf.rect(0, 0, pageWidth, bannerHeight(), "F");
+    }
+    if (spec.header === "wave" && page === 1) {
+      paintWave();
     }
   };
 
   const bannerHeight = () =>
     (contactParts.length ? 118 : 96) * Math.max(0.9, s.fontScale);
+
+  /** Roughly the top third of the page, before the curve dips below it. */
+  const waveHeight = () => pageHeight * 0.3;
+  const waveDip = () => pageHeight * 0.055;
+
+  /**
+   * A vertical linear gradient, drawn as a stack of thin bands.
+   *
+   * PDF has real gradients — axial shading dictionaries — but jsPDF's public
+   * API exposes no way to build one, so this approximates it. One band per
+   * point of height keeps each under a printer's dot, and the half-point
+   * overlap stops hairline seams appearing between them where the rasteriser
+   * rounds edges the same way twice.
+   */
+  const gradientBand = (
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    from: RGB,
+    to: RGB,
+  ) => {
+    const steps = Math.min(320, Math.max(24, Math.ceil(height)));
+    const band = height / steps;
+    for (let i = 0; i < steps; i += 1) {
+      pdf.setFillColor(...mix(from, to, i / (steps - 1)));
+      pdf.rect(x, y + i * band, width, band + 0.5, "F");
+    }
+  };
+
+  /**
+   * Clips to the wave panel — a full-width block whose lower edge is a single
+   * symmetric bezier bulging into the page — then paints the gradient through
+   * it.
+   *
+   * Clipping rather than masking with a white shape: a mask would only be
+   * invisible against a white page, and would show as a pale slab the moment
+   * anything sat behind it.
+   */
+  const paintWave = () => {
+    const base = waveHeight();
+    const dip = waveDip();
+
+    pdf.saveGraphicsState();
+    pdf.moveTo(0, 0);
+    pdf.lineTo(pageWidth, 0);
+    pdf.lineTo(pageWidth, base);
+    // Control points at 4/3 the dip put the curve's midpoint at exactly `dip`
+    // below the edges, which is what makes the bulge look measured.
+    pdf.curveTo(
+      pageWidth * 0.66,
+      base + dip * 1.34,
+      pageWidth * 0.34,
+      base + dip * 1.34,
+      0,
+      base,
+    );
+    pdf.clip();
+    // `null` discards the path itself: it exists to define the clip, and
+    // stroking or filling it here would draw an outline over the gradient.
+    pdf.discardPath();
+
+    gradientBand(
+      0,
+      0,
+      pageWidth,
+      base + dip + 1,
+      s.accent,
+      // Toward a lighter, slightly warmer end of the same hue, so it reads as
+      // one colour lit unevenly rather than two colours meeting.
+      tint(mix(s.accent, [236, 72, 153], 0.28), 0.18),
+    );
+    pdf.restoreGraphicsState();
+  };
 
   let lastPage = 1;
   paintChrome(1);
@@ -336,6 +415,43 @@ export function renderResumePdf(
     // The first section heading adds its own sectionGap on top of this, so the
     // offset here is deliberately less than a full margin.
     main.y = bannerHeight() + spec.margin * 0.45;
+  } else if (spec.header === "wave") {
+    const reversed: RGB = prefersLightText(s.accent) ? [255, 255, 255] : INK;
+    const soft = prefersLightText(s.accent)
+      ? tint(s.accent, 0.82)
+      : shade(s.accent, 0.5);
+
+    const centered = s.headerPosition === "center";
+    const anchor = centered ? pageWidth / 2 : spec.margin;
+    const align = centered ? "center" : "left";
+
+    /**
+     * Centred against the panel's *visible* depth, curve included.
+     *
+     * Measuring against the straight portion alone left the block sitting
+     * high — the bulge is part of what the eye reads as the panel, so leaving
+     * it out puts the optical centre about 25pt above where it looks like it
+     * should be. The block runs from roughly a cap-height above the name's
+     * baseline to the foot of the contact line.
+     */
+    const blockAbove = nameSize * 0.7;
+    const blockBelow = nameSize * 0.95 + titleSize * 1.6 + contactSize;
+    let y =
+      (waveHeight() + waveDip()) / 2 - (blockBelow - blockAbove) / 2;
+
+    write(profile.fullName, anchor, y, nameSize, {
+      bold: true,
+      color: reversed,
+      align,
+    });
+    y += nameSize * 0.95;
+    write(content.targetTitle, anchor, y, titleSize, { color: soft, align });
+    y += titleSize * 1.6;
+    contactLine(anchor, y, pageWidth - spec.margin * 2, align, soft);
+
+    // Clear of the curve's deepest point, or the first heading collides with
+    // it. The heading adds its own sectionGap on top of this.
+    main.y = waveHeight() + waveDip() + spec.margin * 0.3;
   } else if (spec.header === "sidebar") {
     // Name and role head the main column; the sidebar carries the details.
     write(profile.fullName, main.x, main.y + nameSize * 0.3, nameSize, {

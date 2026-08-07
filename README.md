@@ -110,6 +110,16 @@ rule / accent bar / filled chip), margins and spacing:
 | Compact | Tighter margins, for a long history |
 | Banner | Full-width colour block behind the name |
 | Sidebar | Coloured column carrying contact, skills, education |
+| Wave | Gradient panel over the top third, curving into the page |
+
+**Wave is worth a note.** PDF has real gradients — axial shading dictionaries —
+but jsPDF's public API exposes no way to build one, so it is approximated with
+a stack of thin bands, one per point of height, each overlapping the next by
+half a point so no hairline seam shows between them. The curved lower edge is a
+single symmetric bezier used as a *clip path*, not a white mask: a mask would
+only be invisible against a white page and would surface as a pale slab the
+moment anything sat behind it. It costs ~300 fill operations, which is why that
+file is roughly 4 KB larger than the others, and it paints on page one only.
 
 Text drawn on a filled panel picks its own colour: `prefersLightText` computes
 WCAG relative luminance, so a pale accent gets dark text rather than

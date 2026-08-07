@@ -20,8 +20,9 @@ export type TemplateSpec = {
    * plain   — name and contact as text, nothing behind them
    * banner  — a filled accent block across the top, text reversed out of it
    * sidebar — a filled accent column holding contact, skills and education
+   * wave    — a gradient panel over the top third, its lower edge curved
    */
-  header: "plain" | "banner" | "sidebar";
+  header: "plain" | "banner" | "sidebar" | "wave";
   /**
    * rule — small caps over a hairline
    * bar  — small caps with a short thick accent stroke beneath
@@ -84,6 +85,16 @@ export const TEMPLATES: TemplateSpec[] = [
     heading: "bar",
     sidebarWidth: 178,
   },
+  {
+    id: "wave",
+    label: "Wave",
+    hint: "Gradient panel over the top third, curving into the page.",
+    margin: 54,
+    sectionGap: 16,
+    header: "wave",
+    heading: "bar",
+    nameScale: 1.2,
+  },
 ];
 
 export const DEFAULT_TEMPLATE = TEMPLATES[0];
@@ -108,6 +119,13 @@ export function tint(color: RGB, amount: number): RGB {
 /** Mixes a colour toward black, for a darker band than the accent itself. */
 export function shade(color: RGB, amount: number): RGB {
   return color.map((channel) => Math.round(channel * (1 - amount))) as RGB;
+}
+
+/** Linear interpolation between two colours. `t` runs 0 → 1. */
+export function mix(from: RGB, to: RGB, t: number): RGB {
+  return from.map((channel, i) =>
+    Math.round(channel + (to[i] - channel) * t),
+  ) as RGB;
 }
 
 /**
