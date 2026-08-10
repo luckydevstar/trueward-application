@@ -10,6 +10,7 @@ import {
   UploadOutlined,
 } from "@ant-design/icons";
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -83,6 +84,11 @@ const WIDTH_STORAGE_KEY = "tw.applications.columnWidths";
  * the enforcement; this is only so the grid can warn before a rejected write.
  */
 const COOLDOWN_DAYS = 14;
+const COOLDOWN_MS = COOLDOWN_DAYS * 86_400_000;
+
+/** When a company reopens for the profile it was last applied to. */
+const cooldownEnds = (appliedAt: string) =>
+  new Date(new Date(appliedAt).getTime() + COOLDOWN_MS).toISOString();
 
 /** Column order. The entry row below renders one cell per key, in this order. */
 const COLUMN_KEYS = [
@@ -227,7 +233,6 @@ export function ApplicationsGrid({
 
     const key = normalizeCompany(value.company);
     const when = new Date(value.applied_at).getTime();
-    const window = COOLDOWN_DAYS * 86_400_000;
 
     // Distance between the two applications, matching the trigger. Also what
     // keeps this pure: no clock reading during render.
@@ -237,7 +242,7 @@ export function ApplicationsGrid({
           r.id !== ignoreId &&
           r.profile_id === value.profile_id &&
           normalizeCompany(r.company) === key &&
-          Math.abs(new Date(r.applied_at).getTime() - when) < window,
+          Math.abs(new Date(r.applied_at).getTime() - when) < COOLDOWN_MS,
       ) ?? null
     );
   };
@@ -258,12 +263,9 @@ export function ApplicationsGrid({
 
     const clash = cooldownClash(value, ignoreId);
     if (clash) {
-      const reopens = new Date(
-        new Date(clash.applied_at).getTime() + COOLDOWN_DAYS * 86_400_000,
-      );
       return `${clash.company} was already applied to for this profile on ${formatDate(
         clash.applied_at,
-      )}. It reopens on ${formatDate(reopens)}.`;
+      )}. It reopens on ${formatDate(cooldownEnds(clash.applied_at))}.`;
     }
     return null;
   };
@@ -631,8 +633,11 @@ export function ApplicationsGrid({
       <Input
         variant="borderless"
         placeholder="Acme Inc."
+        // Both reasons a company can be refused surface here as you type,
+        // rather than waiting for the row to be rejected on submit.
         status={
-          draft.company && blocked.has(normalizeCompany(draft.company))
+          (draft.company && blocked.has(normalizeCompany(draft.company))) ||
+          draftClash
             ? "error"
             : undefined
         }
@@ -649,7 +654,7 @@ export function ApplicationsGrid({
         value={draft.profile_id ?? undefined}
         onChange={(profile_id) => patchDraft({ profile_id })}
         options={profiles.map((p) => ({ value: p.id, label: p.label }))}
-        status={draftClash ? "warning" : undefined}
+        status={draftClash ? "error" : undefined}
       />
     ),
     // Authorship is stamped from the session on insert, so there is nothing to
@@ -747,6 +752,33 @@ export function ApplicationsGrid({
           onChange={(e) => setQuery(e.target.value)}
         />
       </Space>
+
+      {/*
+        Shown while typing, not on submit. The rule is enforced by a database
+        trigger — which can also see teammates' rows this list may not include —
+        but being told after filling in a row is a poor way to find out.
+      */}
+      {draftClash && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title={`${draftClash.company} is cooling off for this profile`}
+          description={
+            <>
+              Applied {formatDate(draftClash.applied_at)}
+              {draftClash.created_by
+                ? ` by ${applierName.get(draftClash.created_by) ?? "a teammate"}`
+                : ""}
+              {" — "}
+              <Typography.Text strong>
+                reopens {formatDate(cooldownEnds(draftClash.applied_at))}
+              </Typography.Text>
+              . Change the company or the profile to continue.
+            </>
+          }
+        />
+      )}
 
       <Card styles={{ body: { padding: 0 } }}>
         <Table<Row>
