@@ -27,6 +27,7 @@ import {
 import { useColumnWidths } from "@/lib/column-widths";
 import { toProfileRow } from "@/lib/profile-form";
 import { createClient } from "@/lib/supabase/client";
+import { describeWriteError } from "@/lib/supabase/errors";
 import { formatDate } from "@/lib/status";
 
 export type ProfileRow = {
@@ -109,7 +110,7 @@ export function ProfilesList({
 
     if (error || !created) {
       setBusy(false);
-      message.error(error?.message ?? "Could not create the profile.");
+      message.error(describeWriteError(error, "profile"));
       return;
     }
 
@@ -130,7 +131,7 @@ export function ProfilesList({
     const supabase = createClient();
     const { error } = await supabase.from("candidate_profile").delete().eq("id", id);
     if (error) {
-      message.error(error.message);
+      message.error(describeWriteError(error, "profile"));
       return;
     }
     message.success("Deleted.");

@@ -32,6 +32,7 @@ import {
 import { displayUrl } from "@/lib/profile";
 import { toFormValues, toProfileRow } from "@/lib/profile-form";
 import { createClient } from "@/lib/supabase/client";
+import { describeWriteError } from "@/lib/supabase/errors";
 import { formatDate } from "@/lib/status";
 import { useUploadThing } from "@/lib/uploadthing";
 
@@ -142,7 +143,7 @@ export function ProfileDetail({
 
     if (error) {
       setBusy(false);
-      message.error(error.message);
+      message.error(describeWriteError(error, "profile"));
       return;
     }
 
