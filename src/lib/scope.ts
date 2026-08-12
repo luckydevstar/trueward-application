@@ -1,19 +1,21 @@
-import type { Actor } from "@/lib/roles";
+import { isAdminRole, type Actor, type UserRole } from "@/lib/roles";
 
 /**
  * Who may see and record what.
  *
  * Records belong to a *team*, identified by an admin's id:
  *   - an admin's team is their own id
- *   - a bidder's team is the admin who created them
+ *   - a bidder's and a resume builder's team is the admin who created them
  *   - a super admin has no team; they manage accounts, not records
  *
- * Visibility is narrower than ownership: an admin sees their whole team, but a
- * bidder sees only the rows they recorded themselves.
+ * Within a team, reach narrows by role:
+ *   - admin           everything
+ *   - bidder          applications they recorded, profiles assigned to them
+ *   - resume_builder  only the profiles they created, and no applications
  *
- * The database enforces all of this through app_team_id() and app_role(); this
- * module exists so the UI can stamp new rows with the right team_id and hide
- * controls that would fail.
+ * The database enforces all of this through app_team_id(), app_role() and
+ * can_use_profile(); this module exists so the UI can stamp new rows with the
+ * right team_id and hide controls that would fail.
  */
 
 export type Scope =
@@ -24,7 +26,7 @@ export type Scope =
   /** Bidder: only their own rows, added into their admin's team. */
   | { kind: "own"; userId: string; adminId: string }
   /**
-   * A bidder with no admin — created out of band, or whose admin was deleted.
+   * Someone with no admin — created out of band, or whose admin was deleted.
    * They can't record, because there'd be no team to record into.
    */
   | { kind: "orphan" };
@@ -44,11 +46,49 @@ export function teamIdFor(actor: Actor): string | null {
   return null;
 }
 
+/** Whether this actor belongs to a team at all — profiles need one. */
 export function canRecord(actor: Actor): boolean {
   return teamIdFor(actor) !== null;
 }
 
-/** Super admins land on Users; the applications view isn't theirs. */
-export function seesApplications(role: Actor["role"]): boolean {
+/**
+ * The tracker is for people who send applications.
+ *
+ * A super admin manages accounts; a resume builder writes resumes. Neither has
+ * a use for the applications grid, the blocklist, or the cooldown that governs
+ * them, and the policies refuse both regardless.
+ */
+export function seesApplications(role: UserRole): boolean {
+  return role === "admin" || role === "bidder";
+}
+
+/**
+ * Whether the profiles and resume-builder pages are of any use to this role.
+ *
+ * Everyone except a super admin, who holds no team — app_team_id() is null for
+ * them, so both pages would be permanently empty. Offering a dead end is worse
+ * than not offering it.
+ */
+export function seesProfiles(role: UserRole): boolean {
   return role !== "super_admin";
+}
+
+/** Only admins route candidates to people. */
+export function canAssignProfiles(role: UserRole): boolean {
+  return isAdminRole(role);
+}
+
+/**
+ * Whether this actor may create and edit candidate profiles.
+ *
+ * A bidder is deliberately absent: they write resume *content* against a
+ * profile someone else owns, never the person's identity.
+ */
+export function canEditProfiles(role: UserRole): boolean {
+  return isAdminRole(role) || role === "resume_builder";
+}
+
+/** Resume builders see only what they made, so ownership columns are noise. */
+export function seesWholeTeam(role: UserRole): boolean {
+  return isAdminRole(role);
 }

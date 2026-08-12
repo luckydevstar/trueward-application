@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { ProfileDetail } from "@/components/profile-detail";
 import { requireActor } from "@/lib/actor";
+import { canEditProfiles } from "@/lib/scope";
 import { teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
@@ -39,7 +40,7 @@ export default async function ProfileDetailPage({
       profileId={row.id}
       teamId={teamIdFor(actor) ?? ""}
       userId={actor.id}
-      canEdit={actor.role !== "bidder"}
+      canEdit={canEditProfiles(actor.role)}
       // The ciphertext stops here: only the boolean crosses to the client.
       row={{ ...row, has_ssn: ssn_encrypted !== null }}
       attachments={attachments.data ?? []}

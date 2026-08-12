@@ -46,6 +46,7 @@ type Props = {
   teamId: string;
   userId: string;
   canEdit: boolean;
+  canAssign: boolean;
   rows: ProfileRow[];
   teamMembers: Array<{ id: string; label: string }>;
 };
@@ -66,6 +67,7 @@ export function ProfilesList({
   teamId,
   userId,
   canEdit,
+  canAssign,
   rows,
   teamMembers,
 }: Props) {
@@ -215,7 +217,7 @@ export function ProfilesList({
         return parts.length ? parts.join(", ") : <Muted />;
       },
     },
-    ...(canEdit
+    ...(canAssign
       ? ([
           {
             key: "assignees",

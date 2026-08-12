@@ -1,12 +1,27 @@
+import { Alert } from "antd";
+
 import { BlocklistPanel } from "@/components/blocklist-panel";
 import { requireActor } from "@/lib/actor";
-import { teamIdFor } from "@/lib/scope";
+import { isAdminRole } from "@/lib/roles";
+import { seesApplications, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Blocklist" };
 
 export default async function BlocklistPage() {
   const actor = await requireActor();
+
+  if (!seesApplications(actor.role)) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Not available"
+        description="The blocklist governs applications, which your account doesn't record."
+      />
+    );
+  }
+
   const supabase = await createClient();
 
   const [blocked, cooling] = await Promise.all([
@@ -30,7 +45,7 @@ export default async function BlocklistPage() {
     <BlocklistPanel
       teamId={teamIdFor(actor) ?? ""}
       userId={actor.id}
-      canEdit={actor.role !== "bidder"}
+      canEdit={isAdminRole(actor.role)}
       rows={blocked.data ?? []}
       cooling={cooling.data ?? []}
     />

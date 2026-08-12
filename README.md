@@ -191,11 +191,29 @@ same perceived speed without that.
 Records belong to a *team*, identified by an admin's id:
 
 - an admin's team is their own id
-- a bidder's team is the admin who created them
+- a bidder's and a resume builder's team is the admin who created them
 - a super admin has no team — they manage accounts, not records
 
-Visibility is narrower than ownership: an admin sees their whole team, a bidder
-sees only rows they recorded themselves.
+Within a team, reach narrows by role:
+
+| Role | Sees | Pages |
+| --- | --- | --- |
+| `admin` | everything on the team | all |
+| `bidder` | applications they recorded, profiles assigned to them | Applications, Profiles, Resume builder, Blocklist |
+| `resume_builder` | only the profiles they created | Profiles, Resume builder |
+| `super_admin` | no records at all | Users |
+
+> **Adding a role means auditing the policies, not just the enum.** Almost every
+> privileged check used to read `app_role() <> 'bidder'`, which was the same
+> thing as "is an admin" only while bidder was the *only* unprivileged role. A
+> second one made them different: `resume_builder` would have inherited admin
+> rights over applications, the blocklist, profile assignment and billing by
+> default. Anything meaning "is an admin" now says so, via `is_admin()`.
+>
+> `app_team_id()` was the other trap — it listed the roles it knew and returned
+> null for the rest, and `team_id = app_team_id()` with a null is not false but
+> *unknown*, so it never matches. A new role could read nothing and write
+> nothing, with no error saying why. The policy tests caught it.
 
 All of this is enforced by RLS in Postgres, via two `SECURITY DEFINER` helpers,
 `app_role()` and `app_team_id()`. Application code does not filter by team — if

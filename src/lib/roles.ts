@@ -7,7 +7,12 @@
  * user sees a failed write, which is the safe direction for them to disagree in.
  */
 
-export const USER_ROLES = ["super_admin", "admin", "bidder"] as const;
+export const USER_ROLES = [
+  "super_admin",
+  "admin",
+  "resume_builder",
+  "bidder",
+] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
 
@@ -25,12 +30,30 @@ export const ROLE_META: Record<
     description: "Can create and manage bidders they add.",
     color: "blue",
   },
+  resume_builder: {
+    label: "Resume builder",
+    description:
+      "Creates candidate profiles and builds resumes from them. Sees only the profiles they created.",
+    color: "cyan",
+  },
   bidder: {
     label: "Bidder",
     description: "Records applications. No user management.",
     color: "default",
   },
 };
+
+/**
+ * The privileged roles.
+ *
+ * Written as a positive list rather than "not a bidder". That phrasing was
+ * the same thing while bidder was the only unprivileged role, and quietly
+ * stopped being so the moment a second one existed — every check spelled that
+ * way would have handed the new role admin rights by default.
+ */
+export function isAdminRole(role: UserRole): boolean {
+  return role === "admin" || role === "super_admin";
+}
 
 export type Actor = {
   id: string;
@@ -51,8 +74,8 @@ export function canManageUsers(role: UserRole): boolean {
  * account) and the hierarchy would be decorative.
  */
 export function creatableRoles(role: UserRole): UserRole[] {
-  if (role === "super_admin") return ["admin", "bidder"];
-  if (role === "admin") return ["bidder"];
+  if (role === "super_admin") return ["admin", "resume_builder", "bidder"];
+  if (role === "admin") return ["resume_builder", "bidder"];
   return [];
 }
 
@@ -73,7 +96,9 @@ export function canModifyUser(
   if (actor.id === target.id) return false;
   if (actor.role === "super_admin") return true;
   if (actor.role === "admin") {
-    return target.role === "bidder" && target.createdById === actor.id;
+    return (
+      !isAdminRole(target.role) && target.createdById === actor.id
+    );
   }
   return false;
 }

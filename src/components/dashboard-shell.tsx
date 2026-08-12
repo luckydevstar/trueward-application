@@ -14,7 +14,7 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { canManageUsers, ROLE_META, type UserRole } from "@/lib/roles";
-import { seesApplications } from "@/lib/scope";
+import { seesApplications, seesProfiles } from "@/lib/scope";
 
 const { Header, Sider, Content } = Layout;
 
@@ -29,6 +29,11 @@ export function DashboardShell({ name, email, role, children }: Props) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
 
+  /**
+   * Built per role rather than filtered from one list, so a page nobody on this
+   * account can open is never offered. The pages refuse the role themselves as
+   * well — this only saves a wasted click.
+   */
   const items = [
     ...(seesApplications(role)
       ? [
@@ -37,6 +42,10 @@ export function DashboardShell({ name, email, role, children }: Props) {
             icon: <ProfileOutlined />,
             label: <Link href="/dashboard/applications">Applications</Link>,
           },
+        ]
+      : []),
+    ...(seesProfiles(role)
+      ? [
           {
             key: "/dashboard/profiles",
             icon: <IdcardOutlined />,
@@ -47,6 +56,10 @@ export function DashboardShell({ name, email, role, children }: Props) {
             icon: <FileTextOutlined />,
             label: <Link href="/dashboard/resumes">Resume builder</Link>,
           },
+        ]
+      : []),
+    ...(seesApplications(role)
+      ? [
           {
             key: "/dashboard/blocklist",
             icon: <BlockOutlined />,

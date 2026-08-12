@@ -376,6 +376,118 @@ select 'admin can change billing' as check,
 reset role;
 
 \echo ''
+\echo '=== 12. resume_builder: own profiles only ==='
+insert into auth.users (id, email)
+  values ('00000000-0000-0000-0000-0000000000c1', 'builder1@example.com'),
+         ('00000000-0000-0000-0000-0000000000c2', 'builder2@example.com');
+update app_user set role = 'resume_builder',
+                    created_by_id = '00000000-0000-0000-0000-00000000000a'
+ where id in ('00000000-0000-0000-0000-0000000000c1',
+              '00000000-0000-0000-0000-0000000000c2');
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000c1';
+select 'builder joins the admin team' as check,
+       app_team_id() = '00000000-0000-0000-0000-00000000000a' as expect_true;
+
+-- Existing team profiles were made by the admin, so a builder sees none.
+select 'sees no pre-existing profiles' as check, count(*) = 0 as expect_true
+  from candidate_profile;
+
+insert into candidate_profile (id, full_name, email, profile, team_id, created_by)
+values ('00000000-0000-0000-0000-0000000000e1', 'Builder One Candidate',
+        'bc1@example.com',
+        '{"fullName":"BC1","contact":{"email":"bc1@example.com","links":[]},"employments":[],"education":[]}'::jsonb,
+        app_team_id(), auth.uid());
+select 'sees the one they created' as check, count(*) = 1 as expect_true
+  from candidate_profile;
+
+-- A second builder on the same team must not see the first one's work.
+set test.uid = '00000000-0000-0000-0000-0000000000c2';
+select 'other builder sees nothing' as check, count(*) = 0 as expect_true
+  from candidate_profile;
+
+do $$
+begin
+  update candidate_profile set full_name = 'Stolen'
+   where id = '00000000-0000-0000-0000-0000000000e1';
+  if found then raise exception 'FAIL: builder edited another builder''s profile'; end if;
+  raise notice 'PASS: cannot edit another builder''s profile';
+end
+$$;
+reset role;
+
+\echo ''
+\echo '=== 13. resume_builder is shut out of the tracker ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000c1';
+select 'sees no applications' as check, count(*) = 0 as expect_true from application;
+
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('Nope', 'Umbrella', 'https://example.com/n1',
+          '00000000-0000-0000-0000-0000000000e1', app_team_id(), auth.uid());
+  raise exception 'FAIL: builder recorded an application';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: builder cannot record applications';
+end
+$$;
+
+-- The checks a new role would previously have walked straight through.
+do $$
+begin
+  insert into blocked_company (name, normalized_name, team_id, created_by)
+  values ('Sneaky', 'sneaky', app_team_id(), auth.uid());
+  raise exception 'FAIL: builder edited the blocklist';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: builder cannot add to the blocklist';
+end
+$$;
+
+do $$
+begin
+  insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+  values ('00000000-0000-0000-0000-0000000000e1',
+          '00000000-0000-0000-0000-0000000000b1', app_team_id(), auth.uid());
+  raise exception 'FAIL: builder assigned a profile';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: builder cannot assign profiles';
+end
+$$;
+
+select 'cannot read the SSN audit log' as check, count(*) = 0 as expect_true
+  from ssn_access_log;
+reset role;
+
+\echo ''
+\echo '=== 14. resume_builder can build resumes for their own profile ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000c1';
+insert into resume_document (id, title, profile_id, content, team_id, created_by)
+values ('00000000-0000-0000-0000-0000000000d1', 'BC1 — Backend',
+        '00000000-0000-0000-0000-0000000000e1',
+        '{"targetTitle":"Backend","summary":"x","skills":[],"experiences":[]}'::jsonb,
+        app_team_id(), auth.uid());
+select 'builder sees own resume' as check, count(*) = 1 as expect_true
+  from resume_document where id = '00000000-0000-0000-0000-0000000000d1';
+
+set test.uid = '00000000-0000-0000-0000-0000000000c2';
+select 'other builder cannot see it' as check, count(*) = 0 as expect_true
+  from resume_document where id = '00000000-0000-0000-0000-0000000000d1';
+reset role;
+
+-- An admin still oversees everything on the team.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'admin sees the builder''s profile' as check, count(*) = 1 as expect_true
+  from candidate_profile where id = '00000000-0000-0000-0000-0000000000e1';
+reset role;
+
+\echo ''
 \echo '=== 9. blocklist is team-wide readable, bidder cannot delete ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000000a';

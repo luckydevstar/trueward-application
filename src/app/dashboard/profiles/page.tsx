@@ -2,7 +2,7 @@ import { Alert } from "antd";
 
 import { ProfilesList } from "@/components/profiles-list";
 import { requireActor } from "@/lib/actor";
-import { canRecord, teamIdFor } from "@/lib/scope";
+import { canAssignProfiles, canEditProfiles, canRecord, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Profiles" };
@@ -21,7 +21,9 @@ export default async function ProfilesPage() {
     );
   }
 
-  const canEdit = actor.role !== "bidder";
+  // A builder creates and edits their own; only an admin routes them to people.
+  const canEdit = canEditProfiles(actor.role);
+  const canAssign = canAssignProfiles(actor.role);
   const supabase = await createClient();
 
   const [profiles, assignments, members] = await Promise.all([
@@ -40,7 +42,7 @@ export default async function ProfilesPage() {
     //
     // Super admins are excluded: they hold no team, so an assignment to one
     // would reference somebody who can never see the profile anyway.
-    canEdit
+    canAssign
       ? supabase
           .from("app_user")
           .select("id, name, email, role")
@@ -73,6 +75,7 @@ export default async function ProfilesPage() {
       teamId={teamIdFor(actor)!}
       userId={actor.id}
       canEdit={canEdit}
+      canAssign={canAssign}
       rows={rows}
       teamMembers={(members.data ?? []).map((m) => ({
         id: m.id,

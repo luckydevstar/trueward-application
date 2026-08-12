@@ -2,13 +2,27 @@ import { Alert } from "antd";
 
 import { ApplicationsGrid } from "@/components/applications-grid";
 import { requireActor } from "@/lib/actor";
-import { canRecord, teamIdFor } from "@/lib/scope";
+import { canRecord, seesApplications, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Applications" };
 
 export default async function ApplicationsPage() {
   const actor = await requireActor();
+
+  // Refused here as well as hidden from the nav, because a URL is typeable.
+  // RLS refuses it a third time; this only produces a sentence instead of an
+  // empty grid.
+  if (!seesApplications(actor.role)) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Not available"
+        description="The applications tracker is for admins and bidders. Your account builds resumes."
+      />
+    );
+  }
 
   if (!canRecord(actor)) {
     return (
