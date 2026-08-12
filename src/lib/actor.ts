@@ -20,9 +20,15 @@ import { createClient } from "@/lib/supabase/server";
  * cache() is per-request, so this never leaks one user's actor into another's
  * request the way a module-level variable would.
  */
-export const requireActor = cache(async (): Promise<
-  Actor & { email: string; name: string | null }
-> => {
+export type CurrentActor = Actor & {
+  email: string;
+  name: string | null;
+  /** Null means "use the role default" — see src/lib/style-access.ts. */
+  allowedTemplates: string[] | null;
+  allowedAccents: string[] | null;
+};
+
+export const requireActor = cache(async (): Promise<CurrentActor> => {
   const supabase = await createClient();
 
   // getClaims() verifies the JWT's signature the same way getUser() does, but
@@ -35,7 +41,9 @@ export const requireActor = cache(async (): Promise<
 
   const { data } = await supabase
     .from("app_user")
-    .select("id, email, name, role, created_by_id")
+    .select(
+      "id, email, name, role, created_by_id, allowed_templates, allowed_accents",
+    )
     .eq("id", userId)
     .single();
 
@@ -51,5 +59,7 @@ export const requireActor = cache(async (): Promise<
     name: data.name,
     role: data.role,
     createdById: data.created_by_id,
+    allowedTemplates: data.allowed_templates,
+    allowedAccents: data.allowed_accents,
   };
 });

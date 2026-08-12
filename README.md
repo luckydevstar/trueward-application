@@ -133,6 +133,19 @@ a white page and would surface as a pale slab the moment anything sat behind
 it. It costs ~300 fill operations, which is why that file is roughly 4 KB
 larger than the others, and it paints on page one only.
 
+Which templates and accents an account may use is set per account, on the Users
+page. Empty means "the default for their role", and `resume_builder` defaults to
+everything except the Banner template and the rust accent — the two loudest
+choices, and poor defaults for work that goes out under someone else's name
+without review. An admin can widen or narrow any individual account, and the
+per-account setting wins outright.
+
+This is enforced in the UI, not the database: it is a style guideline, and
+treating a cosmetic field as a boundary would mean validating it on every write.
+A stale choice — a saved resume or a remembered preference naming a template the
+account no longer has — snaps to the first permitted one rather than rendering
+something the picker cannot represent.
+
 Text drawn on a filled panel picks its own colour: `prefersLightText` computes
 WCAG relative luminance, so a pale accent gets dark text rather than
 white-on-yellow. That is also why the sidebar's headings use the panel's text

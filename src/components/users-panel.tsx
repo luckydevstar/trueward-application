@@ -29,6 +29,8 @@ type Row = {
   name: string | null;
   role: UserRole;
   createdAt: string;
+  allowedTemplates: string[];
+  allowedAccents: string[];
   isSelf: boolean;
   canModify: boolean;
   canEdit: boolean;
@@ -39,6 +41,9 @@ type Props = {
   rows: Row[];
   creatableRoles: UserRole[];
   serviceRoleConfigured: boolean;
+  /** The full style vocabulary, for the per-account allowance pickers. */
+  allTemplates: Array<{ value: string; label: string }>;
+  allAccents: string[];
 };
 
 type FormValues = {
@@ -54,12 +59,16 @@ type EditValues = {
   email: string;
   password?: string;
   role: UserRole;
+  allowedTemplates: string[];
+  allowedAccents: string[];
 };
 
 export function UsersPanel({
   rows,
   creatableRoles,
   serviceRoleConfigured,
+  allTemplates,
+  allAccents,
 }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
@@ -80,6 +89,8 @@ export function UsersPanel({
       // an admin fixing a typo in someone's name doesn't reset their login.
       password: values.password?.trim() ? values.password : undefined,
       role: editing.canChangeRole ? values.role : undefined,
+      allowedTemplates: values.allowedTemplates ?? [],
+      allowedAccents: values.allowedAccents ?? [],
     });
     setBusy(false);
 
@@ -194,6 +205,8 @@ export function UsersPanel({
                           email: row.email,
                           password: "",
                           role: row.role,
+                          allowedTemplates: row.allowedTemplates,
+                          allowedAccents: row.allowedAccents,
                         });
                       }}
                     />
@@ -310,6 +323,35 @@ export function UsersPanel({
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
+          {editing?.canModify && (
+            <>
+              <Form.Item
+                name="allowedTemplates"
+                label="Templates they may use"
+                extra="Leave empty for the default for their role."
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  placeholder="Role default"
+                  options={allTemplates}
+                />
+              </Form.Item>
+              <Form.Item
+                name="allowedAccents"
+                label="Accents they may use"
+                extra="Leave empty for the default for their role."
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  placeholder="Role default"
+                  options={allAccents.map((a) => ({ value: a, label: a }))}
+                />
+              </Form.Item>
+            </>
+          )}
+
           <Form.Item
             name="role"
             label="Role"

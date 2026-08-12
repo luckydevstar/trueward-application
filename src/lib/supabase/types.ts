@@ -32,6 +32,12 @@ export type AppUserRow = {
   name: string | null;
   role: UserRole;
   created_by_id: string | null;
+  /**
+   * Which resume templates and accents this account may use. Null falls back
+   * to the role default; see src/lib/style-access.ts.
+   */
+  allowed_templates: string[] | null;
+  allowed_accents: string[] | null;
   created_at: string;
 };
 
@@ -148,6 +154,8 @@ export type ApplicationRow = Owned &
  * added to a Row can't be forgotten in the other two.
  */
 type Defaulted =
+  | "allowed_templates"
+  | "allowed_accents"
   | "id"
   | "created_at"
   | "updated_at"

@@ -9,6 +9,8 @@ import {
   canModifyUser,
   creatableRoles,
 } from "@/lib/roles";
+import { ACCENT_NAMES } from "@/lib/pdf/resume-pdf";
+import { TEMPLATES } from "@/lib/pdf/templates";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Users · Application" };
@@ -30,7 +32,9 @@ export default async function UsersPage() {
   const supabase = await createClient();
   const { data } = await supabase
     .from("app_user")
-    .select("id, email, name, role, created_by_id, created_at")
+    .select(
+      "id, email, name, role, created_by_id, created_at, allowed_templates, allowed_accents",
+    )
     .order("created_at");
 
   /**
@@ -46,6 +50,8 @@ export default async function UsersPage() {
       name: u.name,
       role: u.role,
       createdAt: u.created_at,
+      allowedTemplates: u.allowed_templates ?? [],
+      allowedAccents: u.allowed_accents ?? [],
       isSelf: u.id === actor.id,
       canModify: canModifyUser(actor, target),
       canEdit: canEditUser(actor, target),
@@ -57,6 +63,8 @@ export default async function UsersPage() {
     <UsersPanel
       rows={rows}
       creatableRoles={creatableRoles(actor.role)}
+      allTemplates={TEMPLATES.map((t) => ({ value: t.id, label: t.label }))}
+      allAccents={ACCENT_NAMES}
       serviceRoleConfigured={Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)}
     />
   );

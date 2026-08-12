@@ -2,6 +2,7 @@ import { ResumeBuilder } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { profileSchema } from "@/lib/document/schema";
 import { teamIdFor } from "@/lib/scope";
+import { allowedAccents, allowedTemplates } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Resume builder" };
@@ -44,6 +45,8 @@ export default async function ResumesPage() {
       documents={documents.data ?? []}
       teamId={teamIdFor(actor) ?? ""}
       userId={actor.id}
+      templates={allowedTemplates(actor.role, actor.allowedTemplates)}
+      accents={allowedAccents(actor.role, actor.allowedAccents)}
     />
   );
 }

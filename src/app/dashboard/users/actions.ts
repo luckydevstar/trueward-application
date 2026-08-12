@@ -92,6 +92,8 @@ export async function updateUser(input: {
   email?: string;
   password?: string;
   role?: UserRole;
+  allowedTemplates?: string[];
+  allowedAccents?: string[];
 }): Promise<ActionResult> {
   const actor = await requireActor();
 
@@ -154,10 +156,34 @@ export async function updateUser(input: {
   // app_user mirrors auth.users, and only the signup trigger keeps them in
   // step — it fires on insert, never on update. Without this the list would go
   // on showing the old email indefinitely.
-  const rowPatch: { name?: string; email?: string; role?: UserRole } = {};
+  const rowPatch: {
+    name?: string;
+    email?: string;
+    role?: UserRole;
+    allowed_templates?: string[] | null;
+    allowed_accents?: string[] | null;
+  } = {};
   if (input.name !== undefined) rowPatch.name = input.name.trim();
   if (input.email !== undefined) rowPatch.email = input.email.trim();
   if (roleChanged) rowPatch.role = input.role;
+
+  // Style allowances are an admin's to set, and only over someone else — there
+  // is no reason to restrict your own palette, and letting you do it invites
+  // locking yourself out of a template you then cannot restore.
+  if (canModifyUser(actor, asTarget)) {
+    // Empty means "back to the role default", stored as null rather than an
+    // empty array so the fallback in style-access.ts can tell them apart.
+    if (input.allowedTemplates !== undefined) {
+      rowPatch.allowed_templates = input.allowedTemplates.length
+        ? input.allowedTemplates
+        : null;
+    }
+    if (input.allowedAccents !== undefined) {
+      rowPatch.allowed_accents = input.allowedAccents.length
+        ? input.allowedAccents
+        : null;
+    }
+  }
 
   if (Object.keys(rowPatch).length) {
     const { error } = await admin.from("app_user").update(rowPatch).eq("id", input.id);

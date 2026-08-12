@@ -20,7 +20,7 @@ import {
 } from "antd";
 
 import { ACCENT_NAMES } from "@/lib/pdf/resume-pdf";
-import { TEMPLATES } from "@/lib/pdf/templates";
+import { TEMPLATES, type TemplateSpec } from "@/lib/pdf/templates";
 import {
   HEADER_FIELD_LABELS,
   resolveHeaderFields,
@@ -46,6 +46,9 @@ export const DEFAULT_STYLE: ResumeStyle = {
 type Props = {
   template: string;
   style: ResumeStyle;
+  /** What this account may choose from — see src/lib/style-access.ts. */
+  templates: TemplateSpec[];
+  accents: string[];
   onTemplateChange: (template: string) => void;
   onStyleChange: (next: ResumeStyle) => void;
 };
@@ -61,6 +64,8 @@ type Props = {
 export function ResumeStyleToolbar({
   template,
   style,
+  templates,
+  accents,
   onTemplateChange,
   onStyleChange,
 }: Props) {
@@ -97,7 +102,7 @@ export function ResumeStyleToolbar({
           // sentence each don't fit on one strip, and the hint is what makes
           // them choosable without rendering each in turn.
           optionLabelProp="label"
-          options={TEMPLATES.map((t) => ({
+          options={templates.map((t) => ({
             value: t.id,
             label: t.label,
             title: t.hint,
@@ -170,7 +175,7 @@ export function ResumeStyleToolbar({
           size="small"
           value={style.accent ?? "slate"}
           onChange={(v) => patch({ accent: String(v) })}
-          options={ACCENTS}
+          options={accents}
         />
       </Field>
 

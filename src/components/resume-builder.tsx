@@ -43,7 +43,9 @@ import {
 } from "@/lib/document/schema";
 import { downloadResumePdf, renderResumePdfUrl } from "@/lib/pdf/resume-pdf";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
+import type { TemplateSpec } from "@/lib/pdf/templates";
 import { usePersistentState } from "@/lib/persistent-state";
+import { coerceChoice } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/status";
 import type { ResumeStyle } from "@/lib/supabase/types";
@@ -70,6 +72,8 @@ type Props = {
   documents: DocumentRow[];
   teamId: string;
   userId: string;
+  templates: TemplateSpec[];
+  accents: string[];
 };
 
 /**
@@ -112,7 +116,14 @@ const EXAMPLE_OPTION: ProfileOption = {
   error: null,
 };
 
-export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
+export function ResumeBuilder({
+  profiles,
+  documents,
+  teamId,
+  userId,
+  templates,
+  accents,
+}: Props) {
   const router = useRouter();
   const { message } = App.useApp();
 
@@ -143,7 +154,35 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
     STYLE_STORAGE_KEY,
     DEFAULT_PRESET,
   );
-  const { template, style } = preset;
+  /**
+   * Snapped inside the allowance before use. The preset is remembered in
+   * localStorage and a saved resume carries its own, so either can name a
+   * template or accent this account is no longer offered — rendering the old
+   * one would show something the picker cannot represent.
+   */
+  const template = useMemo(
+    () =>
+      coerceChoice(
+        preset.template,
+        templates.map((t) => t.id),
+        DEFAULT_PRESET.template,
+      ),
+    [preset.template, templates],
+  );
+
+  /**
+   * Memoised, not just computed. The preview effect below depends on this
+   * object, so a fresh one each render would reset its debounce timer on every
+   * render — including renders that had nothing to do with styling — and the
+   * PDF would only ever appear during a lull.
+   */
+  const style: ResumeStyle = useMemo(
+    () => ({
+      ...preset.style,
+      accent: coerceChoice(preset.style.accent, accents, accents[0]),
+    }),
+    [preset.style, accents],
+  );
   const setTemplate = (next: string) => setPreset((p) => ({ ...p, template: next }));
   const setStyle = (next: ResumeStyle | ((previous: ResumeStyle) => ResumeStyle)) =>
     setPreset((p) => ({
@@ -481,6 +520,8 @@ export function ResumeBuilder({ profiles, documents, teamId, userId }: Props) {
       <ResumeStyleToolbar
         template={template}
         style={style}
+        templates={templates}
+        accents={accents}
         onTemplateChange={setTemplate}
         onStyleChange={setStyle}
       />
