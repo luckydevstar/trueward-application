@@ -102,3 +102,35 @@ export function canModifyUser(
   }
   return false;
 }
+
+/**
+ * Whether the actor may open the edit form for this account.
+ *
+ * Broader than canModifyUser, because it includes your own row: changing your
+ * own name, email or password is not an escalation, and locking someone out of
+ * their own details to protect them from themselves is the wrong trade.
+ *
+ * What you may change once inside is a separate question — see
+ * canChangeRoleOf, which is where the escalation risk actually lives.
+ */
+export function canEditUser(
+  actor: Actor,
+  target: { id: string; role: UserRole; createdById: string | null },
+): boolean {
+  return actor.id === target.id || canModifyUser(actor, target);
+}
+
+/**
+ * Whether the actor may set this account's role, and to what.
+ *
+ * Never your own: an admin promoting themselves to super admin, or the last
+ * super admin demoting themselves, both leave the hierarchy in a state nobody
+ * can undo. The available roles are the ones you could have created in the
+ * first place — anything else would let an admin mint a peer indirectly.
+ */
+export function canChangeRoleOf(
+  actor: Actor,
+  target: { id: string; role: UserRole; createdById: string | null },
+): boolean {
+  return canModifyUser(actor, target) && creatableRoles(actor.role).length > 0;
+}

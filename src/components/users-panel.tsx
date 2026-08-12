@@ -1,6 +1,6 @@
 "use client";
 
-import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import {
   Alert,
   App,
@@ -19,7 +19,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { createUser, deleteUser } from "@/app/dashboard/users/actions";
+import { createUser, deleteUser, updateUser } from "@/app/dashboard/users/actions";
 import { ROLE_META, type UserRole } from "@/lib/roles";
 import { formatDate } from "@/lib/status";
 
@@ -29,7 +29,10 @@ type Row = {
   name: string | null;
   role: UserRole;
   createdAt: string;
+  isSelf: boolean;
   canModify: boolean;
+  canEdit: boolean;
+  canChangeRole: boolean;
 };
 
 type Props = {
@@ -45,6 +48,14 @@ type FormValues = {
   role: UserRole;
 };
 
+/** Edit reuses the create shape, but the password is optional. */
+type EditValues = {
+  name: string;
+  email: string;
+  password?: string;
+  role: UserRole;
+};
+
 export function UsersPanel({
   rows,
   creatableRoles,
@@ -55,6 +66,31 @@ export function UsersPanel({
   const [form] = Form.useForm<FormValues>();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<Row | null>(null);
+  const [editForm] = Form.useForm<EditValues>();
+
+  const saveEdit = async (values: EditValues) => {
+    if (!editing) return;
+    setBusy(true);
+    const result = await updateUser({
+      id: editing.id,
+      name: values.name,
+      email: values.email,
+      // Blank means "leave it alone" rather than "set an empty password", so
+      // an admin fixing a typo in someone's name doesn't reset their login.
+      password: values.password?.trim() ? values.password : undefined,
+      role: editing.canChangeRole ? values.role : undefined,
+    });
+    setBusy(false);
+
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success("Account updated.");
+    setEditing(null);
+    router.refresh();
+  };
 
   const submit = async (values: FormValues) => {
     setBusy(true);
@@ -122,7 +158,12 @@ export function UsersPanel({
             {
               title: "Name",
               dataIndex: "name",
-              render: (name: string | null, row) => name ?? row.email,
+              render: (name: string | null, row) => (
+                <Space size={6}>
+                  {name ?? row.email}
+                  {row.isSelf && <Tag>you</Tag>}
+                </Space>
+              ),
             },
             { title: "Email", dataIndex: "email" },
             {
@@ -139,18 +180,36 @@ export function UsersPanel({
             },
             {
               title: "",
-              width: 56,
-              render: (_, row) =>
-                row.canModify ? (
-                  <Popconfirm
-                    title="Remove this account?"
-                    description="Their applications stay, but they lose access."
-                    onConfirm={() => remove(row.id)}
-                    okButtonProps={{ danger: true }}
-                  >
-                    <Button type="text" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                ) : null,
+              width: 96,
+              render: (_, row) => (
+                <Space size={0}>
+                  {row.canEdit && (
+                    <Button
+                      type="text"
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        setEditing(row);
+                        editForm.setFieldsValue({
+                          name: row.name ?? "",
+                          email: row.email,
+                          password: "",
+                          role: row.role,
+                        });
+                      }}
+                    />
+                  )}
+                  {row.canModify && (
+                    <Popconfirm
+                      title="Remove this account?"
+                      description="Their applications stay, but they lose access."
+                      onConfirm={() => remove(row.id)}
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button type="text" danger icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  )}
+                </Space>
+              ),
             },
           ]}
         />
@@ -205,6 +264,69 @@ export function UsersPanel({
                 value: r,
                 label: ROLE_META[r].label,
               }))}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`Edit ${editing?.name ?? editing?.email ?? "account"}`}
+        open={editing !== null}
+        onCancel={() => setEditing(null)}
+        onOk={() => editForm.submit()}
+        confirmLoading={busy}
+        okText="Save"
+        destroyOnHidden
+      >
+        <Form<EditValues>
+          form={editForm}
+          layout="vertical"
+          onFinish={saveEdit}
+          requiredMark={false}
+        >
+          <Form.Item
+            name="name"
+            label="Name"
+            rules={[{ required: true, message: "Enter a name" }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="email"
+            label="Email"
+            extra="Changing this changes the address they sign in with."
+            rules={[
+              { required: true, message: "Enter an email" },
+              { type: "email", message: "That doesn't look like an email" },
+            ]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="password"
+            label="New password"
+            extra="Leave blank to keep the current one."
+            rules={[{ min: 8, message: "At least 8 characters" }]}
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item
+            name="role"
+            label="Role"
+            extra={
+              editing && !editing.canChangeRole
+                ? editing.isSelf
+                  ? "You can't change your own role."
+                  : "You can't change this account's role."
+                : undefined
+            }
+          >
+            <Select
+              disabled={!editing?.canChangeRole}
+              options={(editing?.canChangeRole
+                ? creatableRoles
+                : ([editing?.role].filter(Boolean) as UserRole[])
+              ).map((r) => ({ value: r, label: ROLE_META[r].label }))}
             />
           </Form.Item>
         </Form>
