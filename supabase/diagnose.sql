@@ -7,29 +7,29 @@
 -- which, so this prints them and the values they compare against.
 -- ===========================================================================
 
--- 1. Which migrations have landed -------------------------------------------
+-- 1. Which parts of the schema have landed ----------------------------------
 select
-  to_regprocedure('public.app_role()')            is not null as "0001 app_role",
-  to_regprocedure('public.can_use_profile(uuid)') is not null as "0002 can_use_profile",
-  to_regprocedure('public.normalize_company(text)') is not null as "0003 normalize_company",
-  to_regprocedure('public.enforce_billing_authority()') is not null as "0004 billing",
-  to_regprocedure('public.is_builder()')          is not null as "0005 is_builder",
+  to_regprocedure('public.app_role()')            is not null as "app_role",
+  to_regprocedure('public.can_use_profile(uuid)') is not null as "can_use_profile",
+  to_regprocedure('public.normalize_company(text)') is not null as "normalize_company",
+  to_regprocedure('public.enforce_billing_authority()') is not null as "billing",
+  to_regprocedure('public.is_builder()')          is not null as "is_builder",
   exists (
     select 1 from information_schema.columns
     where table_name = 'app_user' and column_name = 'allowed_templates'
-  ) as "0006 allowed_templates";
+  ) as "allowed_templates";
 
 -- 2. Does app_team_id() know about resume_builder? --------------------------
 --
--- This is the one that bites. The pre-0005 version listed only 'admin' and
+-- This is the one that bites. An older version listed only 'admin' and
 -- 'bidder' and returned null for anything else — and `team_id = app_team_id()`
 -- against null is not false but *unknown*, so it matches nothing and every
 -- insert is refused with no indication why.
 select
   case
     when pg_get_functiondef(to_regprocedure('public.app_team_id()')) like '%resume_builder%'
-      then 'OK — 0005 version is live'
-    else 'STALE — re-run supabase/migrations/0005_resume_builder_role.sql'
+      then 'OK — current version is live'
+    else 'STALE — re-run supabase/schema.sql'
   end as app_team_id_status;
 
 -- 3. The live insert rule for profiles --------------------------------------

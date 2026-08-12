@@ -45,11 +45,15 @@ run -d app_test -q -c 'create extension if not exists "pgcrypto";'
 echo "→ installing Supabase stubs"
 run -d app_test -q -f "$root/supabase/tests/supabase-stub.sql"
 
-echo "→ applying migrations"
-for m in "$root"/supabase/migrations/*.sql; do
-  echo "   $(basename "$m")"
-  run -d app_test -q -f "$m" >/dev/null
-done
+echo "→ applying schema"
+run -d app_test -q -f "$root/supabase/schema.sql" >/dev/null
+
+# Applied twice on purpose. The file is meant to converge an existing database,
+# not only build a new one, and a second pass is the cheapest way to keep that
+# honest — anything not written idempotently fails here rather than in a
+# production SQL editor.
+echo "→ applying schema again (idempotence)"
+run -d app_test -q -f "$root/supabase/schema.sql" >/dev/null
 
 echo "→ running policy tests"
 output="$(run -d app_test -f "$root/supabase/tests/rls.sql" 2>&1)"

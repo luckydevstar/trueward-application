@@ -29,8 +29,22 @@ npm run dev
 ```
 
 Then apply the schema. In the Supabase dashboard, open the SQL editor and run
-`supabase/migrations/0001_init.sql` — it creates the tables, the signup trigger,
-and every RLS policy.
+`supabase/schema.sql` — tables, functions, triggers and every RLS policy, in one
+file.
+
+Run it again whenever that file changes. It *converges* an existing database
+rather than rebuilding one: tables and columns are added if missing, functions
+and policies are replaced, and nothing holding rows is dropped. Applying it
+twice in a row is part of the test suite.
+
+That single file replaced a numbered migration series, for a reason worth
+keeping in mind: applying an older migration after a newer one silently reverted
+policies the newer one had tightened, because both created a policy of the same
+name and the last one won. One file cannot be applied out of order.
+
+If something is refused with "new row violates row-level security policy", run
+`supabase/diagnose.sql` — it reads only, and prints which parts of the schema are
+live, the policy that refused, and the team each account resolves to.
 
 ### The first account
 
@@ -49,7 +63,7 @@ prints the password. Omit `--password` and it generates a strong one and shows
 it once. It's idempotent — run it again on the same email to reset the password
 or change the role, which also makes it the way back in if you're locked out.
 
-Requires `SUPABASE_SERVICE_ROLE_KEY`, and the migration must already be applied.
+Requires `SUPABASE_SERVICE_ROLE_KEY`, and the schema must already be applied.
 
 > **Pick `admin`, not `super_admin`, unless you specifically want an
 > account-management-only login.** `app_team_id()` returns null for
@@ -66,7 +80,7 @@ From then on, the Users page creates the rest of the team.
 | `npm run build` | Production build |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run seed:user` | Creates/updates an account with a known password and role |
-| `npm run test:rls` | Applies the migration to a throwaway Postgres and asserts the policies |
+| `npm run test:rls` | Applies `schema.sql` twice to a throwaway Postgres and asserts the policies |
 | `npm run render:fixture` | Renders the sample resume once per template into `fixtures/` |
 
 `test:rls` needs `postgresql` on PATH (`brew install postgresql@16`).
