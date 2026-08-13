@@ -29,7 +29,7 @@ select
   case
     when pg_get_functiondef(to_regprocedure('public.app_team_id()')) like '%resume_builder%'
       then 'OK — current version is live'
-    else 'STALE — re-run supabase/schema.sql'
+    else 'STALE — re-run supabase/schema/ parts 1-4'
   end as app_team_id_status;
 
 -- 3. The live insert rule for profiles --------------------------------------

@@ -29,18 +29,30 @@ npm run dev
 ```
 
 Then apply the schema. In the Supabase dashboard, open the SQL editor and run
-`supabase/schema.sql` — tables, functions, triggers and every RLS policy, in one
-file.
+the four files in `supabase/schema/`, in order:
 
-Run it again whenever that file changes. It *converges* an existing database
-rather than rebuilding one: tables and columns are added if missing, functions
-and policies are replaced, and nothing holding rows is dropped. Applying it
-twice in a row is part of the test suite.
+| | |
+| --- | --- |
+| `01_tables.sql` | Tables, enums and indexes |
+| `02_functions.sql` | Identity, scope, bookkeeping and SSN |
+| `03_rules.sql` | Duplicate applications, billing and the cooldown view |
+| `04_policies.sql` | Row level security |
 
-That single file replaced a numbered migration series, for a reason worth
-keeping in mind: applying an older migration after a newer one silently reverted
-policies the newer one had tightened, because both created a policy of the same
-name and the last one won. One file cannot be applied out of order.
+They are one schema split across four pastes, not a migration series — the SQL
+editor will not take 37 KB at once. Order matters in one direction only:
+policies name functions and functions name tables, so a part run too early fails
+with "relation does not exist" rather than doing something subtly wrong.
+
+Run them again, all four, whenever any of them changes. They *converge* an
+existing database rather than rebuilding one: tables and columns are added if
+missing, functions and policies are replaced, and nothing holding rows is
+dropped. Applying the whole set twice in a row is part of the test suite.
+
+They replaced a numbered migration series, for a reason worth keeping in mind:
+applying an older migration after a newer one silently reverted policies the
+newer one had tightened, because both created a policy of the same name and the
+last one won. These four never overlap, so re-running them in order cannot
+produce that.
 
 If something is refused with "new row violates row-level security policy", run
 `supabase/diagnose.sql` — it reads only, and prints which parts of the schema are
@@ -80,7 +92,7 @@ From then on, the Users page creates the rest of the team.
 | `npm run build` | Production build |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run seed:user` | Creates/updates an account with a known password and role |
-| `npm run test:rls` | Applies `schema.sql` twice to a throwaway Postgres and asserts the policies |
+| `npm run test:rls` | Applies `supabase/schema/` twice to a throwaway Postgres and asserts the policies |
 | `npm run render:fixture` | Renders the sample resume once per template into `fixtures/` |
 
 `test:rls` needs `postgresql` on PATH (`brew install postgresql@16`).
