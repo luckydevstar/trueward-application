@@ -1,6 +1,7 @@
 "use server";
 
 import { requireActor } from "@/lib/actor";
+import { canEditProfile } from "@/lib/profile-access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -31,10 +32,9 @@ function encryptionKey(): string {
  *
  * Two independent gates, because either alone is insufficient:
  *
- *  1. The role check here. Bidders never see an SSN regardless of assignment.
- *  2. A team-scoped read through the *user's* client, so RLS decides whether
- *     this caller can see the row at all. A service-role read would happily
- *     return another team's ciphertext.
+ *  1. The actor must be an admin, or the resume builder who owns this profile.
+ *  2. The profile must be in that actor's team. These are checked here because
+ *     this deployment intentionally has RLS disabled.
  *
  * Every successful reveal writes to ssn_access_log, which has no update or
  * delete policy — the trail cannot be edited from the app.
@@ -42,20 +42,22 @@ function encryptionKey(): string {
 export async function revealSsn(profileId: string): Promise<SsnResult> {
   const actor = await requireActor();
 
-  if (actor.role === "bidder") {
+  if (actor.role === "bidder" || actor.role === "super_admin") {
     return { ok: false, error: "Only admins can reveal a Social Security number." };
   }
 
   const supabase = await createClient();
 
-  // Gate 2: prove the caller can see this row before decrypting anything.
+  // Gate 2: prove the caller may edit this row before decrypting anything.
   const { data: visible } = await supabase
     .from("candidate_profile")
-    .select("id, team_id")
+    .select("id, team_id, created_by")
     .eq("id", profileId)
     .maybeSingle();
 
-  if (!visible) return { ok: false, error: "Profile not found." };
+  if (!visible || !canEditProfile(actor, visible)) {
+    return { ok: false, error: "Profile not found." };
+  }
 
   let key: string;
   try {
@@ -79,8 +81,7 @@ export async function revealSsn(profileId: string): Promise<SsnResult> {
 
   if (error) return { ok: false, error: error.message };
 
-  // Logged through the user's client so the insert is subject to the
-  // append-only policy and stamped with a team the caller actually belongs to.
+  // The server already checked actor and team before writing the audit entry.
   await supabase.from("ssn_access_log").insert({
     profile_id: profileId,
     actor_id: actor.id,
@@ -103,7 +104,7 @@ export async function setSsn(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const actor = await requireActor();
 
-  if (actor.role === "bidder") {
+  if (actor.role === "bidder" || actor.role === "super_admin") {
     return { ok: false, error: "Only admins can set a Social Security number." };
   }
 
@@ -115,11 +116,13 @@ export async function setSsn(
   const supabase = await createClient();
   const { data: visible } = await supabase
     .from("candidate_profile")
-    .select("id")
+    .select("id, team_id, created_by")
     .eq("id", profileId)
     .maybeSingle();
 
-  if (!visible) return { ok: false, error: "Profile not found." };
+  if (!visible || !canEditProfile(actor, visible)) {
+    return { ok: false, error: "Profile not found." };
+  }
 
   let key: string;
   try {

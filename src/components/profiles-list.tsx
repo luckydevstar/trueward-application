@@ -18,6 +18,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import {
+  createProfile,
+  deleteProfile,
+  replaceProfileAssignees,
+} from "@/app/dashboard/profiles/actions";
 import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
 import { ResizableTitle } from "@/components/grid/resizable-title";
 import {
@@ -26,8 +31,6 @@ import {
 } from "@/components/profile-editor";
 import { useColumnWidths } from "@/lib/column-widths";
 import { toProfileRow } from "@/lib/profile-form";
-import { createClient } from "@/lib/supabase/client";
-import { describeWriteError } from "@/lib/supabase/errors";
 import { formatDate } from "@/lib/status";
 
 export type ProfileRow = {
@@ -44,8 +47,6 @@ export type ProfileRow = {
 };
 
 type Props = {
-  teamId: string;
-  userId: string;
   canEdit: boolean;
   canAssign: boolean;
   rows: ProfileRow[];
@@ -65,8 +66,6 @@ const DEFAULT_WIDTHS: Record<string, number> = {
 };
 
 export function ProfilesList({
-  teamId,
-  userId,
   canEdit,
   canAssign,
   rows,
@@ -101,23 +100,18 @@ export function ProfilesList({
     }
 
     setBusy(true);
-    const supabase = createClient();
-    const { data: created, error } = await supabase
-      .from("candidate_profile")
-      .insert({ ...row, team_id: teamId, created_by: userId })
-      .select("id")
-      .single();
+    const created = await createProfile(row);
 
-    if (error || !created) {
+    if (!created.ok) {
       setBusy(false);
-      message.error(describeWriteError(error, "profile"));
+      message.error(created.error);
       return;
     }
 
     // Separate call: the plaintext has exactly one entry point into the system,
     // and it is never part of an ordinary row write.
     if (values.ssn?.trim()) {
-      const result = await setSsn(created.id, values.ssn);
+      const result = await setSsn(created.data.id, values.ssn);
       if (!result.ok) message.warning(`Profile saved, but: ${result.error}`);
     }
 
@@ -128,10 +122,9 @@ export function ProfilesList({
   };
 
   const remove = async (id: string) => {
-    const supabase = createClient();
-    const { error } = await supabase.from("candidate_profile").delete().eq("id", id);
-    if (error) {
-      message.error(describeWriteError(error, "profile"));
+    const result = await deleteProfile(id);
+    if (!result.ok) {
+      message.error(result.error);
       return;
     }
     message.success("Deleted.");
@@ -144,37 +137,10 @@ export function ProfilesList({
    * remove events.
    */
   const setAssignees = async (profileId: string, next: string[]) => {
-    const supabase = createClient();
-    const current = rows.find((r) => r.id === profileId)?.assignee_ids ?? [];
-
-    const added = next.filter((id) => !current.includes(id));
-    const removed = current.filter((id) => !next.includes(id));
-
-    if (added.length) {
-      const { error } = await supabase.from("profile_assignment").insert(
-        added.map((id) => ({
-          profile_id: profileId,
-          user_id: id,
-          team_id: teamId,
-          assigned_by: userId,
-        })),
-      );
-      if (error) {
-        message.error(error.message);
-        return;
-      }
-    }
-
-    if (removed.length) {
-      const { error } = await supabase
-        .from("profile_assignment")
-        .delete()
-        .eq("profile_id", profileId)
-        .in("user_id", removed);
-      if (error) {
-        message.error(error.message);
-        return;
-      }
+    const result = await replaceProfileAssignees(profileId, next);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
     }
 
     router.refresh();

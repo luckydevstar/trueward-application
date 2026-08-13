@@ -24,6 +24,11 @@ import {
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import {
+  addProfileAttachments,
+  deleteProfileAttachment,
+  updateProfile,
+} from "@/app/dashboard/profiles/actions";
 import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
 import {
   ProfileEditor,
@@ -31,8 +36,6 @@ import {
 } from "@/components/profile-editor";
 import { displayUrl } from "@/lib/profile";
 import { toFormValues, toProfileRow } from "@/lib/profile-form";
-import { createClient } from "@/lib/supabase/client";
-import { describeWriteError } from "@/lib/supabase/errors";
 import { formatDate } from "@/lib/status";
 import { useUploadThing } from "@/lib/uploadthing";
 
@@ -48,8 +51,6 @@ type Attachment = {
 
 type Props = {
   profileId: string;
-  teamId: string;
-  userId: string;
   canEdit: boolean;
   row: Parameters<typeof toFormValues>[0] & { has_ssn: boolean };
   attachments: Attachment[];
@@ -57,8 +58,6 @@ type Props = {
 
 export function ProfileDetail({
   profileId,
-  teamId,
-  userId,
   canEdit,
   row,
   attachments,
@@ -94,23 +93,20 @@ export function ProfileDetail({
       const uploaded = await startUpload(files);
       if (!uploaded?.length) return;
 
-      const supabase = createClient();
-      const { error } = await supabase.from("profile_attachment").insert(
+      const result = await addProfileAttachments(
+        profileId,
         uploaded.map((file) => ({
-          profile_id: profileId,
           label: file.name.replace(/\.[^.]+$/, ""),
           file_key: file.key,
           file_url: file.ufsUrl,
           file_name: file.name,
           file_type: file.type,
           file_size: file.size,
-          team_id: teamId,
-          created_by: userId,
         })),
       );
 
-      if (error) {
-        message.error(error.message);
+      if (!result.ok) {
+        message.error(result.error);
         return;
       }
       message.success("Attached.");
@@ -135,15 +131,11 @@ export function ProfileDetail({
     }
 
     setBusy(true);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("candidate_profile")
-      .update(next)
-      .eq("id", profileId);
+    const result = await updateProfile(profileId, next);
 
-    if (error) {
+    if (!result.ok) {
       setBusy(false);
-      message.error(describeWriteError(error, "profile"));
+      message.error(result.error);
       return;
     }
 
@@ -161,13 +153,9 @@ export function ProfileDetail({
   };
 
   const removeAttachment = async (id: string) => {
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("profile_attachment")
-      .delete()
-      .eq("id", id);
-    if (error) {
-      message.error(error.message);
+    const result = await deleteProfileAttachment(id);
+    if (!result.ok) {
+      message.error(result.error);
       return;
     }
     router.refresh();

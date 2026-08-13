@@ -24,28 +24,53 @@ export default async function ProfilesPage() {
   // A builder creates and edits their own; only an admin routes them to people.
   const canEdit = canEditProfiles(actor.role);
   const canAssign = canAssignProfiles(actor.role);
+  const teamId = teamIdFor(actor)!;
   const supabase = await createClient();
 
+  /**
+   * RLS is intentionally disabled in this deployment, so this query carries
+   * the same team/ownership restriction in application code. In particular a
+   * resume builder must never receive another builder's profile in the page
+   * payload.
+   */
+  let profileQuery = supabase
+    .from("candidate_profile")
+    // ssn_encrypted is never selected. The list only needs to know *whether*
+    // one exists, which the boolean below answers without moving ciphertext.
+    .select(
+      "id, full_name, email, phone, city, state, country, updated_at, ssn_encrypted",
+    )
+    .eq("team_id", teamId)
+    .order("full_name");
+
+  if (actor.role === "resume_builder") {
+    profileQuery = profileQuery.eq("created_by", actor.id);
+  } else if (actor.role === "bidder") {
+    const { data: assignments } = await supabase
+      .from("profile_assignment")
+      .select("profile_id")
+      .eq("team_id", teamId)
+      .eq("user_id", actor.id);
+    const assignedIds = (assignments ?? []).map((assignment) => assignment.profile_id);
+    if (!assignedIds.length) profileQuery = profileQuery.in("id", ["00000000-0000-0000-0000-000000000000"]);
+    else profileQuery = profileQuery.in("id", assignedIds);
+  }
+
   const [profiles, assignments, members] = await Promise.all([
-    supabase
-      .from("candidate_profile")
-      // ssn_encrypted is never selected. The list only needs to know *whether*
-      // one exists, which the boolean below answers without moving ciphertext.
-      .select(
-        "id, full_name, email, phone, city, state, country, updated_at, ssn_encrypted",
-      )
-      .order("full_name"),
-    supabase.from("profile_assignment").select("profile_id, user_id"),
-    // Every team member, not just bidders. Restricting this to bidders left an
-    // all-admin team with an empty dropdown and no way to assign anything —
-    // which read as the feature being missing.
-    //
-    // Super admins are excluded: they hold no team, so an assignment to one
-    // would reference somebody who can never see the profile anyway.
+    profileQuery,
+    canAssign
+      ? supabase
+          .from("profile_assignment")
+          .select("profile_id, user_id")
+          .eq("team_id", teamId)
+      : Promise.resolve({ data: [] as never[] }),
+    // Every team member, not just bidders. A member is either the team's admin
+    // or an account created by that admin; super admins have no team.
     canAssign
       ? supabase
           .from("app_user")
           .select("id, name, email, role")
+          .or(`id.eq.${teamId},created_by_id.eq.${teamId}`)
           .neq("role", "super_admin")
           .order("name")
       : Promise.resolve({ data: [] as never[] }),
@@ -72,8 +97,6 @@ export default async function ProfilesPage() {
 
   return (
     <ProfilesList
-      teamId={teamIdFor(actor)!}
-      userId={actor.id}
       canEdit={canEdit}
       canAssign={canAssign}
       rows={rows}
