@@ -309,6 +309,12 @@ employers, and dates alone — it cannot reach them. Employment facts are
 referenced by `employmentId`, and an id that doesn't resolve is a hard
 validation failure rather than an invented employer.
 
+Experiences run most-recent-first, but the check only compares roles whose
+periods **don't overlap**. Two jobs held at the same time — a permanent role and
+a concurrent contract — have no canonical order, and which reads better depends
+on the posting, so either arrangement is accepted. A genuinely reversed list is
+still caught.
+
 The two halves live in separate tables and are joined only at render time, so
 regenerating positioning for a new job rewrites one row and cannot touch the
 other.

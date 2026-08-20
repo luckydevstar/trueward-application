@@ -306,19 +306,50 @@ export const resumeDocumentSchema = z
       used.add(x.employmentId);
     });
 
-    const keys = doc.content.experiences
+    /**
+     * Experiences run most-recent-first — but only where "most recent" means
+     * something.
+     *
+     * Two roles held at the same time have no canonical order. A day job and a
+     * concurrent contract are equally current, and which one reads better
+     * depends on the job being applied for. Sorting strictly by start date
+     * rejected the more natural of those two orderings for no reason.
+     *
+     * So the rule looks at *adjacent* pairs and only bites when they don't
+     * overlap: a list in genuinely reversed order is still caught, while
+     * concurrent roles may be given in either order.
+     */
+    const listed = doc.content.experiences
       .map((x) => known.get(x.employmentId))
-      .filter((e): e is NonNullable<typeof e> => Boolean(e))
-      .map((e) => monthYearKey(e.startDate));
+      .filter((e): e is NonNullable<typeof e> => Boolean(e));
 
-    const descending = [...keys].sort((a, b) => b - a);
-    if (keys.join() !== descending.join()) {
+    /** An open-ended role runs to today, so it outlasts every dated one. */
+    const endsAt = (e: Employment) =>
+      e.endDate ? monthYearKey(e.endDate) : Number.POSITIVE_INFINITY;
+
+    const concurrent = (a: Employment, b: Employment) =>
+      monthYearKey(a.startDate) <= endsAt(b) &&
+      monthYearKey(b.startDate) <= endsAt(a);
+
+    listed.forEach((first, i) => {
+      const second = listed[i + 1];
+      if (!second) return;
+
+      // In order already, or tied.
+      if (monthYearKey(first.startDate) >= monthYearKey(second.startDate)) return;
+      // Overlapping roles: neither is "before" the other in any useful sense.
+      if (concurrent(first, second)) return;
+
       ctx.addIssue({
         code: "custom",
-        path: ["content", "experiences"],
-        message: "experiences must be ordered most-recent-first",
+        path: ["content", "experiences", i],
+        message:
+          `${second.company} (${formatMonthYear(second.startDate)}) is more ` +
+          `recent than ${first.company} (${formatMonthYear(first.startDate)}) ` +
+          `and the two don't overlap, so it should be listed first — ` +
+          `experiences run most-recent-first`,
       });
-    }
+    });
   });
 
 export type Link = z.infer<typeof linkSchema>;
