@@ -54,6 +54,8 @@ type Resolved = {
   lineSpacing: number;
   justify: boolean;
   spec: TemplateSpec;
+  /** Base-14 family. Both stay selectable and embed nothing. */
+  font: "helvetica" | "times";
 };
 
 function resolve(style: ResumeStyle, template: string): Resolved {
@@ -65,6 +67,7 @@ function resolve(style: ResumeStyle, template: string): Resolved {
     lineSpacing: style.lineSpacing ?? 1.4,
     justify: style.justify ?? false,
     spec: templateSpec(template),
+    font: templateSpec(template).font ?? "helvetica",
   };
 }
 
@@ -251,14 +254,17 @@ export function renderResumePdf(
       align?: "left" | "center" | "right";
       maxWidth?: number;
       justify?: boolean;
+      /** Letterspacing. Small caps need it; body copy never does. */
+      charSpace?: number;
     } = {},
   ) => {
-    pdf.setFont("helvetica", opts.bold ? "bold" : "normal");
+    pdf.setFont(s.font, opts.bold ? "bold" : "normal");
     pdf.setFontSize(size);
     pdf.setTextColor(...(opts.color ?? INK));
     pdf.text(value, x, y, {
       lineHeightFactor: s.lineSpacing,
       align: opts.align ?? "left",
+      ...(opts.charSpace ? { charSpace: opts.charSpace } : {}),
       ...(opts.justify && opts.maxWidth
         ? { align: "justify" as const, maxWidth: opts.maxWidth }
         : {}),
@@ -305,7 +311,7 @@ export function renderResumePdf(
     if (spec.heading === "chip") {
       const padX = 7;
       const padY = 4.5;
-      pdf.setFont("helvetica", "bold");
+      pdf.setFont(s.font, "bold");
       pdf.setFontSize(size);
       const label = title.toUpperCase();
       const width = pdf.getTextWidth(label) + padX * 2;
@@ -320,7 +326,57 @@ export function renderResumePdf(
       return;
     }
 
-    write(title.toUpperCase(), flow.x, flow.y, size, { bold: true, color });
+    const spaced = { charSpace: spec.headingSpace };
+
+    // A rule *above* the heading opens the section before naming it, which
+    // reads as more formal — the effect most academic and legal templates use.
+    if (spec.heading === "ruleAbove") {
+      pdf.setDrawColor(...tint(color, 0.45));
+      pdf.setLineWidth(0.8);
+      pdf.line(flow.x, flow.y - size * 0.9, flow.x + flow.width, flow.y - size * 0.9);
+      flow.y += 4;
+      write(title.toUpperCase(), flow.x, flow.y, size, {
+        bold: true,
+        color,
+        ...spaced,
+      });
+      flow.y += size * 0.9 + 6;
+      return;
+    }
+
+    /**
+     * The heading hangs in the left column and the body is indented past it.
+     * Nothing is drawn — the column itself is the structure.
+     *
+     * It still advances. Setting the section's first line on the heading's own
+     * baseline collided with that entry's date, which occupies the same
+     * column: "EXPERIENCE" and "March 2022 – Present" were drawn on top of one
+     * another. The hanging position is what makes the layout read, not a
+     * shared baseline.
+     */
+    if (spec.heading === "gutter") {
+      write(title.toUpperCase(), flow.x, flow.y, size, {
+        bold: true,
+        color,
+        ...spaced,
+      });
+      flow.y += size * 0.9 + 7;
+      return;
+    }
+
+    write(title.toUpperCase(), flow.x, flow.y, size, {
+      bold: true,
+      color,
+      ...spaced,
+    });
+
+    if (spec.heading === "plain") {
+      // Whitespace alone. The letterspacing above is what marks it as a
+      // heading, so a rule here would be saying the same thing twice.
+      flow.y += size * 0.75 + 6;
+      return;
+    }
+
     flow.y += 5;
 
     if (spec.heading === "bar") {
@@ -337,17 +393,18 @@ export function renderResumePdf(
     }
   };
 
-  const bullet = (flow: Flow, text: string, color = INK) => {
+  const bullet = (flow: Flow, text: string, color = INK, offset = 0) => {
     const size = 9 * s.fontScale;
-    const indent = 13;
+    const indent = offset + 13;
     const lines = wrap(text, size, flow.width - indent - 4);
     const height = lines.length * size * s.lineSpacing + 3;
     advance(flow, height);
     on(flow);
 
     pdf.setFillColor(...color);
-    // -2.3 lifts the dot from the baseline to the middle of the x-height.
-    pdf.circle(flow.x + 3, flow.y - 2.3, 1.25, "F");
+    // -2.3 lifts the dot from the baseline to the middle of the x-height. The
+    // offset keeps it with its text rather than out in the date column.
+    pdf.circle(flow.x + offset + 3, flow.y - 2.3, 1.25, "F");
     write(lines, flow.x + indent, flow.y, size, {
       color,
       justify: s.justify,
@@ -362,6 +419,18 @@ export function renderResumePdf(
   const mainWidth = pageWidth - mainX - spec.margin;
 
   const main: Flow = { x: mainX, width: mainWidth, y: spec.margin, page: 1 };
+
+  /**
+   * A left column holding dates, and the section heading that opens each block.
+   *
+   * Zero for every template but Ledger, where body text is indented past it and
+   * dates are set in it rather than right-aligned. Nothing is filled and there
+   * is no second flow — it is one column with a hanging indent, which is why it
+   * paginates like any other single-column layout.
+   */
+  const gutter = spec.dateGutter ?? 0;
+  const bodyX = main.x + gutter;
+  const bodyWidth = main.width - gutter;
 
   const nameSize = 21 * s.fontScale * (spec.nameScale ?? 1);
   const titleSize = 11 * s.fontScale;
@@ -389,7 +458,7 @@ export function renderResumePdf(
      * wrong words, and a link pointing somewhere unexpected is worse than none.
      */
     if (lines.length === 1 && contactParts.some((p) => p.href)) {
-      pdf.setFont("helvetica", "normal");
+      pdf.setFont(s.font, "normal");
       pdf.setFontSize(contactSize);
       const sep = pdf.getTextWidth(CONTACT_SEP);
       let cursor = align === "center" ? x - pdf.getTextWidth(joined) / 2 : x;
@@ -471,53 +540,82 @@ export function renderResumePdf(
     const align = centered ? "center" : "left";
     const nameColor = spec.heading === "bar" ? s.accent : INK;
 
-    write(profile.fullName, anchor, main.y + nameSize * 0.3, nameSize, {
-      bold: true,
-      color: nameColor,
-      align,
-    });
+    write(
+      spec.uppercaseName ? profile.fullName.toUpperCase() : profile.fullName,
+      anchor,
+      main.y + nameSize * 0.3,
+      nameSize,
+      {
+        bold: true,
+        color: nameColor,
+        align,
+        // Caps at display size need air between the letters or they read as a
+        // solid block rather than a name.
+        ...(spec.uppercaseName ? { charSpace: nameSize * 0.06 } : {}),
+      },
+    );
     main.y += nameSize * 1.05;
     write(content.targetTitle, anchor, main.y, titleSize, {
       color: spec.heading === "bar" ? MUTED : s.accent,
       align,
+      charSpace: spec.headingSpace ? spec.headingSpace * 0.4 : undefined,
     });
     main.y += titleSize * 1.25;
     main.y += contactLine(anchor, main.y, mainWidth, align, MUTED);
+
+    // A rule closing the header, so the block reads as a masthead rather than
+    // as the first three lines of the document.
+    if (spec.headerRule) {
+      main.y += 8;
+      pdf.setDrawColor(...(spec.headerRule >= 2 ? s.accent : tint(INK, 0.5)));
+      pdf.setLineWidth(spec.headerRule);
+      pdf.line(spec.margin, main.y, pageWidth - spec.margin, main.y);
+      main.y += 2;
+    }
   }
 
   // -------------------------------------------------------- main column
 
   if (content.summary) {
     heading(main, spec.header === "sidebar" ? "Profile" : "Summary");
-    block(main, wrap(content.summary, 9.5 * s.fontScale, main.width), 9.5 * s.fontScale);
+    block(
+      main,
+      wrap(content.summary, 9.5 * s.fontScale, bodyWidth),
+      9.5 * s.fontScale,
+      INK,
+      gutter,
+    );
   }
 
   /** Skills as "Category: a, b, c", with the label set bold inline. */
-  const skillGroups = (flow: Flow, color: RGB, labelColor: RGB) => {
+  const skillGroups = (flow: Flow, color: RGB, labelColor: RGB, indent = 0) => {
+    const x = flow.x + indent;
+    const width = flow.width - indent;
+
     for (const group of content.skills) {
       const size = 9 * s.fontScale;
       const lineHeight = size * s.lineSpacing;
       const label = `${group.name}: `;
 
-      pdf.setFont("helvetica", "bold");
+      pdf.setFont(s.font, "bold");
       pdf.setFontSize(size);
       const labelWidth = pdf.getTextWidth(label);
 
       // The first line is shortened by the label; the rest run full width. The
       // 0.35 floor stops a long category name squeezing it to a few characters.
-      const firstWidth = Math.max(flow.width - labelWidth, flow.width * 0.35);
+      const firstWidth = Math.max(width - labelWidth, width * 0.35);
       const all = wrap(group.items.join(", "), size, firstWidth);
       const first = all.shift() ?? "";
-      const rest = all.length ? wrap(all.join(" "), size, flow.width) : [];
+      const rest = all.length ? wrap(all.join(" "), size, width) : [];
 
       advance(flow, (1 + rest.length) * lineHeight);
       on(flow);
-      write(label, flow.x, flow.y, size, { bold: true, color: labelColor });
-      write(first, flow.x + labelWidth, flow.y, size, { color });
+      write(label, x, flow.y, size, { bold: true, color: labelColor });
+      write(first, x + labelWidth, flow.y, size, { color });
       flow.y += lineHeight;
 
       if (rest.length) {
-        write(rest, flow.x, flow.y, size, { color });
+        write(rest, x, flow.y, size, { color });
         flow.y += rest.length * lineHeight;
       }
     }
@@ -544,42 +642,64 @@ export function renderResumePdf(
 
   if (content.skills.length && spec.header !== "sidebar") {
     heading(main, "Skills");
-    skillGroups(main, INK, INK);
+    skillGroups(main, INK, INK, gutter);
   }
 
   if (experiences.length) {
     heading(main, "Experience");
-    for (const { employment, title, bullets } of experiences) {
+    experiences.forEach(({ employment, title, bullets }, index) => {
       const headSize = 10 * s.fontScale;
       const metaSize = 8.5 * s.fontScale;
+
+      // A hairline between roles, never above the first — that would read as a
+      // second rule under the section heading.
+      if (spec.entryDivider && index > 0) {
+        advance(main, 12);
+        on(main);
+        main.y += 4;
+        pdf.setDrawColor(...tint(MUTED, 0.6));
+        pdf.setLineWidth(0.5);
+        pdf.line(bodyX, main.y, main.x + main.width, main.y);
+        main.y += 10;
+      }
+
       advance(main, (headSize + metaSize) * s.lineSpacing);
       on(main);
 
-      // Dates sit right-aligned on the title's baseline, so a role and its
-      // period read as one row rather than two stacked lines.
       const period = `${formatMonthYear(employment.startDate)} – ${formatMonthYear(
         employment.endDate ?? null,
         "Present",
       )}`;
-      write(title, main.x, main.y, headSize, { bold: true });
-      write(period, main.x + main.width, main.y, metaSize, {
-        color: MUTED,
-        align: "right",
-      });
+
+      if (gutter) {
+        // Set in the gutter, on the title's baseline. Wrapped to the column so
+        // a long "September 2019 – December 2024" doesn't run under the title.
+        const dateLines = wrap(period, metaSize, gutter - 10);
+        write(dateLines, main.x, main.y, metaSize, { color: MUTED });
+      } else {
+        // Right-aligned on the title's baseline, so a role and its period read
+        // as one row rather than two stacked lines.
+        write(period, main.x + main.width, main.y, metaSize, {
+          color: MUTED,
+          align: "right",
+        });
+      }
+
+      write(title, bodyX, main.y, headSize, { bold: true });
       main.y += headSize * s.lineSpacing;
 
       write(
         [employment.company, employment.location].filter(Boolean).join(" · "),
-        main.x,
+        bodyX,
         main.y,
         metaSize,
         { color: s.accent },
       );
       main.y += metaSize * s.lineSpacing + 2;
 
-      for (const b of bullets) bullet(main, b.text);
+      for (const b of bullets) bullet(main, b.text, INK, gutter);
       main.y += 5;
-    }
+    });
   }
 
   if (profile.education.length && spec.header !== "sidebar") {
@@ -588,17 +708,22 @@ export function renderResumePdf(
       const size = 9.5 * s.fontScale;
       advance(main, size * s.lineSpacing * 2);
       on(main);
-      write(edu.degree, main.x, main.y, size, { bold: true });
+      write(edu.degree, bodyX, main.y, size, { bold: true });
       if (edu.year) {
-        write(formatMonthYear(edu.year), main.x + main.width, main.y, 8.5 * s.fontScale, {
-          color: MUTED,
-          align: "right",
-        });
+        const year = formatMonthYear(edu.year);
+        if (gutter) {
+          write(year, main.x, main.y, 8.5 * s.fontScale, { color: MUTED });
+        } else {
+          write(year, main.x + main.width, main.y, 8.5 * s.fontScale, {
+            color: MUTED,
+            align: "right",
+          });
+        }
       }
       main.y += size * s.lineSpacing;
       write(
         [edu.school, edu.location].filter(Boolean).join(" · "),
-        main.x,
+        bodyX,
         main.y,
         8.5 * s.fontScale,
         { color: MUTED },

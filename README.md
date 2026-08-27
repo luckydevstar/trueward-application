@@ -125,9 +125,14 @@ template, so a layout change can be checked without clicking through the UI.
 
 ### Templates
 
-`src/lib/pdf/templates.ts` holds the specs. Each varies the header treatment
-(plain / filled banner / coloured sidebar), the section-heading style (hairline
-rule / accent bar / filled chip), margins and spacing:
+`src/lib/pdf/templates.ts` holds the specs. A template is a set of structural
+axes, not a palette — the accent colour is a separate control, and every
+template can be drawn in any of them. What a spec varies: the typeface
+(Helvetica or Times, both PDF base-14 so nothing embeds), the header treatment
+(plain / filled banner / coloured column / curved wash), how a section heading
+is drawn (hairline under, hairline over, accent bar, filled chip, letterspaced
+caps alone, or set out in the date gutter), whether dates sit right-aligned or
+in a left column, letterspacing, dividers, margins and spacing.
 
 | | |
 | --- | --- |
@@ -137,6 +142,18 @@ rule / accent bar / filled chip), margins and spacing:
 | Banner | Full-width colour block behind the name |
 | Sidebar | Coloured column carrying contact, skills, education |
 | Wave | Gradient wash over the top third, curving into the page |
+| Executive | Serif, name in letterspaced caps, rule under the header |
+| Academic | Serif, rule *above* each section, generous spacing |
+| Editorial | Large name, heavy accent rule, roles split by hairlines |
+| Ledger | Dates in a 96pt left column, headings hanging in it |
+| Minimal | No rules anywhere; whitespace and letterspacing only |
+
+The five after Wave are single-column and deliberately quiet — the ones you
+send to a firm that would read Banner as a poster. They differ structurally, not
+by colour: Executive and Academic are the two serifs and are still distinguished
+by where the rule falls and whether the name is in caps; Ledger moves the dates
+out of the text block entirely, which changes the measure of every line beside
+it; Minimal draws no rules at all.
 
 **Wave is worth a note.** The panel is a *backdrop*, not a container: the
 header, summary, skills and first experiences all flow across it, and the curve

@@ -24,15 +24,42 @@ export type TemplateSpec = {
    */
   header: "plain" | "banner" | "sidebar" | "wave";
   /**
-   * rule — small caps over a hairline
-   * bar  — small caps with a short thick accent stroke beneath
-   * chip — small caps reversed out of a filled accent tab
+   * rule      — small caps over a hairline
+   * bar       — small caps with a short thick accent stroke beneath
+   * chip      — small caps reversed out of a filled accent tab
+   * ruleAbove — a hairline first, heading beneath it
+   * plain     — letterspaced small caps and nothing else
+   * gutter    — heading set in the left date gutter, beside its content
    */
-  heading: "rule" | "bar" | "chip";
+  heading: "rule" | "bar" | "chip" | "ruleAbove" | "plain" | "gutter";
   /** Sidebar templates only: width of the coloured column, in points. */
   sidebarWidth?: number;
   /** Multiplier on the name, for templates that want a louder or quieter one. */
   nameScale?: number;
+
+  /**
+   * Typeface. Both are PDF base-14, so neither embeds anything and both stay
+   * selectable — but a serif reads as traditional in a way no amount of colour
+   * does, which is most of what separates a law-firm resume from a startup one.
+   */
+  font?: "helvetica" | "times";
+  /** Letterspacing on section headings, in points. Small caps want a little. */
+  headingSpace?: number;
+  /** The name in caps, letterspaced to match. */
+  uppercaseName?: boolean;
+  /**
+   * Width of a left column carrying dates, in points. Zero puts dates
+   * right-aligned on the title's baseline instead.
+   *
+   * Not a sidebar: nothing is filled, the column holds only dates, and the
+   * text beside it is the ordinary single flow. It is a way of setting dates
+   * apart without a coloured panel.
+   */
+  dateGutter?: number;
+  /** A hairline between one role and the next. */
+  entryDivider?: boolean;
+  /** A rule beneath the whole header block. */
+  headerRule?: number;
 };
 
 export const TEMPLATES: TemplateSpec[] = [
@@ -94,6 +121,66 @@ export const TEMPLATES: TemplateSpec[] = [
     header: "wave",
     heading: "bar",
     nameScale: 1.2,
+  },
+  {
+    id: "executive",
+    label: "Executive",
+    hint: "Serif, centred name in caps, rule beneath the header.",
+    margin: 58,
+    sectionGap: 15,
+    header: "plain",
+    heading: "rule",
+    font: "times",
+    nameScale: 1.1,
+    uppercaseName: true,
+    headingSpace: 1.4,
+    headerRule: 1.2,
+  },
+  {
+    id: "academic",
+    label: "Academic",
+    hint: "Serif, a rule above each section, generous spacing.",
+    margin: 62,
+    sectionGap: 18,
+    header: "plain",
+    heading: "ruleAbove",
+    font: "times",
+    headingSpace: 1.2,
+  },
+  {
+    id: "editorial",
+    label: "Editorial",
+    hint: "Large name, heavy header rule, roles divided by hairlines.",
+    margin: 52,
+    sectionGap: 16,
+    header: "plain",
+    heading: "plain",
+    nameScale: 1.3,
+    headingSpace: 1.8,
+    entryDivider: true,
+    headerRule: 2.4,
+  },
+  {
+    id: "ledger",
+    label: "Ledger",
+    hint: "Dates in a left column, headings beside the text they open.",
+    margin: 52,
+    sectionGap: 16,
+    header: "plain",
+    heading: "gutter",
+    dateGutter: 96,
+    headingSpace: 1.2,
+  },
+  {
+    id: "minimal",
+    label: "Minimal",
+    hint: "No rules anywhere. Whitespace and letterspacing do the work.",
+    margin: 64,
+    sectionGap: 20,
+    header: "plain",
+    heading: "plain",
+    headingSpace: 2.2,
+    nameScale: 0.95,
   },
 ];
 
