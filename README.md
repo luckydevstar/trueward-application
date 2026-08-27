@@ -5,8 +5,8 @@ Job application tracking and tailored resume generation, in one app.
 Two halves that meet at the resume document:
 
 - **The tracker** — a spreadsheet-style grid of applications with resizable
-  columns, inline row editing, a resume attached per row, and a blocklist of
-  companies that must never receive an application.
+  columns, inline row editing, a resume attached per row, bulk archive and
+  delete, and a blocklist of companies that must never receive an application.
 - **The builder** — candidate profiles and the tailored resumes generated from
   them, styled and exported to PDF.
 
@@ -288,6 +288,32 @@ admins until deliberately routed. Admins assign from the Profiles page.
 
 Editing a candidate's identity is an admin action — a bidder writes resume
 content, not someone's date of birth.
+
+### Archiving
+
+An application carries `archived_at`: null while it is on the working list, a
+timestamp once it is off. The grid is two views over the one already-loaded
+list, so switching between Active and Archived is a filter, not a round trip.
+
+**Archiving is not a soft delete.** An archived row is still a row — it still
+belongs to its team, still counts in totals, and, most importantly, **still
+holds its company closed for the 14-day duplicate cooldown**. That last part is
+the reason the distinction is worth having: if archiving lifted the cooldown it
+would be a one-click way around a rule the trigger otherwise enforces. Archiving
+tidies a view; deleting retracts a record. The trigger's query has no
+`archived_at` filter, and a test asserts it stays that way.
+
+No new policy backs any of this. Archiving is an ordinary `update`, so it
+inherits `application_update` — your own rows, or any of your team's if you are
+an admin — and restoring is the same update with null. Bulk actions send one
+`.in(…)` statement and let RLS filter it row by row.
+
+Archived rows are read-only in the grid: edit, status and billing are all
+disabled until the row is restored. The checkbox on a teammate's row is
+disabled too, so "select all" cannot assemble a batch that RLS will then refuse
+half of. Bulk actions run against the *visible* selection, so narrowing the
+search narrows the action rather than silently taking rows that scrolled out of
+view.
 
 ### Social Security numbers
 

@@ -50,7 +50,7 @@ export default async function ApplicationsPage() {
     supabase
       .from("application")
       .select(
-        "id, title, company, job_url, status, billing, notes, applied_at, resume_key, resume_url, resume_name, profile_id, created_by",
+        "id, title, company, job_url, status, billing, notes, applied_at, resume_key, resume_url, resume_name, profile_id, created_by, archived_at",
       )
       .order("applied_at", { ascending: false }),
     supabase.from("candidate_profile").select("id, full_name").order("full_name"),

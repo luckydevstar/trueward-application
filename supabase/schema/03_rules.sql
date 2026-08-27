@@ -96,6 +96,10 @@ begin
      and a.applied_at > new.applied_at - make_interval(days => window_days)
      and a.applied_at < new.applied_at + make_interval(days => window_days)
      and a.id is distinct from new.id
+     -- No archived_at filter, on purpose. An archived application was still
+     -- sent, and the cooldown exists so a candidate isn't approached twice in
+     -- a fortnight. Skipping archived rows here would turn "archive it" into a
+     -- one-click bypass of this trigger.
    order by a.applied_at desc
    limit 1;
 

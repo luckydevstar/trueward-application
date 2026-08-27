@@ -146,6 +146,8 @@ export type ApplicationRow = Owned &
     resume_document_id: string | null;
     profile_id: string | null;
     applied_at: string;
+    /** Null while active. A timestamp takes it off the working list. */
+    archived_at: string | null;
   };
 
 /**
@@ -160,6 +162,8 @@ type Defaulted =
   | "created_at"
   | "updated_at"
   | "revealed_at"
+  // Nothing is created archived, so an insert never carries it.
+  | "archived_at"
   // Written only by store_ssn, never as part of a profile insert.
   | "ssn_encrypted";
 

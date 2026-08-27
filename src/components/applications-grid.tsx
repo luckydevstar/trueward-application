@@ -5,8 +5,10 @@ import {
   CloseOutlined,
   DeleteOutlined,
   EditOutlined,
+  InboxOutlined,
   PaperClipOutlined,
   PlusOutlined,
+  UndoOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import {
@@ -17,6 +19,7 @@ import {
   DatePicker,
   Input,
   Popconfirm,
+  Segmented,
   Select,
   Space,
   Table,
@@ -24,6 +27,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
+import type { TableProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useRouter } from "next/navigation";
@@ -59,10 +63,15 @@ export type Row = {
   resume_name: string | null;
   profile_id: string | null;
   created_by: string | null;
+  /** Null while the row is on the working list; a timestamp once archived. */
+  archived_at: string | null;
 };
 
-/** The draft owns no author — that is stamped from the session on insert. */
-type Draft = Omit<Row, "id" | "created_by">;
+/** The draft owns no author or archive state — neither is yours to type. */
+type Draft = Omit<Row, "id" | "created_by" | "archived_at">;
+
+/** Which half of the tracker the grid is showing. */
+type ViewMode = "active" | "archived";
 
 type Option = { id: string; label: string };
 
@@ -105,6 +114,9 @@ const COLUMN_KEYS = [
   "actions",
 ] as const;
 
+/** Only ever shown in the archived view, so it is outside COLUMN_KEYS. */
+const ARCHIVED_AT_KEY = "archived_at";
+
 const DEFAULT_WIDTHS: Record<string, number> = {
   title: 200,
   company: 160,
@@ -116,7 +128,8 @@ const DEFAULT_WIDTHS: Record<string, number> = {
   resume: 170,
   applied_at: 140,
   notes: 220,
-  actions: 96,
+  actions: 120,
+  [ARCHIVED_AT_KEY]: 140,
 };
 
 function emptyDraft(): Draft {
@@ -150,6 +163,12 @@ export function ApplicationsGrid({
   const [query, setQuery] = useState("");
   const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
 
+  // Two views over one list, not two lists: everything is already loaded, so
+  // switching is a filter rather than a round trip.
+  const [view, setView] = useState<ViewMode>("active");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
   /**
    * The entry row is always present — it is not something you open.
    *
@@ -170,13 +189,21 @@ export function ApplicationsGrid({
 
   const blocked = useMemo(() => new Set(blockedNames), [blockedNames]);
 
+  const archivedCount = useMemo(
+    () => rows.filter((r) => r.archived_at !== null).length,
+    [rows],
+  );
+
   const data = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
+    const inView = rows.filter(
+      (r) => (r.archived_at !== null) === (view === "archived"),
+    );
+    if (!q) return inView;
+    return inView.filter(
       (r) => r.title.toLowerCase().includes(q) || r.company.toLowerCase().includes(q),
     );
-  }, [rows, query]);
+  }, [rows, query, view]);
 
   // Fields listed explicitly rather than spread-minus-id, so a column added to
   // Row that shouldn't be editable doesn't silently become editable.
@@ -218,7 +245,30 @@ export function ApplicationsGrid({
   );
 
   /** You may change your own rows; admins may change any in their team. */
-  const canAct = (row: Row) => isAdmin || row.created_by === userId;
+  const owns = (row: Row) => isAdmin || row.created_by === userId;
+
+  /**
+   * Editing is for live rows. An archived row is deliberately read-only —
+   * restore it first — so the archive reads as a record of what was sent
+   * rather than a second place to keep working.
+   */
+  const canAct = (row: Row) => owns(row) && row.archived_at === null;
+
+  /**
+   * What a bulk action would actually touch: selected, currently visible, and
+   * yours to act on.
+   *
+   * Derived rather than pruned in state, because the alternative is acting on
+   * rows the search has since hidden — selecting fifty, typing a filter, and
+   * hitting Delete would otherwise take the fifty, not the four on screen.
+   * Narrowing the view narrows the action, which is the safe direction.
+   */
+  const targets = useMemo(() => {
+    const actionable = new Set(
+      data.filter((r) => isAdmin || r.created_by === userId).map((r) => r.id),
+    );
+    return selected.filter((id) => actionable.has(id));
+  }, [selected, data, isAdmin, userId]);
 
   /**
    * The most recent application for a (profile, company) still inside the
@@ -227,6 +277,9 @@ export function ApplicationsGrid({
    * A courtesy check only — the database trigger is the rule, and it can see
    * teammates' rows this list may not include. Catching it here turns a
    * rejected save into a warning while you are still typing.
+   *
+   * Searches every row, archived included, because the trigger does: an
+   * archived application was still sent, so it still closes the company.
    */
   const cooldownClash = (value: Draft, ignoreId?: string) => {
     if (!value.profile_id || !value.company.trim()) return null;
@@ -336,14 +389,52 @@ export function ApplicationsGrid({
     router.refresh();
   };
 
-  const remove = async (id: string) => {
+  /** "1 application" / "4 applications" — used in every bulk confirmation. */
+  const count = (n: number) => `${n} application${n === 1 ? "" : "s"}`;
+
+  /**
+   * Archive or restore, one row or many.
+   *
+   * No dedicated policy backs this: archiving is an ordinary update, so it
+   * inherits application_update — your own rows, or any of your team's if you
+   * are an admin. `.in()` sends one statement; RLS filters it row by row, so a
+   * selection that somehow included a row you cannot touch quietly leaves that
+   * row alone instead of failing the whole batch.
+   */
+  const setArchived = async (ids: string[], archived: boolean) => {
+    if (!ids.length) return;
+
+    setBulkBusy(true);
     const supabase = createClient();
-    const { error } = await supabase.from("application").delete().eq("id", id);
+    const { error } = await supabase
+      .from("application")
+      .update({ archived_at: archived ? new Date().toISOString() : null })
+      .in("id", ids);
+    setBulkBusy(false);
+
     if (error) {
       message.error(error.message);
       return;
     }
-    message.success("Deleted.");
+    setSelected([]);
+    message.success(`${count(ids.length)} ${archived ? "archived" : "restored"}.`);
+    router.refresh();
+  };
+
+  const remove = async (ids: string[]) => {
+    if (!ids.length) return;
+
+    setBulkBusy(true);
+    const supabase = createClient();
+    const { error } = await supabase.from("application").delete().in("id", ids);
+    setBulkBusy(false);
+
+    if (error) {
+      message.error(error.message);
+      return;
+    }
+    setSelected([]);
+    message.success(`${count(ids.length)} deleted.`);
     router.refresh();
   };
 
@@ -573,7 +664,9 @@ export function ApplicationsGrid({
         // about not duplicating their work — not about editing it. RLS refuses
         // the write regardless; hiding the controls means you find that out
         // before clicking rather than after.
-        if (!canAct(row)) {
+        // owns(), not canAct(): an archived row of your own is read-only but
+        // still yours to restore or delete, so it must not fall in here.
+        if (!owns(row)) {
           return (
             <Tooltip title="Recorded by a teammate — read only">
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -582,6 +675,28 @@ export function ApplicationsGrid({
             </Tooltip>
           );
         }
+        if (row.archived_at) {
+          return (
+            <Space size={0}>
+              <Tooltip title="Restore to the active list">
+                <Button
+                  type="text"
+                  icon={<UndoOutlined />}
+                  onClick={() => setArchived([row.id], false)}
+                />
+              </Tooltip>
+              <Popconfirm
+                title="Delete this application?"
+                description="Archiving keeps it. This does not."
+                onConfirm={() => remove([row.id])}
+                okButtonProps={{ danger: true }}
+              >
+                <Button type="text" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            </Space>
+          );
+        }
+
         return (
           <Space size={0}>
             <Button
@@ -590,9 +705,17 @@ export function ApplicationsGrid({
               disabled={editingId !== null}
               onClick={() => startEdit(row)}
             />
+            <Tooltip title="Archive — keeps the record, off the list">
+              <Button
+                type="text"
+                icon={<InboxOutlined />}
+                onClick={() => setArchived([row.id], true)}
+              />
+            </Tooltip>
             <Popconfirm
               title="Delete this application?"
-              onConfirm={() => remove(row.id)}
+              description="Archive it instead if you only want it off the list."
+              onConfirm={() => remove([row.id])}
               okButtonProps={{ danger: true }}
             >
               <Button type="text" danger icon={<DeleteOutlined />} />
@@ -602,6 +725,19 @@ export function ApplicationsGrid({
       },
     },
   ];
+
+  // Only meaningful once a row has been archived, so it is spliced in for that
+  // view rather than sitting empty in the other one.
+  if (view === "archived") {
+    baseColumns.splice(baseColumns.length - 1, 0, {
+      key: ARCHIVED_AT_KEY,
+      title: "Archived",
+      dataIndex: "archived_at",
+      sorter: (a, b) => (a.archived_at ?? "").localeCompare(b.archived_at ?? ""),
+      render: (value: string | null) =>
+        value ? formatDate(value) : <Muted />,
+    });
+  }
 
   // Width lives outside the column definitions so a resize doesn't rebuild
   // every renderer, and so the persisted map stays the single source.
@@ -617,6 +753,30 @@ export function ApplicationsGrid({
       }),
     };
   }) as ColumnsType<Row>;
+
+  /**
+   * Checkboxes, with the same ownership rule the row controls use.
+   *
+   * A teammate's row is visible because you share the candidate; disabling its
+   * checkbox means "select all" cannot quietly load a batch with rows in it
+   * that RLS will refuse. antd's own selections skip disabled rows, so Select
+   * all and Invert stay honest for free.
+   */
+  const rowSelection: TableProps<Row>["rowSelection"] = {
+    selectedRowKeys: selected,
+    onChange: (keys) => setSelected(keys as string[]),
+    getCheckboxProps: (row) => ({ disabled: !owns(row) }),
+    selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
+    columnWidth: 46,
+    fixed: true,
+  };
+
+  /** Leaving a view abandons both the selection and any half-finished edit. */
+  const changeView = (next: ViewMode) => {
+    setView(next);
+    setSelected([]);
+    cancelEdit();
+  };
 
   /** One cell per column key, in COLUMN_KEYS order. */
   const entryCells: Record<(typeof COLUMN_KEYS)[number], React.ReactNode> = {
@@ -741,17 +901,81 @@ export function ApplicationsGrid({
             Applications
           </Typography.Title>
           <Typography.Text type="secondary">
-            Type into the top row to add a record. Drag any column edge to
-            resize; double-click a row to edit it.
+            {view === "active"
+              ? "Type into the top row to add a record. Drag any column edge to resize; double-click a row to edit it."
+              : "Archived records are read-only. Restore one to edit it again."}
           </Typography.Text>
         </div>
-        <Input.Search
-          allowClear
-          placeholder="Filter by role or company"
-          style={{ width: 260 }}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <Space>
+          <Segmented<ViewMode>
+            value={view}
+            onChange={changeView}
+            options={[
+              { value: "active", label: `Active (${rows.length - archivedCount})` },
+              { value: "archived", label: `Archived (${archivedCount})` },
+            ]}
+          />
+          <Input.Search
+            allowClear
+            placeholder="Filter by role or company"
+            style={{ width: 260 }}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </Space>
       </Space>
+
+      {/*
+        Only counts rows you can see and act on, so it never promises more than
+        the action will do.
+      */}
+      {targets.length > 0 && (
+        <Alert
+          type="info"
+          style={{ marginBottom: 12 }}
+          title={`${count(targets.length)} selected`}
+          action={
+            <Space>
+              {view === "active" ? (
+                <Button
+                  size="small"
+                  icon={<InboxOutlined />}
+                  loading={bulkBusy}
+                  onClick={() => setArchived(targets, true)}
+                >
+                  Archive
+                </Button>
+              ) : (
+                <Button
+                  size="small"
+                  icon={<UndoOutlined />}
+                  loading={bulkBusy}
+                  onClick={() => setArchived(targets, false)}
+                >
+                  Restore
+                </Button>
+              )}
+              <Popconfirm
+                title={`Delete ${count(targets.length)}?`}
+                description={
+                  view === "active"
+                    ? "Archive them instead if you only want them off the list."
+                    : "This cannot be undone."
+                }
+                onConfirm={() => remove(targets)}
+                okText="Delete"
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" danger icon={<DeleteOutlined />} loading={bulkBusy}>
+                  Delete
+                </Button>
+              </Popconfirm>
+              <Button size="small" type="text" onClick={() => setSelected([])}>
+                Clear
+              </Button>
+            </Space>
+          }
+        />
+      )}
 
       {/*
         Shown while typing, not on submit. The rule is enforced by a database
@@ -798,6 +1022,7 @@ export function ApplicationsGrid({
            * stay visible while scrolling a long list.
            */
           sticky
+          rowSelection={rowSelection}
           onRow={(row) => ({
             onDoubleClick: () => {
               if (editingId === null && canAct(row)) startEdit(row);
@@ -806,19 +1031,32 @@ export function ApplicationsGrid({
           columns={columns}
           // fixed="top" pins the entry row above the body and outside sorting,
           // filtering and pagination — it stays put whatever the table is doing.
-          summary={() => (
-            <Table.Summary fixed="top">
-              <Table.Summary.Row className="tw-entry-row">
-                {COLUMN_KEYS.map((key, index) => (
-                  <Table.Summary.Cell key={key} index={index}>
-                    {entryCells[key]}
-                  </Table.Summary.Cell>
-                ))}
-              </Table.Summary.Row>
-            </Table.Summary>
-          )}
+          summary={
+            // Nothing to add to an archive, so the entry row belongs to the
+            // active view only.
+            view === "archived"
+              ? undefined
+              : () => (
+                  <Table.Summary fixed="top">
+                    <Table.Summary.Row className="tw-entry-row">
+                      {/* Stands in for the checkbox column, which rowSelection
+                          adds to the body but not to the summary — without it
+                          every cell below sits one column to the left. */}
+                      <Table.Summary.Cell index={0} />
+                      {COLUMN_KEYS.map((key, index) => (
+                        <Table.Summary.Cell key={key} index={index + 1}>
+                          {entryCells[key]}
+                        </Table.Summary.Cell>
+                      ))}
+                    </Table.Summary.Row>
+                  </Table.Summary>
+                )
+          }
           locale={{
-            emptyText: "No applications yet — the row above is ready for one.",
+            emptyText:
+              view === "archived"
+                ? "Nothing archived."
+                : "No applications yet — the row above is ready for one.",
           }}
         />
       </Card>

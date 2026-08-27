@@ -269,6 +269,20 @@ alter table application
   add column if not exists resume_url  text,
   add column if not exists resume_name text;
 
+-- Archiving. Null means active; a timestamp means "off the working list".
+--
+-- A nullable timestamp rather than a boolean because "when" is the question
+-- anyone actually asks of an archive, and it costs the same to store. The grid
+-- reads it as a flag; nothing stops a later report reading it as a date.
+--
+-- Deliberately NOT a soft delete. An archived row is still a row: it still
+-- counts against the duplicate cooldown, still belongs to its team, still
+-- appears in totals. Archiving tidies a view; deleting retracts a record. If
+-- archiving also cleared the cooldown it would be a one-click way around a rule
+-- the trigger otherwise enforces.
+alter table application
+  add column if not exists archived_at timestamptz;
+
 -- The shared resume library is gone: a resume belongs to the application it was
 -- sent with, which is how anyone reading the grid thinks about it.
 alter table application drop column if exists resume_file_id;
@@ -282,6 +296,10 @@ create index if not exists application_profile_idx on application (profile_id);
 -- Duplicate detection matches on lower(company), so the index must too — a
 -- plain index on company would go unused by that lookup.
 create index if not exists application_company_lower_idx on application (lower(company));
+-- The default view is active rows, newest first. Partial, so the index carries
+-- only what that view reads and archived rows cost it nothing.
+create index if not exists application_active_idx
+  on application (team_id, applied_at desc) where archived_at is null;
 
 -- --------------------------------------------------------------------------
 -- SSN access log

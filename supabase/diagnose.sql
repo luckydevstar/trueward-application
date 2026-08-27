@@ -17,7 +17,11 @@ select
   exists (
     select 1 from information_schema.columns
     where table_name = 'app_user' and column_name = 'allowed_templates'
-  ) as "allowed_templates";
+  ) as "allowed_templates",
+  exists (
+    select 1 from information_schema.columns
+    where table_name = 'application' and column_name = 'archived_at'
+  ) as "archived_at";
 
 -- 2. Does app_team_id() know about resume_builder? --------------------------
 --

@@ -332,6 +332,46 @@ select 'reapply after 14 days allowed' as check, count(*) = 1 as expect_true
 reset role;
 
 \echo ''
+\echo '=== 10g. archiving is an update, and does not lift the cooldown ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+
+-- b1 archives their own row. No new policy: archiving is an ordinary update,
+-- so it inherits "your own rows, or any if you're an admin".
+update application set archived_at = now() where id = '00000000-0000-0000-0000-00000000a001';
+select 'owner can archive' as check, archived_at is not null as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a001';
+
+-- ...and the archived row still blocks a repeat. Archiving tidies a view; it
+-- does not retract the application.
+do $$
+begin
+  insert into application (title, company, job_url, applied_at, profile_id, team_id, created_by)
+  values ('Sneak Past', 'Globex', 'https://example.com/g6',
+          (select applied_at from application where id = '00000000-0000-0000-0000-00000000a001'),
+          '00000000-0000-0000-0000-0000000000f1', app_team_id(), auth.uid());
+  raise exception 'FAIL: archiving walked around the cooldown';
+exception
+  when check_violation then
+    raise notice 'PASS: archived row still holds the company closed';
+end
+$$;
+
+update application set archived_at = null where id = '00000000-0000-0000-0000-00000000a001';
+select 'owner can restore' as check, archived_at is null as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a001';
+reset role;
+
+-- A teammate who only sees the row through a shared profile still cannot
+-- archive it — same check that already refuses their edits.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+update application set archived_at = now() where id = '00000000-0000-0000-0000-00000000a001';
+select 'teammate cannot archive' as check, count(*) = 0 as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a001' and archived_at is not null;
+reset role;
+
+\echo ''
 \echo '=== 11. billing status is admin-only ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-0000000000b1';
