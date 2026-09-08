@@ -54,3 +54,26 @@ export function ResizableTitle(
     </Resizable>
   );
 }
+
+/**
+ * Class for a Table whose column widths must be taken literally.
+ *
+ * rc-table styles its scrolling table `width: <scroll.x>px; min-width: 100%`.
+ * The min-width is the sensible default — it stops a narrow table sitting in a
+ * wide card with dead space beside it — but under `table-layout: fixed` it
+ * also means the browser hands the surplus back to the columns, proportionally.
+ * So dragging every column narrow appears to do nothing the moment the total
+ * drops below the container: the widths are honoured relative to each other and
+ * ignored absolutely.
+ *
+ * For a resizable grid that is the wrong trade. A column is set to 120px
+ * because someone dragged it to 120px.
+ *
+ * `!important` because the rule it overrides is an inline style, which is the
+ * only thing a stylesheet cannot outrank any other way.
+ */
+export const EXACT_WIDTH_CLASS = "tw-exact-widths";
+
+export const EXACT_WIDTH_CSS = `
+  .${EXACT_WIDTH_CLASS} .ant-table-container table { min-width: 0 !important; }
+`;

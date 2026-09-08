@@ -24,12 +24,18 @@ import {
   replaceProfileAssignees,
 } from "@/app/dashboard/profiles/actions";
 import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
-import { ResizableTitle } from "@/components/grid/resizable-title";
+import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
+import {
+  EXACT_WIDTH_CLASS,
+  EXACT_WIDTH_CSS,
+  ResizableTitle,
+} from "@/components/grid/resizable-title";
 import {
   ProfileEditor,
   type ProfileFormValues,
 } from "@/components/profile-editor";
 import { useColumnWidths } from "@/lib/column-widths";
+import { usePersistentState } from "@/lib/persistent-state";
 import { toProfileRow } from "@/lib/profile-form";
 import { formatDate } from "@/lib/status";
 
@@ -54,6 +60,10 @@ type Props = {
 };
 
 const WIDTH_STORAGE_KEY = "tw.profiles.columnWidths";
+const PAGE_SIZE_STORAGE_KEY = "tw.profiles.pageSize";
+
+const DEFAULT_PAGE_SIZE = 25;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200];
 
 const DEFAULT_WIDTHS: Record<string, number> = {
   full_name: 200,
@@ -77,6 +87,11 @@ export function ProfilesList({
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
+  const [pageSize, setPageSize] = usePersistentState<number>(
+    PAGE_SIZE_STORAGE_KEY,
+    DEFAULT_PAGE_SIZE,
+  );
+  const [page, setPage] = useState(1);
 
   const data = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -151,37 +166,45 @@ export function ProfilesList({
       key: "full_name",
       title: "Name",
       dataIndex: "full_name",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       sorter: (a, b) => a.full_name.localeCompare(b.full_name),
       defaultSortOrder: "ascend",
       render: (value: string, row) => (
-        <Space size={6}>
-          <Link href={`/dashboard/profiles/${row.id}`}>{value}</Link>
+        // The tag must keep its size; the name is what gives.
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+            <Marquee title={value}>
+              <Link href={`/dashboard/profiles/${row.id}`}>{value}</Link>
+            </Marquee>
+          </span>
           {row.has_ssn && <Tag color="orange">SSN</Tag>}
-        </Space>
+        </span>
       ),
     },
     {
       key: "email",
       title: "Email",
       dataIndex: "email",
-      ellipsis: true,
-      render: (value: string | null) => value || <Muted />,
+      ellipsis: { showTitle: false },
+      render: (value: string | null) =>
+        value ? <Marquee title={value}>{value}</Marquee> : <Muted />,
     },
     {
       key: "phone",
       title: "Phone",
       dataIndex: "phone",
-      ellipsis: true,
-      render: (value: string | null) => value || <Muted />,
+      ellipsis: { showTitle: false },
+      render: (value: string | null) =>
+        value ? <Marquee title={value}>{value}</Marquee> : <Muted />,
     },
     {
       key: "location",
       title: "Location",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       render: (_, row) => {
         const parts = [row.city, row.state, row.country].filter(Boolean);
-        return parts.length ? parts.join(", ") : <Muted />;
+        const text = parts.join(", ");
+        return text ? <Marquee title={text}>{text}</Marquee> : <Muted />;
       },
     },
     ...(canAssign
@@ -254,6 +277,15 @@ export function ProfilesList({
     };
   }) as ColumnsType<ProfileRow>;
 
+  const totalWidth = columns.reduce(
+    (sum, col) => sum + (Number(col.width) || 0),
+    0,
+  );
+
+  /** Clamped by derivation — see the same note in applications-grid.tsx. */
+  const pageCount = Math.max(1, Math.ceil(data.length / pageSize));
+  const current = Math.min(page, pageCount);
+
   return (
     <>
       <Space
@@ -277,7 +309,10 @@ export function ProfilesList({
             allowClear
             placeholder="Filter by name or email"
             style={{ width: 240 }}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
           />
           {canEdit && (
             <Button
@@ -295,11 +330,29 @@ export function ProfilesList({
         <Table<ProfileRow>
           rowKey="id"
           size="small"
+          className={EXACT_WIDTH_CLASS}
           dataSource={data}
           columns={columns}
           components={{ header: { cell: ResizableTitle } }}
-          pagination={{ pageSize: 25, hideOnSinglePage: true }}
-          scroll={{ x: "max-content" }}
+          pagination={{
+            current,
+            pageSize,
+            total: data.length,
+            showSizeChanger: true,
+            pageSizeOptions: PAGE_SIZE_OPTIONS,
+            showQuickJumper: data.length > pageSize * 2,
+            onChange: (next) => setPage(next),
+            onShowSizeChange: (_current, size) => {
+              setPageSize(size);
+              setPage(1);
+            },
+            showTotal: (total, [from, to]) => `${from}–${to} of ${total}`,
+          }}
+          // Numeric, not "max-content": see the note in applications-grid.tsx.
+          // With "max-content" rc-table falls back to `table-layout: auto` and
+          // a column cannot be dragged narrower than its longest cell.
+          tableLayout="fixed"
+          scroll={{ x: totalWidth }}
           locale={{
             emptyText: canEdit
               ? "No profiles yet. Create one to start building resumes."
@@ -307,6 +360,8 @@ export function ProfilesList({
           }}
         />
       </Card>
+
+      <style>{`${MARQUEE_CSS}${EXACT_WIDTH_CSS}`}</style>
 
       <ProfileEditor
         open={open}

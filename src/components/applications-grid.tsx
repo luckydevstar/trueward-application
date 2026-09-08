@@ -33,8 +33,14 @@ import dayjs from "dayjs";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 
-import { ResizableTitle } from "@/components/grid/resizable-title";
+import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
+import {
+  EXACT_WIDTH_CLASS,
+  EXACT_WIDTH_CSS,
+  ResizableTitle,
+} from "@/components/grid/resizable-title";
 import { useColumnWidths } from "@/lib/column-widths";
+import { usePersistentState } from "@/lib/persistent-state";
 import { createClient } from "@/lib/supabase/client";
 import { useUploadThing } from "@/lib/uploadthing";
 import {
@@ -86,6 +92,10 @@ type Props = {
 };
 
 const WIDTH_STORAGE_KEY = "tw.applications.columnWidths";
+const PAGE_SIZE_STORAGE_KEY = "tw.applications.pageSize";
+
+const DEFAULT_PAGE_SIZE = 25;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200];
 
 /**
  * Must match application_cooldown_days() in
@@ -169,6 +179,15 @@ export function ApplicationsGrid({
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
 
+  // Page size is a preference and outlives the visit; the page number is not,
+  // and starting a session on page 4 of a list you haven't looked at yet would
+  // just be confusing.
+  const [pageSize, setPageSize] = usePersistentState<number>(
+    PAGE_SIZE_STORAGE_KEY,
+    DEFAULT_PAGE_SIZE,
+  );
+  const [page, setPage] = useState(1);
+
   /**
    * The entry row is always present — it is not something you open.
    *
@@ -204,6 +223,15 @@ export function ApplicationsGrid({
       (r) => r.title.toLowerCase().includes(q) || r.company.toLowerCase().includes(q),
     );
   }, [rows, query, view]);
+
+  /**
+   * Clamped rather than corrected in an effect. Deleting the last four rows on
+   * page 3 of 3 leaves `page` pointing past the end; recomputing it here means
+   * the render that shows the shorter list is already showing a valid page,
+   * instead of painting an empty one and then fixing itself.
+   */
+  const pageCount = Math.max(1, Math.ceil(data.length / pageSize));
+  const current = Math.min(page, pageCount);
 
   // Fields listed explicitly rather than spread-minus-id, so a column added to
   // Row that shouldn't be editable doesn't silently become editable.
@@ -454,7 +482,7 @@ export function ApplicationsGrid({
       key: "title",
       title: "Role",
       dataIndex: "title",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       sorter: (a, b) => a.title.localeCompare(b.title),
       render: (value: string, row) =>
         editingId === row.id ? (
@@ -465,14 +493,14 @@ export function ApplicationsGrid({
             onPressEnter={saveEdit}
           />
         ) : (
-          <span>{value}</span>
+          <Marquee title={value}>{value}</Marquee>
         ),
     },
     {
       key: "company",
       title: "Company",
       dataIndex: "company",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       sorter: (a, b) => a.company.localeCompare(b.company),
       render: (value: string, row) =>
         editingId === row.id ? (
@@ -482,14 +510,14 @@ export function ApplicationsGrid({
             onPressEnter={saveEdit}
           />
         ) : (
-          <span>{value}</span>
+          <Marquee title={value}>{value}</Marquee>
         ),
     },
     {
       key: "profile",
       title: "Profile",
       dataIndex: "profile_id",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       filters: profiles.map((p) => ({ text: p.label, value: p.id })),
       onFilter: (value, row) => row.profile_id === value,
       render: (value: string | null, row) =>
@@ -503,7 +531,9 @@ export function ApplicationsGrid({
             options={profiles.map((p) => ({ value: p.id, label: p.label }))}
           />
         ) : value ? (
-          profileName.get(value) ?? <Muted>unknown</Muted>
+          <Marquee title={profileName.get(value)}>
+            {profileName.get(value) ?? <Muted>unknown</Muted>}
+          </Marquee>
         ) : (
           <Muted>none</Muted>
         ),
@@ -512,14 +542,16 @@ export function ApplicationsGrid({
       key: "applier",
       title: "Applier",
       dataIndex: "created_by",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       filters: appliers.map((a) => ({ text: a.label, value: a.id })),
       onFilter: (value, row) => row.created_by === value,
       // Never editable: authorship is stamped from the session, and letting it
       // be reassigned would make the audit trail decorative.
       render: (value: string | null) =>
         value ? (
-          <Typography.Text>{applierName.get(value) ?? "—"}</Typography.Text>
+          <Marquee title={applierName.get(value)}>
+            {applierName.get(value) ?? "—"}
+          </Marquee>
         ) : (
           <Muted>—</Muted>
         ),
@@ -528,7 +560,7 @@ export function ApplicationsGrid({
       key: "job_url",
       title: "Posting",
       dataIndex: "job_url",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       render: (value: string, row) =>
         editingId === row.id ? (
           <Input
@@ -537,9 +569,11 @@ export function ApplicationsGrid({
             onPressEnter={saveEdit}
           />
         ) : (
-          <Typography.Link href={value} target="_blank" rel="noopener noreferrer">
-            {hostOf(value)}
-          </Typography.Link>
+          <Marquee title={value}>
+            <Typography.Link href={value} target="_blank" rel="noopener noreferrer">
+              {hostOf(value)}
+            </Typography.Link>
+          </Marquee>
         ),
     },
     {
@@ -626,7 +660,7 @@ export function ApplicationsGrid({
       key: "notes",
       title: "Notes",
       dataIndex: "notes",
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       render: (value: string | null, row) =>
         editingId === row.id ? (
           <Input
@@ -635,11 +669,11 @@ export function ApplicationsGrid({
             onPressEnter={saveEdit}
           />
         ) : (
-          <Tooltip title={value || undefined}>
+          <Marquee title={value ?? undefined}>
             <span style={{ color: value ? undefined : "#94a3b8" }}>
               {value || "—"}
             </span>
-          </Tooltip>
+          </Marquee>
         ),
     },
     {
@@ -754,6 +788,11 @@ export function ApplicationsGrid({
     };
   }) as ColumnsType<Row>;
 
+  // Selection column included: it is a real column in the layout, and leaving
+  // it out would make the table that many pixels narrower than its contents.
+  const totalWidth =
+    columns.reduce((sum, col) => sum + (Number(col.width) || 0), 0) + 46;
+
   /**
    * Checkboxes, with the same ownership rule the row controls use.
    *
@@ -775,6 +814,7 @@ export function ApplicationsGrid({
   const changeView = (next: ViewMode) => {
     setView(next);
     setSelected([]);
+    setPage(1);
     cancelEdit();
   };
 
@@ -919,7 +959,12 @@ export function ApplicationsGrid({
             allowClear
             placeholder="Filter by role or company"
             style={{ width: 260 }}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // Typing narrows the list under you; staying on page 3 of the
+              // old one would usually land on nothing.
+              setPage(1);
+            }}
           />
         </Space>
       </Space>
@@ -1008,10 +1053,44 @@ export function ApplicationsGrid({
         <Table<Row>
           rowKey="id"
           size="small"
+          className={EXACT_WIDTH_CLASS}
           dataSource={data}
           components={{ header: { cell: ResizableTitle } }}
-          pagination={{ pageSize: 50, hideOnSinglePage: true }}
-          scroll={{ x: "max-content" }}
+          pagination={{
+            current,
+            pageSize,
+            total: data.length,
+            showSizeChanger: true,
+            pageSizeOptions: PAGE_SIZE_OPTIONS,
+            showQuickJumper: data.length > pageSize * 2,
+            onChange: (next) => setPage(next),
+            onShowSizeChange: (_current, size) => {
+              setPageSize(size);
+              // The row you were looking at is on a different page now, and
+              // there is no honest way to guess which. First is predictable.
+              setPage(1);
+            },
+            showTotal: (total, [from, to]) =>
+              `${from}–${to} of ${total} ${view === "archived" ? "archived" : ""}`.trim(),
+          }}
+          /**
+           * A number, not "max-content" — and that difference is the whole
+           * reason a column could not be narrowed past its content.
+           *
+           * rc-table picks `table-layout: auto` when there are fixed columns
+           * and scroll.x is "max-content" (its own comment: "it's width should
+           * stretch out to fit content"). Under `auto` a `width` is a hint the
+           * browser is free to overrule, and it always did: a long role title
+           * held its column open, the drag snapped back, and `ellipsis` never
+           * had anything to truncate.
+           *
+           * Summing the widths keeps horizontal scrolling for a grid wider than
+           * the viewport while making the layout `fixed`, so the widths below
+           * are honoured exactly and overflow becomes the cell's problem —
+           * which is what Marquee is for.
+           */
+          tableLayout="fixed"
+          scroll={{ x: totalWidth }}
           /**
            * Load-bearing, not decoration. rc-table only honours a summary's
            * `fixed` when `fixHeader || isSticky` — otherwise it renders the
@@ -1062,6 +1141,8 @@ export function ApplicationsGrid({
       </Card>
 
       <style>{`
+        ${MARQUEE_CSS}
+        ${EXACT_WIDTH_CSS}
         .tw-entry-row > td {
           background: #f0f5ff;
           border-bottom: 2px solid #d6e4ff !important;
@@ -1211,20 +1292,24 @@ function ResumeCell({
   };
 
   return (
-    <Space size={4}>
-      {name ? (
-        <Typography.Link
-          href={url ?? undefined}
-          target="_blank"
-          rel="noopener noreferrer"
-          ellipsis
-          style={{ maxWidth: 110 }}
-        >
-          <PaperClipOutlined /> {name}
-        </Typography.Link>
-      ) : (
-        <Typography.Text type="secondary">—</Typography.Text>
-      )}
+    // Flex rather than Space: the name has to be the part that gives, and
+    // min-width:0 is what lets a flex child shrink below its content.
+    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+        {name ? (
+          <Marquee title={name}>
+            <Typography.Link
+              href={url ?? undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <PaperClipOutlined /> {name}
+            </Typography.Link>
+          </Marquee>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        )}
+      </span>
       {!readOnly && (
         <Tooltip title={name ? "Replace" : "Attach a resume"}>
           <Button
@@ -1249,6 +1334,6 @@ function ResumeCell({
           if (file) void upload(file);
         }}
       />
-    </Space>
+    </span>
   );
 }

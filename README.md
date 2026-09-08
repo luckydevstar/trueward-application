@@ -289,6 +289,42 @@ admins until deliberately routed. Admins assign from the Profiles page.
 Editing a candidate's identity is an admin action — a bidder writes resume
 content, not someone's date of birth.
 
+### Column widths, overflow and paging
+
+Both grids — applications and profiles — have resizable columns whose widths
+persist to localStorage. Two things had to be true for a drag to mean anything.
+
+**The table layout.** rc-table chooses `table-layout: auto` when a table has
+fixed columns and `scroll={{ x: "max-content" }}` — its own comment says the
+width "should stretch out to fit content". Under `auto` a column's `width` is a
+hint the browser may overrule, and a long value always did: the column held
+itself open, the drag snapped back, and `ellipsis` never had anything to
+truncate. Both grids now sum their column widths and pass that number, which
+puts the layout in `fixed` and keeps horizontal scrolling for a grid wider than
+the viewport.
+
+**The min-width.** rc-table also styles that table `min-width: 100%`, so a
+table narrower than its card stretches to fill it — and under `fixed` the
+surplus goes back to the columns proportionally. The widths end up honoured
+relative to each other and ignored absolutely, which looks exactly like the
+first bug the moment you narrow enough columns. `EXACT_WIDTH_CLASS` in
+`src/components/grid/resizable-title.tsx` overrides it, so a column dragged to
+120px is 120px and the leftover space stays leftover space.
+
+Overflowing text then stays on one line and truncates, and **hovering a cell
+scrolls it** so the hidden part can still be read — `Marquee`, in
+`src/components/grid/marquee.tsx`. The scroll distance is
+`calc(100cqw - 100%)`: inside a container-query container, `cqw` measures the
+cell and `%` measures the text, so their difference is the overflow exactly. No
+ref, no ResizeObserver, no measuring pass, and a column resize is picked up for
+free. `min()` clamps it at zero so text that already fits doesn't drift right.
+Reduced-motion keeps the ellipsis and leans on the `title` attribute.
+
+Paging is antd's, with a size changer persisted per grid. The current page is
+**clamped by derivation** rather than corrected in an effect — deleting the last
+rows on the last page recomputes the page during the same render, instead of
+painting an empty one and then fixing itself.
+
 ### Archiving
 
 An application carries `archived_at`: null while it is on the working list, a
