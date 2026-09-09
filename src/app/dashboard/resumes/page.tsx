@@ -1,6 +1,7 @@
 import { ResumeBuilder } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { profileSchema } from "@/lib/document/schema";
+import { profileReach, scopeToReach } from "@/lib/profile-scope";
 import { teamIdFor } from "@/lib/scope";
 import { allowedAccents, allowedTemplates } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/server";
@@ -16,27 +17,40 @@ export default async function ResumesPage() {
     return <ResumeBuilder profiles={[]} documents={[]} teamId="" userId={actor.id} templates={allowedTemplates(actor.role, actor.allowedTemplates)} accents={allowedAccents(actor.role, actor.allowedAccents)} />;
   }
 
-  // RLS is disabled in this deployment. Scope the profile query here so a
-  // resume builder receives only profiles they created, never the team-wide
-  // list. (Builders cannot use the tracker, so only admin/builder cases reach
-  // this page.)
-  let profileQuery = supabase
-    .from("candidate_profile")
-    .select("id, full_name, profile")
-    .eq("team_id", teamId)
-    .order("full_name");
-  let documentQuery = supabase
-    .from("resume_document")
-    .select("id, title, profile_id, content, template, style, updated_at")
-    .eq("team_id", teamId)
-    .order("updated_at", { ascending: false });
+  /**
+   * What this actor may work with, resolved once and applied to both queries.
+   *
+   * The bug this replaces: the old version narrowed only for `resume_builder`
+   * and let every other role through on `team_id` alone — so a bidder's
+   * profile dropdown listed the whole team's candidates rather than the ones
+   * assigned to them. Documents had the same hole.
+   *
+   * Both queries take the same id set, which is what the policies do — they
+   * both go through can_use_profile() — and is why this cannot drift into
+   * scoping one list differently from the other again.
+   */
+  const reach = await profileReach(supabase, actor, teamId);
 
-  if (actor.role === "resume_builder") {
-    profileQuery = profileQuery.eq("created_by", actor.id);
-    documentQuery = documentQuery.eq("created_by", actor.id);
-  }
-
-  const [profiles, documents] = await Promise.all([profileQuery, documentQuery]);
+  const [profiles, documents] = await Promise.all([
+    scopeToReach(
+      supabase
+        .from("candidate_profile")
+        .select("id, full_name, profile")
+        .eq("team_id", teamId)
+        .order("full_name"),
+      reach,
+      "id",
+    ),
+    scopeToReach(
+      supabase
+        .from("resume_document")
+        .select("id, title, profile_id, content, template, style, updated_at")
+        .eq("team_id", teamId)
+        .order("updated_at", { ascending: false }),
+      reach,
+      "profile_id",
+    ),
+  ]);
 
   // Parsed on the server so a profile that no longer satisfies the schema
   // surfaces as a disabled option with a reason, rather than crashing the

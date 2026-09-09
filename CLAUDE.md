@@ -30,17 +30,27 @@ See `src/app/dashboard/page.tsx` handing off to
 
 ## Authorization lives in Postgres
 
-RLS is the boundary, not the query layer. Application code deliberately does
-**not** add `.eq("team_id", …)` filters — the policies in
-`supabase/migrations/0001_init.sql` do that, and a hand-written filter would be
-a second source of truth that can drift from the policy.
+RLS is the boundary, not the query layer. The policies in `supabase/schema/`
+(four parts, applied in order) decide what a query returns.
 
 `src/lib/roles.ts` and `src/lib/scope.ts` mirror those rules so the UI can hide
 controls that would fail. They are not enforcement. If they disagree with the
 database, the database wins and the user sees a rejected write.
 
-Run `npm run test:rls` after touching any policy. It applies the migration to a
-throwaway Postgres and asserts team isolation, bidder scoping, and the
+**The one place query-layer scoping is deliberate:** `src/lib/profile-scope.ts`
+narrows the profile lists a page sends to the browser, mirroring
+`can_use_profile()`. This is defence in depth for a *payload* — a page that
+ships every candidate on the team and lets the dropdown sort it out is one
+stale policy away from a leak.
+
+It is a single module for a reason. This rule was previously written out
+inline on two pages; one of them handled `resume_builder` and forgot `bidder`,
+so a bidder's resume builder listed the whole team's candidates. If you need
+this rule somewhere new, call it — do not write a third copy.
+
+Run `npm run test:rls` after touching any policy. It applies `supabase/schema/`
+to a throwaway Postgres *twice* (so a non-idempotent statement fails loudly)
+and asserts team isolation, bidder scoping, archive behaviour, and the
 `WITH CHECK` clauses that stop cross-team inserts.
 
 ## Never widen the SSN path
