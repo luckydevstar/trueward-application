@@ -282,10 +282,6 @@ export function ProfilesList({
     0,
   );
 
-  /** Clamped by derivation — see the same note in applications-grid.tsx. */
-  const pageCount = Math.max(1, Math.ceil(data.length / pageSize));
-  const current = Math.min(page, pageCount);
-
   return (
     <>
       <Space
@@ -334,20 +330,23 @@ export function ProfilesList({
           dataSource={data}
           columns={columns}
           components={{ header: { cell: ResizableTitle } }}
+          // No `total` and no clamp: antd counts what it paginates and clamps
+          // an out-of-range page itself. See applications-grid.tsx for the bug
+          // that passing our own count caused there.
           pagination={{
-            current,
+            current: page,
             pageSize,
-            total: data.length,
+            position: ["topRight", "bottomRight"],
             showSizeChanger: true,
             pageSizeOptions: PAGE_SIZE_OPTIONS,
-            showQuickJumper: data.length > pageSize * 2,
-            onChange: (next) => setPage(next),
+            showQuickJumper: true,
             onShowSizeChange: (_current, size) => {
               setPageSize(size);
               setPage(1);
             },
             showTotal: (total, [from, to]) => `${from}–${to} of ${total}`,
           }}
+          onChange={(pagination) => setPage(pagination.current ?? 1)}
           // Numeric, not "max-content": see the note in applications-grid.tsx.
           // With "max-content" rc-table falls back to `table-layout: auto` and
           // a column cannot be dragged narrower than its longest cell.

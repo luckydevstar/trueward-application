@@ -30,16 +30,17 @@ import {
 import type { TableProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 
 import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
+import { ROW_COLUMNS, type ApplicationRow } from "@/lib/application-row";
 import {
   EXACT_WIDTH_CLASS,
   EXACT_WIDTH_CSS,
   ResizableTitle,
 } from "@/components/grid/resizable-title";
 import { useColumnWidths } from "@/lib/column-widths";
+import { applyOverlay, resolveOverlay, type Overlay } from "@/lib/overlay";
 import { usePersistentState } from "@/lib/persistent-state";
 import { createClient } from "@/lib/supabase/client";
 import { useUploadThing } from "@/lib/uploadthing";
@@ -55,23 +56,7 @@ import {
   type BillingStatus,
 } from "@/lib/status";
 
-export type Row = {
-  id: string;
-  title: string;
-  company: string;
-  job_url: string;
-  status: ApplicationStatus;
-  billing: BillingStatus;
-  notes: string | null;
-  applied_at: string;
-  resume_key: string | null;
-  resume_url: string | null;
-  resume_name: string | null;
-  profile_id: string | null;
-  created_by: string | null;
-  /** Null while the row is on the working list; a timestamp once archived. */
-  archived_at: string | null;
-};
+export type Row = ApplicationRow;
 
 /** The draft owns no author or archive state — neither is yours to type. */
 type Draft = Omit<Row, "id" | "created_by" | "archived_at">;
@@ -167,7 +152,6 @@ export function ApplicationsGrid({
   appliers,
   blockedNames,
 }: Props) {
-  const router = useRouter();
   const { message } = App.useApp();
 
   const [query, setQuery] = useState("");
@@ -208,30 +192,44 @@ export function ApplicationsGrid({
 
   const blocked = useMemo(() => new Set(blockedNames), [blockedNames]);
 
+  /**
+   * The rows as the grid shows them: the server's list with this session's
+   * edits laid over it.
+   *
+   * Every write used to end in router.refresh(), which re-ran the page on the
+   * server — actor lookup, four queries, an RSC render — and the grid showed
+   * the old value until all of that came back. Changing a status *felt* slow
+   * because a one-row update was paying for a whole page load.
+   *
+   * Now a write updates this copy at once and the database in the background,
+   * and reads the written row back from the same statement where it needs
+   * something the database decides (an id, a default). Nothing re-fetches the
+   * page. If the write fails, the change is reverted and the error shown.
+   *
+   * The overlay is dropped automatically when the server sends new rows — see
+   * src/lib/overlay.ts for how, and why it is not an effect.
+   */
+  const [overlay, setOverlay] = useState<Overlay<Row> | null>(null);
+  const liveRows = resolveOverlay(overlay, rows);
+
+  const mutate = (change: (current: readonly Row[]) => readonly Row[]) =>
+    setOverlay((previous) => applyOverlay(previous, rows, change));
+
   const archivedCount = useMemo(
-    () => rows.filter((r) => r.archived_at !== null).length,
-    [rows],
+    () => liveRows.filter((r) => r.archived_at !== null).length,
+    [liveRows],
   );
 
   const data = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const inView = rows.filter(
+    const inView = liveRows.filter(
       (r) => (r.archived_at !== null) === (view === "archived"),
     );
     if (!q) return inView;
     return inView.filter(
       (r) => r.title.toLowerCase().includes(q) || r.company.toLowerCase().includes(q),
     );
-  }, [rows, query, view]);
-
-  /**
-   * Clamped rather than corrected in an effect. Deleting the last four rows on
-   * page 3 of 3 leaves `page` pointing past the end; recomputing it here means
-   * the render that shows the shorter list is already showing a valid page,
-   * instead of painting an empty one and then fixing itself.
-   */
-  const pageCount = Math.max(1, Math.ceil(data.length / pageSize));
-  const current = Math.min(page, pageCount);
+  }, [liveRows, query, view]);
 
   // Fields listed explicitly rather than spread-minus-id, so a column added to
   // Row that shouldn't be editable doesn't silently become editable.
@@ -318,7 +316,7 @@ export function ApplicationsGrid({
     // Distance between the two applications, matching the trigger. Also what
     // keeps this pure: no clock reading during render.
     return (
-      rows.find(
+      liveRows.find(
         (r) =>
           r.id !== ignoreId &&
           r.profile_id === value.profile_id &&
@@ -374,23 +372,29 @@ export function ApplicationsGrid({
 
     setAdding(true);
     const supabase = createClient();
-    const { error } = await supabase.from("application").insert({
-      ...payloadOf(draft),
-      resume_document_id: null,
-      // RLS asserts both of these in its WITH CHECK clause.
-      team_id: teamId,
-      created_by: userId,
-    });
+    // The row comes back from the insert itself — the id and any default the
+    // database filled in — so nothing has to be re-fetched to show it.
+    const { data: created, error } = await supabase
+      .from("application")
+      .insert({
+        ...payloadOf(draft),
+        resume_document_id: null,
+        // RLS asserts both of these in its WITH CHECK clause.
+        team_id: teamId,
+        created_by: userId,
+      })
+      .select(ROW_COLUMNS)
+      .single();
     setAdding(false);
 
     if (error) {
       message.error(error.message);
       return;
     }
+    mutate((current) => [created, ...current]);
     // Cleared rather than left filled: the row's whole point is being ready for
     // the next entry.
     setDraft(emptyDraft());
-    router.refresh();
   };
 
   const saveEdit = async () => {
@@ -403,18 +407,20 @@ export function ApplicationsGrid({
 
     setSaving(true);
     const supabase = createClient();
-    const { error } = await supabase
+    const { data: saved, error } = await supabase
       .from("application")
       .update(payloadOf(editBuffer))
-      .eq("id", editingId);
+      .eq("id", editingId)
+      .select(ROW_COLUMNS)
+      .single();
     setSaving(false);
 
     if (error) {
       message.error(error.message);
       return;
     }
+    mutate((current) => current.map((r) => (r.id === saved.id ? saved : r)));
     cancelEdit();
-    router.refresh();
   };
 
   /** "1 application" / "4 applications" — used in every bulk confirmation. */
@@ -431,26 +437,48 @@ export function ApplicationsGrid({
    */
   const setArchived = async (ids: string[], archived: boolean) => {
     if (!ids.length) return;
+    const wanted = new Set(ids);
+    const archived_at = archived ? new Date().toISOString() : null;
+
+    // Applied first so the rows leave this view immediately; put back below if
+    // the database disagrees.
+    const before = new Map(
+      liveRows.filter((r) => wanted.has(r.id)).map((r) => [r.id, r.archived_at]),
+    );
+    mutate((current) =>
+      current.map((r) => (wanted.has(r.id) ? { ...r, archived_at } : r)),
+    );
+    setSelected([]);
 
     setBulkBusy(true);
     const supabase = createClient();
     const { error } = await supabase
       .from("application")
-      .update({ archived_at: archived ? new Date().toISOString() : null })
+      .update({ archived_at })
       .in("id", ids);
     setBulkBusy(false);
 
     if (error) {
+      mutate((current) =>
+        current.map((r) =>
+          before.has(r.id) ? { ...r, archived_at: before.get(r.id) ?? null } : r,
+        ),
+      );
       message.error(error.message);
       return;
     }
-    setSelected([]);
     message.success(`${count(ids.length)} ${archived ? "archived" : "restored"}.`);
-    router.refresh();
   };
 
   const remove = async (ids: string[]) => {
     if (!ids.length) return;
+    const wanted = new Set(ids);
+
+    // The removed rows are kept, in order, so a refused delete can put them
+    // back where they were rather than at the top.
+    const snapshot = liveRows;
+    mutate((current) => current.filter((r) => !wanted.has(r.id)));
+    setSelected([]);
 
     setBulkBusy(true);
     const supabase = createClient();
@@ -458,23 +486,38 @@ export function ApplicationsGrid({
     setBulkBusy(false);
 
     if (error) {
+      mutate(() => snapshot);
       message.error(error.message);
       return;
     }
-    setSelected([]);
     message.success(`${count(ids.length)} deleted.`);
-    router.refresh();
   };
 
-  /** Status and billing stay one-click editable outside edit mode. */
+  /**
+   * Status and billing stay one-click editable outside edit mode.
+   *
+   * The change lands in the cell before the request leaves. The revert on
+   * failure restores only the fields this patch touched, so a second patch to
+   * the same row that succeeded in the meantime is not undone with it.
+   */
   const quickPatch = async (id: string, values: Partial<Row>) => {
+    const before = liveRows.find((r) => r.id === id);
+    if (!before) return;
+    const touched = Object.keys(values) as (keyof Row)[];
+    const previous = Object.fromEntries(touched.map((k) => [k, before[k]]));
+
+    mutate((current) =>
+      current.map((r) => (r.id === id ? { ...r, ...values } : r)),
+    );
+
     const supabase = createClient();
     const { error } = await supabase.from("application").update(values).eq("id", id);
     if (error) {
+      mutate((current) =>
+        current.map((r) => (r.id === id ? { ...r, ...previous } : r)),
+      );
       message.error(error.message);
-      return;
     }
-    router.refresh();
   };
 
   const baseColumns: ColumnsType<Row> = [
@@ -547,14 +590,13 @@ export function ApplicationsGrid({
       onFilter: (value, row) => row.created_by === value,
       // Never editable: authorship is stamped from the session, and letting it
       // be reassigned would make the audit trail decorative.
-      render: (value: string | null) =>
-        value ? (
-          <Marquee title={applierName.get(value)}>
-            {applierName.get(value) ?? "—"}
-          </Marquee>
-        ) : (
-          <Muted>—</Muted>
-        ),
+      render: (value: string | null) => {
+        // `appliers` is built on the server from the rows it loaded, so your
+        // first row of the session isn't in it yet. You know who you are.
+        const name =
+          applierName.get(value ?? "") ?? (value === userId ? "You" : null);
+        return name ? <Marquee title={name}>{name}</Marquee> : <Muted>—</Muted>;
+      },
     },
     {
       key: "job_url",
@@ -951,7 +993,7 @@ export function ApplicationsGrid({
             value={view}
             onChange={changeView}
             options={[
-              { value: "active", label: `Active (${rows.length - archivedCount})` },
+              { value: "active", label: `Active (${liveRows.length - archivedCount})` },
               { value: "archived", label: `Archived (${archivedCount})` },
             ]}
           />
@@ -1056,14 +1098,30 @@ export function ApplicationsGrid({
           className={EXACT_WIDTH_CLASS}
           dataSource={data}
           components={{ header: { cell: ResizableTitle } }}
+          /**
+           * No `total`, on purpose — it was the bug.
+           *
+           * antd filters and sorts `dataSource` itself when columns carry
+           * `filters`, then paginates *that*. A `total` passed from here counted
+           * the rows before the Profile / Status / Applier filters ran, so with
+           * any of them active the two disagreed. antd treats "fewer rows than
+           * total" as a server-paged table and stops slicing: every filtered
+           * row on one page, a pager promising pages that weren't there, and a
+           * count that was wrong. Left to itself it knows the true count.
+           *
+           * `current` is still controlled, so searching or switching view can
+           * send you back to page one — but it is fed from the Table's own
+           * onChange below, which is also where antd reports the reset it does
+           * when a column filter or sort changes. Out of range is fine: antd
+           * clamps to the last page before rendering.
+           */
           pagination={{
-            current,
+            current: page,
             pageSize,
-            total: data.length,
+            position: ["topRight", "bottomRight"],
             showSizeChanger: true,
             pageSizeOptions: PAGE_SIZE_OPTIONS,
-            showQuickJumper: data.length > pageSize * 2,
-            onChange: (next) => setPage(next),
+            showQuickJumper: true,
             onShowSizeChange: (_current, size) => {
               setPageSize(size);
               // The row you were looking at is on a different page now, and
@@ -1071,8 +1129,9 @@ export function ApplicationsGrid({
               setPage(1);
             },
             showTotal: (total, [from, to]) =>
-              `${from}–${to} of ${total} ${view === "archived" ? "archived" : ""}`.trim(),
+              `${from}–${to} of ${total}${view === "archived" ? " archived" : ""}`,
           }}
+          onChange={(pagination) => setPage(pagination.current ?? 1)}
           /**
            * A number, not "max-content" — and that difference is the whole
            * reason a column could not be narrowed past its content.

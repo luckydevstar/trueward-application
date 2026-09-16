@@ -2,6 +2,7 @@ import { Alert } from "antd";
 
 import { ApplicationsGrid } from "@/components/applications-grid";
 import { requireActor } from "@/lib/actor";
+import { ROW_COLUMNS } from "@/lib/application-row";
 import { canRecord, seesApplications, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
@@ -49,9 +50,7 @@ export default async function ApplicationsPage() {
   const [applications, profiles, members, blocked] = await Promise.all([
     supabase
       .from("application")
-      .select(
-        "id, title, company, job_url, status, billing, notes, applied_at, resume_key, resume_url, resume_name, profile_id, created_by, archived_at",
-      )
+      .select(ROW_COLUMNS)
       .order("applied_at", { ascending: false }),
     supabase.from("candidate_profile").select("id, full_name").order("full_name"),
     supabase.from("app_user").select("id, name, email"),

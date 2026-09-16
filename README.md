@@ -320,10 +320,35 @@ ref, no ResizeObserver, no measuring pass, and a column resize is picked up for
 free. `min()` clamps it at zero so text that already fits doesn't drift right.
 Reduced-motion keeps the ellipsis and leans on the `title` attribute.
 
-Paging is antd's, with a size changer persisted per grid. The current page is
-**clamped by derivation** rather than corrected in an effect — deleting the last
-rows on the last page recomputes the page during the same render, instead of
-painting an empty one and then fixing itself.
+Paging is antd's, top and bottom, with a size changer persisted per grid. The
+grid passes **no `total`** — that was a bug. antd applies the column filters
+(Profile, Status, Applier) itself and paginates the result, so a count supplied
+from outside disagreed with it whenever a filter was on; antd reads "fewer rows
+than total" as a server-paged table and stops slicing, which produced a pager
+promising pages that weren't there. The page number is controlled only so
+searching or switching views can return to page one, and it is fed from the
+Table's own `onChange`, where antd also reports the reset it performs when a
+filter or sort changes.
+
+### Edits are local-first
+
+Every write in the applications grid used to end in `router.refresh()`: the
+page re-ran on the server — actor lookup, four queries, an RSC render — and the
+cell showed the old value until all of that came back. A one-row status change
+was paying for a whole page load, and felt like it.
+
+Now a write updates a local overlay at once and the database in the
+background, and where it needs something the database decides — a new row's
+id — reads the row back from the same statement (`insert().select()`). Nothing
+re-fetches the page. A refused write reverts the change and shows the error;
+the revert restores only the fields that write touched, so a second patch to
+the same row that succeeded in between is not undone with it.
+
+The overlay (`src/lib/overlay.ts`) remembers which props value it was built on
+and compares that to the current props *during render*: same reference, show
+the overlay; different, the server has sent a fresh list and the overlay is
+ignored. That is the whole mechanism — no effect copying props into state, no
+frame of stale data, and the two pure functions are tested without a DOM.
 
 ### Archiving
 
