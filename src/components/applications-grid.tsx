@@ -1019,7 +1019,19 @@ export function ApplicationsGrid({
         <Alert
           type="info"
           style={{ marginBottom: 12 }}
-          title={`${count(targets.length)} selected`}
+          title={
+            <>
+              <Typography.Text strong>{targets.length}</Typography.Text>{" "}
+              {targets.length === 1 ? "application" : "applications"} selected
+              {selected.length > targets.length && (
+                <Typography.Text type="secondary">
+                  {" "}
+                  · {selected.length - targets.length} more hidden by the search
+                  — actions apply to what is shown
+                </Typography.Text>
+              )}
+            </>
+          }
           action={
             <Space>
               {view === "active" ? (
@@ -1128,8 +1140,22 @@ export function ApplicationsGrid({
               // there is no honest way to guess which. First is predictable.
               setPage(1);
             },
-            showTotal: (total, [from, to]) =>
-              `${from}–${to} of ${total}${view === "archived" ? " archived" : ""}`,
+            // The selection count lives here as well as in the bar above:
+            // this row sits directly on the table, top and bottom, so it is in
+            // view while you are ticking rows — the bar may not be.
+            showTotal: (total, [from, to]) => (
+              <Space size={12}>
+                <span>
+                  {from}–{to} of {total}
+                  {view === "archived" ? " archived" : ""}
+                </span>
+                {targets.length > 0 && (
+                  <Tag color="blue" style={{ margin: 0 }}>
+                    {targets.length} selected
+                  </Tag>
+                )}
+              </Space>
+            ),
           }}
           onChange={(pagination) => setPage(pagination.current ?? 1)}
           /**
