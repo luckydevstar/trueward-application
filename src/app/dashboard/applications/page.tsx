@@ -2,7 +2,8 @@ import { Alert } from "antd";
 
 import { ApplicationsGrid } from "@/components/applications-grid";
 import { requireActor } from "@/lib/actor";
-import { ROW_COLUMNS } from "@/lib/application-row";
+import { ROW_COLUMNS, type ApplicationRow as Row } from "@/lib/application-row";
+import { fetchAll } from "@/lib/fetch-all";
 import { canRecord, seesApplications, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
@@ -48,16 +49,30 @@ export default async function ApplicationsPage() {
    * second copy of those rules, free to drift from them.
    */
   const [applications, profiles, members, blocked] = await Promise.all([
-    supabase
-      .from("application")
-      .select(ROW_COLUMNS)
-      .order("applied_at", { ascending: false }),
+    /*
+     * Paged, because PostgREST caps a response at 1,000 rows and says nothing
+     * about it. Without this the grid showed the newest 1,000 applications
+     * and reported that as the total — the missing ones were simply absent,
+     * with no error and no gap to notice.
+     *
+     * The order matters as much as the range: `applied_at desc` with `id` as
+     * the tiebreak, so two applications recorded in the same second cannot
+     * swap places between pages and appear twice or not at all.
+     */
+    fetchAll<Row>((from, to) =>
+      supabase
+        .from("application")
+        .select(ROW_COLUMNS)
+        .order("applied_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+    ),
     supabase.from("candidate_profile").select("id, full_name").order("full_name"),
     supabase.from("app_user").select("id, name, email"),
     supabase.from("blocked_company").select("normalized_name"),
   ]);
 
-  const rows = applications.data ?? [];
+  const rows = applications.rows;
 
   return (
     <ApplicationsGrid

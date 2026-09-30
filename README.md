@@ -350,6 +350,36 @@ the overlay; different, the server has sent a fresh list and the overlay is
 ignored. That is the whole mechanism — no effect copying props into state, no
 frame of stale data, and the two pure functions are tested without a DOM.
 
+### The 1,000-row cap
+
+PostgREST answers at most 1,000 rows per request — Supabase's `db-max-rows` —
+and it does so **silently**: 1,000 rows, a 200, and nothing to say the rest
+exist. A query without an explicit `.range()` therefore looks like it worked.
+
+That is how the grid came to show 1,000 of 1,682 applications. The missing
+ones were not filtered or hidden; they were simply never asked for, and the
+count in the pager agreed with the truncated list because it was counting what
+had arrived.
+
+`src/lib/fetch-all.ts` pages until a short page comes back. Two details are
+load-bearing:
+
+- **The sort needs a tiebreak.** `applied_at desc` alone is not a total order,
+  so two applications recorded in the same second can swap places between
+  requests and end up fetched twice or not at all. `id desc` settles it.
+- **It stops on a short page, not on an expected total.** A table that grows
+  mid-fetch would make a precomputed page count wrong; a short page cannot be.
+
+This loads every application into the page payload, which is the right shape
+while the grid searches, filters, sorts and paginates client-side — each of
+those needs every row to be correct, and so does the duplicate-cooldown
+warning. It stops being right somewhere in the low tens of thousands, where
+the answer is server-side paging and a redesign of those four things rather
+than a larger fetch.
+
+Only `application` is anywhere near the cap; every other table in this app is
+under a dozen rows.
+
 ### Archiving
 
 An application carries `archived_at`: null while it is on the working list, a
