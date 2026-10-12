@@ -74,6 +74,14 @@ type Props = {
   profiles: Option[];
   appliers: Option[];
   blockedNames: string[];
+  /**
+   * Browsing without a team of your own — a super admin.
+   *
+   * Reading and fixing every team's rows is coherent; creating one is not,
+   * because a new row has to belong to exactly one team and theirs is "all of
+   * them". So the entry row goes, and the rest of the grid stays.
+   */
+  readOnly?: boolean;
 };
 
 const WIDTH_STORAGE_KEY = "tw.applications.columnWidths";
@@ -151,6 +159,7 @@ export function ApplicationsGrid({
   profiles,
   appliers,
   blockedNames,
+  readOnly = false,
 }: Props) {
   const { message } = App.useApp();
 
@@ -983,9 +992,11 @@ export function ApplicationsGrid({
             Applications
           </Typography.Title>
           <Typography.Text type="secondary">
-            {view === "active"
-              ? "Type into the top row to add a record. Drag any column edge to resize; double-click a row to edit it."
-              : "Archived records are read-only. Restore one to edit it again."}
+            {readOnly
+              ? "Every team's applications. You have no team of your own, so there is no row to add into."
+              : view === "active"
+                ? "Type into the top row to add a record. Drag any column edge to resize; double-click a row to edit it."
+                : "Archived records are read-only. Restore one to edit it again."}
           </Typography.Text>
         </div>
         <Space>
@@ -1197,8 +1208,9 @@ export function ApplicationsGrid({
           // filtering and pagination — it stays put whatever the table is doing.
           summary={
             // Nothing to add to an archive, so the entry row belongs to the
-            // active view only.
-            view === "archived"
+            // active view only — nor anything to add without a team, which is
+            // why a super admin gets no entry row either.
+            readOnly || view === "archived"
               ? undefined
               : () => (
                   <Table.Summary fixed="top">

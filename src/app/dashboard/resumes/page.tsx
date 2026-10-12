@@ -2,7 +2,7 @@ import { ResumeBuilder } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { profileSchema } from "@/lib/document/schema";
 import { profileReach, scopeToReach } from "@/lib/profile-scope";
-import { teamIdFor } from "@/lib/scope";
+import { seesAllTeams, teamIdFor } from "@/lib/scope";
 import { allowedAccents, allowedTemplates } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/server";
 
@@ -12,9 +12,25 @@ export default async function ResumesPage() {
   const actor = await requireActor();
   const supabase = await createClient();
 
-  const teamId = teamIdFor(actor);
-  if (!teamId) {
-    return <ResumeBuilder profiles={[]} documents={[]} teamId="" userId={actor.id} templates={allowedTemplates(actor.role, actor.allowedTemplates)} accents={allowedAccents(actor.role, actor.allowedAccents)} />;
+  /*
+   * A super admin has no team and reaches every one, so the team filter is
+   * dropped for them rather than pinning the query to an id they don't have.
+   * Everyone else without a team genuinely has nothing to show.
+   */
+  const everyTeam = seesAllTeams(actor);
+  const teamId = teamIdFor(actor) ?? "";
+
+  if (!teamId && !everyTeam) {
+    return (
+      <ResumeBuilder
+        profiles={[]}
+        documents={[]}
+        teamId=""
+        userId={actor.id}
+        templates={allowedTemplates(actor.role, actor.allowedTemplates)}
+        accents={allowedAccents(actor.role, actor.allowedAccents)}
+      />
+    );
   }
 
   /**
@@ -33,20 +49,24 @@ export default async function ResumesPage() {
 
   const [profiles, documents] = await Promise.all([
     scopeToReach(
-      supabase
-        .from("candidate_profile")
-        .select("id, full_name, profile")
-        .eq("team_id", teamId)
-        .order("full_name"),
+      (() => {
+        const query = supabase
+          .from("candidate_profile")
+          .select("id, full_name, profile")
+          .order("full_name");
+        return everyTeam ? query : query.eq("team_id", teamId);
+      })(),
       reach,
       "id",
     ),
     scopeToReach(
-      supabase
-        .from("resume_document")
-        .select("id, title, profile_id, content, template, style, updated_at")
-        .eq("team_id", teamId)
-        .order("updated_at", { ascending: false }),
+      (() => {
+        const query = supabase
+          .from("resume_document")
+          .select("id, title, profile_id, content, template, style, updated_at")
+          .order("updated_at", { ascending: false });
+        return everyTeam ? query : query.eq("team_id", teamId);
+      })(),
       reach,
       "profile_id",
     ),

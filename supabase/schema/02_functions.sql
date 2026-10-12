@@ -77,8 +77,12 @@ security definer
 set search_path = public
 as $$
   select case
-    when u.role::text = 'admin' then u.id
+    when u.role::text = 'subadmin' then u.id
     when u.role::text in ('bidder', 'resume_builder') then u.created_by_id
+    -- A super admin still has no team of their own. Their reach comes from
+    -- in_team() below instead, which lets them past the team check entirely
+    -- rather than pretending they belong to one — there is no single team id
+    -- that could stand for "all of them".
     else null
   end
   from app_user u
@@ -98,7 +102,42 @@ returns boolean
 language sql
 stable
 as $$
-  select app_role()::text in ('admin', 'super_admin')
+  select app_role()::text in ('subadmin', 'super_admin')
+$$;
+
+/**
+ * The platform owner, as opposed to the owner of one team.
+ *
+ * Separate from is_admin() because the two answer different questions: a
+ * subadmin is an admin *of their team*, while this is the role that is not
+ * bounded by a team at all.
+ */
+create or replace function public.is_super_admin()
+returns boolean
+language sql
+stable
+as $$
+  select app_role()::text = 'super_admin'
+$$;
+
+/**
+ * The team test every policy starts with.
+ *
+ * `team_id = app_team_id()` on its own excludes a super admin, because their
+ * app_team_id() is null and `null = anything` is unknown rather than false —
+ * they matched nothing, silently, which is why they could see no records at
+ * all.
+ *
+ * Writing it once here rather than `is_super_admin() or team_id = ...` in
+ * twenty policies is the point: the next policy added gets the rule by using
+ * the helper, instead of by someone remembering the disjunction.
+ */
+create or replace function public.in_team(target uuid)
+returns boolean
+language sql
+stable
+as $$
+  select is_super_admin() or target = app_team_id()
 $$;
 
 create or replace function public.is_builder()

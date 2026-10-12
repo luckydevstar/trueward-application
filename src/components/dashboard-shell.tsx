@@ -44,7 +44,7 @@ export function DashboardShell({ name, email, role, children }: Props) {
           },
         ]
       : []),
-    ...(seesProfiles(role)
+    ...(seesProfiles()
       ? [
           {
             key: "/dashboard/profiles",

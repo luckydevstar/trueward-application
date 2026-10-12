@@ -10,7 +10,7 @@ grant all on all tables in schema public to authenticated;
 grant execute on all functions in schema public to authenticated;
 
 -- ---------------------------------------------------------------- fixtures
--- Two teams. Team A: admin_a with bidders b1 and b2. Team C: admin_c alone.
+-- Two teams. Team A: subadmin a with bidders b1 and b2. Team C: subadmin c alone.
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'admin_a@example.com'),
@@ -19,8 +19,8 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000c', 'admin_c@example.com');
 
 -- The signup trigger already made the app_user rows; set up the hierarchy.
-update app_user set role = 'admin' where id = '00000000-0000-0000-0000-00000000000a';
-update app_user set role = 'admin' where id = '00000000-0000-0000-0000-00000000000c';
+update app_user set role = 'subadmin' where id = '00000000-0000-0000-0000-00000000000a';
+update app_user set role = 'subadmin' where id = '00000000-0000-0000-0000-00000000000c';
 update app_user set role = 'bidder', created_by_id = '00000000-0000-0000-0000-00000000000a'
   where id in ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000b2');
 
@@ -99,7 +99,7 @@ set role authenticated;
 set test.uid = '00000000-0000-0000-0000-0000000000b1';
 do $$
 begin
-  update app_user set role = 'admin' where id = auth.uid();
+  update app_user set role = 'subadmin' where id = auth.uid();
   if found then
     raise exception 'FAIL: self-promotion was allowed';
   end if;
@@ -112,15 +112,75 @@ $$;
 reset role;
 
 \echo ''
-\echo '=== 8. super_admin owns no records ==='
+\echo '=== 8. super_admin has no team of its own, and reaches every team ==='
 insert into auth.users (id, email)
   values ('00000000-0000-0000-0000-00000000005a', 'super@example.com');
 update app_user set role = 'super_admin'
   where id = '00000000-0000-0000-0000-00000000005a';
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000005a';
-select 'super team is null' as check, app_team_id() is null as expect_true;
-select 'super sees no applications' as check, count(*) = 0 as expect_true from application;
+
+-- Still null, deliberately. There is no single team id that could stand for
+-- "all of them", so the reach comes from in_team() letting a super admin past
+-- the team test rather than from inventing a team for them.
+select 'super team is still null' as check, app_team_id() is null as expect_true;
+select 'in_team() admits a super admin anyway' as check,
+       in_team('00000000-0000-0000-0000-00000000000a') as expect_true;
+
+-- The gap this change closed. `team_id = app_team_id()` against a null team
+-- is *unknown*, not false, so a super admin matched nothing — silently, with
+-- no error to notice.
+select 'super sees team A''s application' as check, count(*) = 1 as expect_true
+  from application where team_id = '00000000-0000-0000-0000-00000000000a';
+
+-- Reach is not authorship. A super admin may touch any team's rows and still
+-- cannot write one as somebody else: `created_by = auth.uid()` binds them the
+-- same as everyone, so the audit trail stays honest.
+do $$
+begin
+  insert into application (title, company, job_url, team_id, created_by)
+  values ('Forged', 'Soylent', 'https://example.com/forged',
+          '00000000-0000-0000-0000-00000000000c',
+          '00000000-0000-0000-0000-00000000000c');
+  raise exception 'FAIL: a super admin forged created_by';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: super admin cannot forge authorship';
+end $$;
+reset role;
+
+-- Team C records one of its own, so there are two teams to see across.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000c';
+insert into application (title, company, job_url, team_id, created_by)
+values ('Team C row', 'Soylent', 'https://example.com/c1',
+        app_team_id(), auth.uid());
+reset role;
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select 'super sees both teams' as check,
+       count(distinct team_id) >= 2 as expect_true from application;
+
+-- And may act on another team's row, not merely read it.
+update application set notes = 'reviewed by platform owner'
+  where team_id = '00000000-0000-0000-0000-00000000000a';
+select 'super can edit another team''s row' as check,
+       count(*) = 1 as expect_true
+  from application
+ where team_id = '00000000-0000-0000-0000-00000000000a'
+   and notes = 'reviewed by platform owner';
+reset role;
+
+\echo ''
+\echo '=== 8b. a subadmin is still confined to its own team ==='
+-- The counterpart assertion: widening the top must not have widened the
+-- middle. If in_team() were wrong this is what would catch it.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'subadmin sees only its own team' as check,
+       count(*) = 0 as expect_true
+  from application where team_id = '00000000-0000-0000-0000-00000000000c';
 reset role;
 
 \echo ''

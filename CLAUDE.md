@@ -37,6 +37,12 @@ RLS is the boundary, not the query layer. The policies in `supabase/schema/`
 controls that would fail. They are not enforcement. If they disagree with the
 database, the database wins and the user sees a rejected write.
 
+**The team test is `in_team(team_id)`, never `team_id = app_team_id()`.** The
+bare comparison excludes a super admin — their `app_team_id()` is null, and
+`null = anything` is *unknown* rather than false, so they match nothing with no
+error to show for it. That is exactly how super admins came to see no records
+at all. A new policy that spells the comparison out by hand reintroduces it.
+
 **The one place query-layer scoping is deliberate:** `src/lib/profile-scope.ts`
 narrows the profile lists a page sends to the browser, mirroring
 `can_use_profile()`. This is defence in depth for a *payload* — a page that

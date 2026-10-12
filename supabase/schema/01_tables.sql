@@ -52,7 +52,25 @@ begin
   -- this file should sort roles the same way as one that grew through the
   -- earlier migrations — where resume_builder was appended last.
   if to_regtype('public.user_role') is null then
-    create type user_role as enum ('super_admin', 'admin', 'bidder');
+    create type user_role as enum ('super_admin', 'subadmin', 'bidder');
+  end if;
+
+  -- `admin` was renamed to `subadmin`: the role always *was* the owner of one
+  -- team, and calling it "admin" beside "super admin" suggested a difference
+  -- of degree when it is a difference of kind — one tenant versus all of them.
+  --
+  -- A rename rather than a new value plus a data migration, so every existing
+  -- row keeps its role without being touched, and no window exists where some
+  -- accounts are 'admin' and others 'subadmin'.
+  --
+  -- Guarded, because this file is meant to converge a database rather than
+  -- build one: the second run finds no 'admin' to rename and does nothing.
+  if exists (
+    select 1 from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+     where t.typname = 'user_role' and e.enumlabel = 'admin'
+  ) then
+    alter type user_role rename value 'admin' to 'subadmin';
   end if;
 
   if to_regtype('public.application_status') is null then

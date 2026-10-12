@@ -244,20 +244,54 @@ same perceived speed without that.
 
 ## Authorization
 
-Records belong to a *team*, identified by an admin's id:
+The shape is multi-tenant: a **subadmin owns one team**, a **super admin owns
+the platform**.
 
-- an admin's team is their own id
-- a bidder's and a resume builder's team is the admin who created them
-- a super admin has no team — they manage accounts, not records
+Records belong to a *team*, identified by a subadmin's id:
 
-Within a team, reach narrows by role:
+- a subadmin's team is their own id
+- a bidder's and a resume builder's team is the subadmin who created them
+- a super admin has no team of their own, and reaches every one of them
 
-| Role | Sees | Pages |
-| --- | --- | --- |
-| `admin` | everything on the team | all |
-| `bidder` | applications they recorded, profiles assigned to them | Applications, Profiles, Resume builder, Blocklist |
-| `resume_builder` | only the profiles they created | Profiles, Resume builder |
-| `super_admin` | no records at all | Users |
+| Role | Sees | Creates | Pages |
+| --- | --- | --- | --- |
+| `super_admin` | **every team's records** | subadmins, and accounts in any team | all |
+| `subadmin` | everything in their own team | bidders and resume builders | all |
+| `bidder` | applications they recorded, profiles assigned to them | applications | Applications, Profiles, Resume builder, Blocklist |
+| `resume_builder` | only the profiles they created | profiles, resumes | Profiles, Resume builder |
+
+**Why `admin` became `subadmin`.** The role always *was* the owner of exactly
+one team; calling it "admin" beside "super admin" suggested a difference of
+degree where there is a difference of kind — one tenant versus all of them. It
+is a Postgres `ALTER TYPE ... RENAME VALUE`, so every existing row keeps its
+role untouched and no window exists where some accounts are `admin` and others
+`subadmin`. The statement is guarded, so a second run of the schema finds
+nothing to rename.
+
+**A super admin reads everything and creates nothing.** Reading and fixing any
+team's rows is coherent; creating one is not, because a row belongs to exactly
+one `team_id` and theirs would be "all of them" — which is not an answer the
+column can hold. So the applications entry row and the blocklist's add form
+are hidden for them, with a sentence saying why, rather than offered and then
+refused. Authorship still binds: `created_by = auth.uid()` means even a super
+admin cannot write a row as somebody else, and there is a test asserting it.
+
+**What actually closed the gap.** Before this, `super_admin` could see *no
+records at all* — not by decision but by accident. Every policy began
+`team_id = app_team_id()`, and `app_team_id()` is null for a super admin;
+`null = anything` is **unknown**, not false, so they matched nothing, silently,
+with no error to notice. The fix is one helper:
+
+```sql
+create or replace function public.in_team(target uuid)
+returns boolean language sql stable as $$
+  select is_super_admin() or target = app_team_id()
+$$;
+```
+
+All 26 policy sites now call `in_team(team_id)`. Writing it once is the point:
+the next policy added inherits the rule by using the helper, rather than by
+someone remembering to append `or is_super_admin()`.
 
 > **Adding a role means auditing the policies, not just the enum.** Almost every
 > privileged check used to read `app_role() <> 'bidder'`, which was the same

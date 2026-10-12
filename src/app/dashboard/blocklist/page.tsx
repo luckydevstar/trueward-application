@@ -3,7 +3,7 @@ import { Alert } from "antd";
 import { BlocklistPanel } from "@/components/blocklist-panel";
 import { requireActor } from "@/lib/actor";
 import { isAdminRole } from "@/lib/roles";
-import { seesApplications, teamIdFor } from "@/lib/scope";
+import { seesAllTeams, seesApplications, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Blocklist" };
@@ -45,7 +45,7 @@ export default async function BlocklistPage() {
     <BlocklistPanel
       teamId={teamIdFor(actor) ?? ""}
       userId={actor.id}
-      canEdit={isAdminRole(actor.role)}
+      canEdit={isAdminRole(actor.role) && !seesAllTeams(actor)}
       rows={blocked.data ?? []}
       cooling={cooling.data ?? []}
     />

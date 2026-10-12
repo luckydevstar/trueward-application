@@ -3,7 +3,13 @@ import { Alert } from "antd";
 import { ProfilesList } from "@/components/profiles-list";
 import { requireActor } from "@/lib/actor";
 import { profileReach, scopeToReach } from "@/lib/profile-scope";
-import { canAssignProfiles, canEditProfiles, canRecord, teamIdFor } from "@/lib/scope";
+import {
+  canAssignProfiles,
+  canBrowseRecords,
+  canEditProfiles,
+  seesAllTeams,
+  teamIdFor,
+} from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Profiles" };
@@ -11,7 +17,7 @@ export const metadata = { title: "Profiles" };
 export default async function ProfilesPage() {
   const actor = await requireActor();
 
-  if (!canRecord(actor)) {
+  if (!canBrowseRecords(actor)) {
     return (
       <Alert
         type="warning"
@@ -25,43 +31,62 @@ export default async function ProfilesPage() {
   // A builder creates and edits their own; only an admin routes them to people.
   const canEdit = canEditProfiles(actor.role);
   const canAssign = canAssignProfiles(actor.role);
-  const teamId = teamIdFor(actor)!;
+  const teamId = teamIdFor(actor) ?? "";
   const supabase = await createClient();
 
   // Same rule as the resume builder page, from the same place — see
   // src/lib/profile-scope.ts for why it is not written out twice.
   const reach = await profileReach(supabase, actor, teamId);
 
+  /*
+   * A super admin has no team, and pinning the query to `teamId` would
+   * therefore filter on the empty string and return nothing. They are the one
+   * actor whose answer is "every team", so the filter is dropped for them and
+   * RLS — which already admits them through in_team() — is what decides.
+   */
+  const everyTeam = seesAllTeams(actor);
+
   const [profiles, assignments, members] = await Promise.all([
     scopeToReach(
-      supabase
-        .from("candidate_profile")
-        // ssn_encrypted is never selected. The list only needs to know
-        // *whether* one exists, which the boolean below answers without moving
-        // ciphertext.
-        .select(
-          "id, full_name, email, phone, city, state, country, updated_at, ssn_encrypted",
-        )
-        .eq("team_id", teamId)
-        .order("full_name"),
+      (() => {
+        const query = supabase
+          .from("candidate_profile")
+          // ssn_encrypted is never selected. The list only needs to know
+          // *whether* one exists, which the boolean below answers without
+          // moving ciphertext.
+          .select(
+            "id, full_name, email, phone, city, state, country, updated_at, ssn_encrypted",
+          )
+          .order("full_name");
+        return everyTeam ? query : query.eq("team_id", teamId);
+      })(),
       reach,
       "id",
     ),
     canAssign
-      ? supabase
-          .from("profile_assignment")
-          .select("profile_id, user_id")
-          .eq("team_id", teamId)
+      ? (() => {
+          const query = supabase
+            .from("profile_assignment")
+            .select("profile_id, user_id");
+          return everyTeam ? query : query.eq("team_id", teamId);
+        })()
       : Promise.resolve({ data: [] as never[] }),
     // Every team member, not just bidders. A member is either the team's admin
     // or an account created by that admin; super admins have no team.
     canAssign
-      ? supabase
-          .from("app_user")
-          .select("id, name, email, role")
-          .or(`id.eq.${teamId},created_by_id.eq.${teamId}`)
-          .neq("role", "super_admin")
-          .order("name")
+      ? (() => {
+          const query = supabase
+            .from("app_user")
+            .select("id, name, email, role")
+            .neq("role", "super_admin")
+            .order("name");
+          // A subadmin's team is themselves plus the accounts they created.
+          // A super admin assigns across every team, so there is nobody to
+          // exclude.
+          return everyTeam
+            ? query
+            : query.or(`id.eq.${teamId},created_by_id.eq.${teamId}`);
+        })()
       : Promise.resolve({ data: [] as never[] }),
   ]);
 
@@ -91,7 +116,7 @@ export default async function ProfilesPage() {
       rows={rows}
       teamMembers={(members.data ?? []).map((m) => ({
         id: m.id,
-        label: `${m.name ?? m.email}${m.role === "admin" ? " (admin)" : ""}`,
+        label: `${m.name ?? m.email}${m.role === "subadmin" ? " (subadmin)" : ""}`,
       }))}
     />
   );

@@ -4,7 +4,12 @@ import { ApplicationsGrid } from "@/components/applications-grid";
 import { requireActor } from "@/lib/actor";
 import { ROW_COLUMNS, type ApplicationRow as Row } from "@/lib/application-row";
 import { fetchAll } from "@/lib/fetch-all";
-import { canRecord, seesApplications, teamIdFor } from "@/lib/scope";
+import {
+  canBrowseRecords,
+  seesAllTeams,
+  seesApplications,
+  teamIdFor,
+} from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Applications" };
@@ -26,7 +31,7 @@ export default async function ApplicationsPage() {
     );
   }
 
-  if (!canRecord(actor)) {
+  if (!canBrowseRecords(actor)) {
     return (
       <Alert
         type="warning"
@@ -76,7 +81,11 @@ export default async function ApplicationsPage() {
 
   return (
     <ApplicationsGrid
-      teamId={teamIdFor(actor)!}
+      // Empty for a super admin, who browses every team and belongs to none.
+      // The grid hides its entry row rather than offering a create that has
+      // no team to create into — see `readOnly` below.
+      teamId={teamIdFor(actor) ?? ""}
+      readOnly={seesAllTeams(actor)}
       userId={actor.id}
       isAdmin={actor.role !== "bidder"}
       rows={rows}

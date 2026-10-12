@@ -62,12 +62,12 @@ create policy app_user_self_update on app_user
 
 drop policy if exists candidate_profile_select on candidate_profile;
 create policy candidate_profile_select on candidate_profile
-  for select using (team_id = app_team_id() and can_use_profile(id));
+  for select using (in_team(team_id) and can_use_profile(id));
 
 drop policy if exists candidate_profile_insert on candidate_profile;
 create policy candidate_profile_insert on candidate_profile
   for insert with check (
-    team_id = app_team_id()
+    in_team(team_id)
     and created_by = auth.uid()
     and (is_admin() or is_builder())
   );
@@ -77,14 +77,14 @@ create policy candidate_profile_insert on candidate_profile
 drop policy if exists candidate_profile_update on candidate_profile;
 create policy candidate_profile_update on candidate_profile
   for update using (
-    team_id = app_team_id()
+    in_team(team_id)
     and (is_admin() or (is_builder() and created_by = auth.uid()))
-  ) with check (team_id = app_team_id());
+  ) with check (in_team(team_id));
 
 drop policy if exists candidate_profile_delete on candidate_profile;
 create policy candidate_profile_delete on candidate_profile
   for delete using (
-    team_id = app_team_id()
+    in_team(team_id)
     and (is_admin() or (is_builder() and created_by = auth.uid()))
   );
 
@@ -95,36 +95,36 @@ create policy candidate_profile_delete on candidate_profile
 drop policy if exists profile_assignment_select on profile_assignment;
 create policy profile_assignment_select on profile_assignment
   for select using (
-    team_id = app_team_id() and (is_admin() or user_id = auth.uid())
+    in_team(team_id) and (is_admin() or user_id = auth.uid())
   );
 
 drop policy if exists profile_assignment_insert on profile_assignment;
 create policy profile_assignment_insert on profile_assignment
   for insert with check (
-    team_id = app_team_id() and is_admin() and assigned_by = auth.uid()
+    in_team(team_id) and is_admin() and assigned_by = auth.uid()
   );
 
 drop policy if exists profile_assignment_delete on profile_assignment;
 create policy profile_assignment_delete on profile_assignment
-  for delete using (team_id = app_team_id() and is_admin());
+  for delete using (in_team(team_id) and is_admin());
 
 -- --- profile_attachment ---------------------------------------------------
 
 drop policy if exists profile_attachment_select on profile_attachment;
 create policy profile_attachment_select on profile_attachment
-  for select using (team_id = app_team_id() and can_use_profile(profile_id));
+  for select using (in_team(team_id) and can_use_profile(profile_id));
 
 drop policy if exists profile_attachment_insert on profile_attachment;
 create policy profile_attachment_insert on profile_attachment
   for insert with check (
-    team_id = app_team_id()
+    in_team(team_id)
     and created_by = auth.uid()
     and can_use_profile(profile_id)
   );
 
 drop policy if exists profile_attachment_delete on profile_attachment;
 create policy profile_attachment_delete on profile_attachment
-  for delete using (team_id = app_team_id() and can_use_profile(profile_id));
+  for delete using (in_team(team_id) and can_use_profile(profile_id));
 
 -- --- resume_document ------------------------------------------------------
 -- Follows the profile: you may write a resume for a candidate you may work
@@ -132,12 +132,12 @@ create policy profile_attachment_delete on profile_attachment
 
 drop policy if exists resume_document_select on resume_document;
 create policy resume_document_select on resume_document
-  for select using (team_id = app_team_id() and can_use_profile(profile_id));
+  for select using (in_team(team_id) and can_use_profile(profile_id));
 
 drop policy if exists resume_document_insert on resume_document;
 create policy resume_document_insert on resume_document
   for insert with check (
-    team_id = app_team_id()
+    in_team(team_id)
     and created_by = auth.uid()
     and can_use_profile(profile_id)
   );
@@ -145,15 +145,15 @@ create policy resume_document_insert on resume_document
 drop policy if exists resume_document_update on resume_document;
 create policy resume_document_update on resume_document
   for update using (
-    team_id = app_team_id()
+    in_team(team_id)
     and (is_admin() or created_by = auth.uid())
     and can_use_profile(profile_id)
-  ) with check (team_id = app_team_id());
+  ) with check (in_team(team_id));
 
 drop policy if exists resume_document_delete on resume_document;
 create policy resume_document_delete on resume_document
   for delete using (
-    team_id = app_team_id()
+    in_team(team_id)
     and (is_admin() or created_by = auth.uid())
     and can_use_profile(profile_id)
   );
@@ -164,17 +164,17 @@ create policy resume_document_delete on resume_document
 
 drop policy if exists blocked_company_select on blocked_company;
 create policy blocked_company_select on blocked_company
-  for select using (team_id = app_team_id());
+  for select using (in_team(team_id));
 
 drop policy if exists blocked_company_insert on blocked_company;
 create policy blocked_company_insert on blocked_company
   for insert with check (
-    team_id = app_team_id() and is_admin() and created_by = auth.uid()
+    in_team(team_id) and is_admin() and created_by = auth.uid()
   );
 
 drop policy if exists blocked_company_delete on blocked_company;
 create policy blocked_company_delete on blocked_company
-  for delete using (team_id = app_team_id() and is_admin());
+  for delete using (in_team(team_id) and is_admin());
 
 -- --- application ----------------------------------------------------------
 --
@@ -187,7 +187,7 @@ create policy blocked_company_delete on blocked_company
 drop policy if exists application_select on application;
 create policy application_select on application
   for select using (
-    team_id = app_team_id()
+    in_team(team_id)
     and not is_builder()
     and (
       is_admin()                      -- admins see the whole team
@@ -199,21 +199,21 @@ create policy application_select on application
 drop policy if exists application_insert on application;
 create policy application_insert on application
   for insert with check (
-    team_id = app_team_id() and created_by = auth.uid() and not is_builder()
+    in_team(team_id) and created_by = auth.uid() and not is_builder()
   );
 
 drop policy if exists application_update on application;
 create policy application_update on application
   for update using (
-    team_id = app_team_id()
+    in_team(team_id)
     and not is_builder()
     and (is_admin() or created_by = auth.uid())
-  ) with check (team_id = app_team_id());
+  ) with check (in_team(team_id));
 
 drop policy if exists application_delete on application;
 create policy application_delete on application
   for delete using (
-    team_id = app_team_id()
+    in_team(team_id)
     and not is_builder()
     and (is_admin() or created_by = auth.uid())
   );
@@ -225,12 +225,12 @@ create policy application_delete on application
 
 drop policy if exists ssn_access_log_select on ssn_access_log;
 create policy ssn_access_log_select on ssn_access_log
-  for select using (team_id = app_team_id() and is_admin());
+  for select using (in_team(team_id) and is_admin());
 
 drop policy if exists ssn_access_log_insert on ssn_access_log;
 create policy ssn_access_log_insert on ssn_access_log
   for insert with check (
-    team_id = app_team_id() and actor_id = auth.uid()
+    in_team(team_id) and actor_id = auth.uid()
   );
 
 -- ===========================================================================

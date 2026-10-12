@@ -9,7 +9,7 @@
 
 export const USER_ROLES = [
   "super_admin",
-  "admin",
+  "subadmin",
   "resume_builder",
   "bidder",
 ] as const;
@@ -22,12 +22,14 @@ export const ROLE_META: Record<
 > = {
   super_admin: {
     label: "Super admin",
-    description: "Manages everyone. Can create admins and bidders.",
+    description:
+      "Runs the platform. Creates subadmins, and sees every team's work.",
     color: "purple",
   },
-  admin: {
-    label: "Admin",
-    description: "Can create and manage bidders they add.",
+  subadmin: {
+    label: "Subadmin",
+    description:
+      "Owns one team: their own candidates, applications and the people they add.",
     color: "blue",
   },
   resume_builder: {
@@ -50,9 +52,14 @@ export const ROLE_META: Record<
  * the same thing while bidder was the only unprivileged role, and quietly
  * stopped being so the moment a second one existed — every check spelled that
  * way would have handed the new role admin rights by default.
+ *
+ * Mirrors is_admin() in supabase/schema/02_functions.sql. "Admin" here means
+ * *has authority*, which both roles do; it says nothing about how far that
+ * authority reaches. A subadmin's stops at their team, a super admin's does
+ * not — and that distinction lives in scopeFor() rather than here.
  */
 export function isAdminRole(role: UserRole): boolean {
-  return role === "admin" || role === "super_admin";
+  return role === "subadmin" || role === "super_admin";
 }
 
 export type Actor = {
@@ -63,19 +70,20 @@ export type Actor = {
 
 /** Only these two ever reach the Users page. */
 export function canManageUsers(role: UserRole): boolean {
-  return role === "super_admin" || role === "admin";
+  return isAdminRole(role);
 }
 
 /**
  * Which roles an actor may hand out.
  *
- * A super admin can mint admins and bidders. An admin can only mint bidders —
- * otherwise any admin could promote a peer (or themselves via a second
- * account) and the hierarchy would be decorative.
+ * A super admin mints subadmins — that is the act of adding a tenant. A
+ * subadmin mints only the people inside their own team; letting them mint a
+ * peer would make the hierarchy decorative, since any subadmin could create a
+ * second account and promote it.
  */
 export function creatableRoles(role: UserRole): UserRole[] {
-  if (role === "super_admin") return ["admin", "resume_builder", "bidder"];
-  if (role === "admin") return ["resume_builder", "bidder"];
+  if (role === "super_admin") return ["subadmin", "resume_builder", "bidder"];
+  if (role === "subadmin") return ["resume_builder", "bidder"];
   return [];
 }
 
@@ -95,7 +103,7 @@ export function canModifyUser(
 ): boolean {
   if (actor.id === target.id) return false;
   if (actor.role === "super_admin") return true;
-  if (actor.role === "admin") {
+  if (actor.role === "subadmin") {
     return (
       !isAdminRole(target.role) && target.createdById === actor.id
     );

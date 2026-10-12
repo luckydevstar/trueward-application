@@ -62,12 +62,14 @@ export async function profileReach(
   actor: Actor,
   teamId: string,
 ): Promise<ProfileReach> {
-  // Before the admin check, because isAdminRole() counts a super admin as one.
-  // They hold no team, so "every profile on the team" has no team to mean —
-  // both callers bail out before this on canRecord(), but a function that is
-  // only safe because of what its callers happen to check is not safe.
-  if (actor.role === "super_admin") return { kind: "listed", profileIds: [] };
-
+  // A super admin reaches every team, so there is nothing to narrow by —
+  // the same `team` answer as a subadmin, but the caller must not then pin
+  // the query to one team_id. See the profiles page, which drops that filter
+  // for them.
+  //
+  // This used to return an empty list, from when a super admin could see no
+  // records at all. That was a symptom of the gap in_team() closed, and
+  // leaving it would have made the page contradict the policies.
   if (isAdminRole(actor.role)) return { kind: "team" };
 
   if (actor.role === "resume_builder") {
