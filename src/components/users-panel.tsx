@@ -34,13 +34,20 @@ type Row = {
   isSelf: boolean;
   canModify: boolean;
   canEdit: boolean;
-  canChangeRole: boolean;
+  /** Whose team the account is on, by that subadmin's name. */
+  team: string | null;
+  /** For a subadmin: what their team holds, shown before deleting them. */
+  teamSize: { users: number; profiles: number } | null;
 };
 
 type Props = {
   rows: Row[];
   creatableRoles: UserRole[];
   serviceRoleConfigured: boolean;
+  /** The super admin's view: which team each account belongs to. */
+  showTeams: boolean;
+  /** Every subadmin, as the candidates to inherit a team being removed. */
+  subadmins: Array<{ id: string; label: string }>;
   /** The full style vocabulary, for the per-account allowance pickers. */
   allTemplates: Array<{ value: string; label: string }>;
   allAccents: string[];
@@ -58,7 +65,7 @@ type EditValues = {
   name: string;
   email: string;
   password?: string;
-  role: UserRole;
+  currentPassword?: string;
   allowedTemplates: string[];
   allowedAccents: string[];
 };
@@ -67,6 +74,8 @@ export function UsersPanel({
   rows,
   creatableRoles,
   serviceRoleConfigured,
+  showTeams,
+  subadmins,
   allTemplates,
   allAccents,
 }: Props) {
@@ -77,6 +86,8 @@ export function UsersPanel({
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   const [editForm] = Form.useForm<EditValues>();
+  const [removing, setRemoving] = useState<Row | null>(null);
+  const [inheritor, setInheritor] = useState<string | undefined>();
 
   const saveEdit = async (values: EditValues) => {
     if (!editing) return;
@@ -86,9 +97,9 @@ export function UsersPanel({
       name: values.name,
       email: values.email,
       // Blank means "leave it alone" rather than "set an empty password", so
-      // an admin fixing a typo in someone's name doesn't reset their login.
+      // fixing a typo in someone's name doesn't reset their login.
       password: values.password?.trim() ? values.password : undefined,
-      role: editing.canChangeRole ? values.role : undefined,
+      currentPassword: values.currentPassword || undefined,
       allowedTemplates: values.allowedTemplates ?? [],
       allowedAccents: values.allowedAccents ?? [],
     });
@@ -118,15 +129,23 @@ export function UsersPanel({
     router.refresh();
   };
 
-  const remove = async (id: string) => {
-    const result = await deleteUser(id);
+  const remove = async (id: string, inheritorId?: string) => {
+    setBusy(true);
+    const result = await deleteUser(id, inheritorId);
+    setBusy(false);
     if (!result.ok) {
       message.error(result.error);
-      return;
+      return false;
     }
-    message.success("Account removed.");
+    message.success(inheritorId ? "Team moved and account removed." : "Account removed.");
     router.refresh();
+    return true;
   };
+
+  const removingHasTeam = Boolean(
+    removing?.teamSize && (removing.teamSize.users || removing.teamSize.profiles),
+  );
+  const inheritors = subadmins.filter((s) => s.id !== removing?.id);
 
   return (
     <>
@@ -146,7 +165,9 @@ export function UsersPanel({
           onClick={() => setOpen(true)}
           disabled={!serviceRoleConfigured || creatableRoles.length === 0}
         >
-          Add user
+          {creatableRoles.length === 1
+            ? `Add ${ROLE_META[creatableRoles[0]].label.toLowerCase()}`
+            : "Add user"}
         </Button>
       </Space>
 
@@ -155,8 +176,8 @@ export function UsersPanel({
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          title="User creation is disabled"
-          description="Set SUPABASE_SERVICE_ROLE_KEY in the environment to create accounts from here. Without it, people can still sign themselves up on the login page — but they'll have no team until an admin assigns one."
+          title="Account management is disabled"
+          description="Set SUPABASE_SERVICE_ROLE_KEY in the environment to add, edit and remove accounts from here. Accounts are only ever created from this page — there is no public sign-up."
         />
       )}
 
@@ -184,6 +205,24 @@ export function UsersPanel({
                 <Tag color={ROLE_META[role].color}>{ROLE_META[role].label}</Tag>
               ),
             },
+            ...(showTeams
+              ? [
+                  {
+                    title: "Team",
+                    key: "team",
+                    render: (_: unknown, row: Row) =>
+                      row.teamSize ? (
+                        <Typography.Text type="secondary">
+                          {row.teamSize.users} bidder{row.teamSize.users === 1 ? "" : "s"} ·{" "}
+                          {row.teamSize.profiles} profile
+                          {row.teamSize.profiles === 1 ? "" : "s"}
+                        </Typography.Text>
+                      ) : (
+                        (row.team ?? <Typography.Text type="secondary">—</Typography.Text>)
+                      ),
+                  },
+                ]
+              : []),
             {
               title: "Added",
               dataIndex: "createdAt",
@@ -198,29 +237,49 @@ export function UsersPanel({
                     <Button
                       type="text"
                       icon={<EditOutlined />}
+                      aria-label={`Edit ${row.name ?? row.email}`}
                       onClick={() => {
                         setEditing(row);
                         editForm.setFieldsValue({
                           name: row.name ?? "",
                           email: row.email,
                           password: "",
-                          role: row.role,
+                          currentPassword: "",
                           allowedTemplates: row.allowedTemplates,
                           allowedAccents: row.allowedAccents,
                         });
                       }}
                     />
                   )}
-                  {row.canModify && (
-                    <Popconfirm
-                      title="Remove this account?"
-                      description="Their applications stay, but they lose access."
-                      onConfirm={() => remove(row.id)}
-                      okButtonProps={{ danger: true }}
-                    >
-                      <Button type="text" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                  )}
+                  {row.canModify &&
+                    (row.role === "subadmin" ? (
+                      // A subadmin is a team, so removing one is a decision
+                      // about where that team goes — a dialog, not a popconfirm.
+                      <Button
+                        type="text"
+                        danger
+                        icon={<DeleteOutlined />}
+                        aria-label={`Remove ${row.name ?? row.email}`}
+                        onClick={() => {
+                          setInheritor(undefined);
+                          setRemoving(row);
+                        }}
+                      />
+                    ) : (
+                      <Popconfirm
+                        title="Remove this account?"
+                        description="Their applications and resumes stay with the team; they lose access."
+                        onConfirm={() => remove(row.id)}
+                        okButtonProps={{ danger: true }}
+                      >
+                        <Button
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          aria-label={`Remove ${row.name ?? row.email}`}
+                        />
+                      </Popconfirm>
+                    ))}
                 </Space>
               ),
             },
@@ -229,7 +288,11 @@ export function UsersPanel({
       </Card>
 
       <Modal
-        title="Add a user"
+        title={
+          creatableRoles.length === 1
+            ? `Add a ${ROLE_META[creatableRoles[0]].label.toLowerCase()}`
+            : "Add a user"
+        }
         open={open}
         onCancel={() => setOpen(false)}
         onOk={() => form.submit()}
@@ -244,6 +307,11 @@ export function UsersPanel({
           requiredMark={false}
           initialValues={{ role: creatableRoles[0] }}
         >
+          {creatableRoles.length === 1 && (
+            <Typography.Paragraph type="secondary">
+              {ROLE_META[creatableRoles[0]].description}
+            </Typography.Paragraph>
+          )}
           <Form.Item
             name="name"
             label="Name"
@@ -271,7 +339,7 @@ export function UsersPanel({
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
-          <Form.Item name="role" label="Role">
+          <Form.Item name="role" label="Role" hidden={creatableRoles.length === 1}>
             <Select
               options={creatableRoles.map((r) => ({
                 value: r,
@@ -323,55 +391,117 @@ export function UsersPanel({
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
+          {editing?.isSelf && (
+            // Only on your own account: whoever manages an account resets it
+            // without knowing the old password, which is the point of
+            // managing it.
+            <Form.Item
+              name="currentPassword"
+              label="Current password"
+              dependencies={["password", "email"]}
+              extra="Needed to change your own email or password."
+              rules={[
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    const changingCredentials =
+                      Boolean(getFieldValue("password")?.trim()) ||
+                      getFieldValue("email")?.trim() !== editing.email;
+                    return changingCredentials && !value
+                      ? Promise.reject(new Error("Enter your current password"))
+                      : Promise.resolve();
+                  },
+                }),
+              ]}
+            >
+              <Input.Password autoComplete="current-password" />
+            </Form.Item>
+          )}
           {editing?.canModify && (
             <>
               <Form.Item
                 name="allowedTemplates"
                 label="Templates they may use"
-                extra="Leave empty for the default for their role."
+                extra="Leave empty to allow every template."
               >
                 <Select
                   mode="multiple"
                   allowClear
-                  placeholder="Role default"
+                  placeholder="All templates"
                   options={allTemplates}
                 />
               </Form.Item>
               <Form.Item
                 name="allowedAccents"
                 label="Accents they may use"
-                extra="Leave empty for the default for their role."
+                extra="Leave empty to allow every accent."
               >
                 <Select
                   mode="multiple"
                   allowClear
-                  placeholder="Role default"
+                  placeholder="All accents"
                   options={allAccents.map((a) => ({ value: a, label: a }))}
                 />
               </Form.Item>
             </>
           )}
-
-          <Form.Item
-            name="role"
-            label="Role"
-            extra={
-              editing && !editing.canChangeRole
-                ? editing.isSelf
-                  ? "You can't change your own role."
-                  : "You can't change this account's role."
-                : undefined
-            }
-          >
-            <Select
-              disabled={!editing?.canChangeRole}
-              options={(editing?.canChangeRole
-                ? creatableRoles
-                : ([editing?.role].filter(Boolean) as UserRole[])
-              ).map((r) => ({ value: r, label: ROLE_META[r].label }))}
-            />
-          </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`Remove ${removing?.name ?? removing?.email ?? "subadmin"}`}
+        open={removing !== null}
+        onCancel={() => setRemoving(null)}
+        onOk={async () => {
+          if (!removing) return;
+          if (await remove(removing.id, inheritor)) setRemoving(null);
+        }}
+        confirmLoading={busy}
+        okText={inheritor ? "Move team and remove" : "Remove"}
+        okButtonProps={{ danger: true, disabled: removingHasTeam && !inheritor }}
+        destroyOnHidden
+      >
+        {removingHasTeam ? (
+          <>
+            <Typography.Paragraph>
+              Their team has{" "}
+              <strong>
+                {removing?.teamSize?.users} bidder
+                {removing?.teamSize?.users === 1 ? "" : "s"}
+              </strong>{" "}
+              and{" "}
+              <strong>
+                {removing?.teamSize?.profiles} profile
+                {removing?.teamSize?.profiles === 1 ? "" : "s"}
+              </strong>
+              . Choose who takes it over. Everything moves to them — bidders,
+              profiles, resumes, applications, the blocklist, and the
+              calendar events this subadmin created — and then the account is
+              removed.
+            </Typography.Paragraph>
+            {inheritors.length === 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+                title="There is no other subadmin to take this team. Add one first."
+              />
+            )}
+          </>
+        ) : (
+          <Typography.Paragraph>
+            Their team is empty, so nothing else is affected. You can still pick
+            someone to take over the calendar events they created; otherwise
+            only the super admin will be able to change those.
+          </Typography.Paragraph>
+        )}
+        <Select
+          style={{ width: "100%" }}
+          placeholder="Subadmin to take over"
+          allowClear
+          value={inheritor}
+          onChange={setInheritor}
+          options={inheritors.map((s) => ({ value: s.id, label: s.label }))}
+        />
       </Modal>
     </>
   );

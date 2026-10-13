@@ -108,39 +108,46 @@ export async function deleteProfile(profileId: string): Promise<Result> {
   return error ? fail(error.message) : ok();
 }
 
-/** Replaces an admin-managed profile's assignment set. */
+/**
+ * Replaces a profile's assignment set — which of the team's bidders may work
+ * this candidate.
+ *
+ * The subadmin's call alone. A super admin reviews assignments but leaves
+ * them to whoever runs the team; the policies refuse their insert regardless.
+ */
 export async function replaceProfileAssignees(
   profileId: string,
   requestedUserIds: string[],
 ): Promise<Result> {
   const actor = await requireActor();
-  if (!canAssignProfiles(actor.role)) {
-    return fail("Only an admin can change profile assignments.");
+  const teamId = teamIdFor(actor);
+  if (!canAssignProfiles(actor.role) || !teamId) {
+    return fail("Only the team's subadmin can change who works a profile.");
   }
 
   const supabase = await createClient();
 
-  // The team is the *profile's*, not the actor's. Reading it off the actor
-  // refused a super admin outright: they have no team, so teamIdFor() is null
-  // and the gate above rejected them before any row was looked at. Which
-  // profiles each actor can see is RLS's answer, already given by this select;
-  // this row's team_id then says whose assignment list is being changed.
+  // Read through RLS, then pinned to the actor's own team: a profile the
+  // subadmin can see is one on their team, but saying so here makes the
+  // assignment's team_id provably the profile's.
   const { data: profile } = await supabase
     .from("candidate_profile")
     .select("id, team_id")
     .eq("id", profileId)
+    .eq("team_id", teamId)
     .maybeSingle();
 
   if (!profile) return fail("Profile not found.");
-  const teamId = profile.team_id;
 
   const userIds = [...new Set(requestedUserIds)];
   const [{ data: members }, { data: assignments }] = await Promise.all([
+    // Assignable means a bidder this subadmin created. The subadmin already
+    // reaches every profile, and anyone else belongs to another team.
     supabase
       .from("app_user")
       .select("id")
-      .or(`id.eq.${teamId},created_by_id.eq.${teamId}`)
-      .neq("role", "super_admin"),
+      .eq("created_by_id", teamId)
+      .eq("role", "bidder"),
     supabase
       .from("profile_assignment")
       .select("user_id")
@@ -150,7 +157,7 @@ export async function replaceProfileAssignees(
 
   const memberIds = new Set((members ?? []).map((member) => member.id));
   if (userIds.some((id) => !memberIds.has(id))) {
-    return fail("Profiles can only be assigned to members of this team.");
+    return fail("Profiles can only be assigned to this team's bidders.");
   }
 
   const current = new Set((assignments ?? []).map((assignment) => assignment.user_id));

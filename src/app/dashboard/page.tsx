@@ -1,23 +1,14 @@
-import { Card, Empty } from "antd";
-
 import { OverviewCards } from "@/components/overview-cards";
 import { requireActor } from "@/lib/actor";
-import { seesApplications } from "@/lib/scope";
 import { APPLICATION_STATUSES } from "@/lib/status";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Overview · Application" };
 
 export default async function DashboardPage() {
-  const actor = await requireActor();
-
-  if (!seesApplications(actor.role)) {
-    return (
-      <Card>
-        <Empty description="Super admins manage accounts rather than applications. Head to Users." />
-      </Card>
-    );
-  }
+  // Called for the redirect alone: an anonymous or orphaned session never
+  // reaches the query below.
+  await requireActor();
 
   const supabase = await createClient();
 

@@ -14,7 +14,7 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { canManageUsers, ROLE_META, type UserRole } from "@/lib/roles";
-import { seesApplications, seesProfiles } from "@/lib/scope";
+import { BRAND } from "@/lib/theme";
 
 const { Header, Sider, Content } = Layout;
 
@@ -30,43 +30,31 @@ export function DashboardShell({ name, email, role, children }: Props) {
   const [collapsed, setCollapsed] = useState(false);
 
   /**
-   * Built per role rather than filtered from one list, so a page nobody on this
-   * account can open is never offered. The pages refuse the role themselves as
-   * well — this only saves a wasted click.
+   * The records pages are for every role — a subadmin runs them, a bidder works
+   * in them, a super admin reviews them — so only Users depends on who you
+   * are. The pages and the policies decide what each role can do once there.
    */
   const items = [
-    ...(seesApplications(role)
-      ? [
-          {
-            key: "/dashboard/applications",
-            icon: <ProfileOutlined />,
-            label: <Link href="/dashboard/applications">Applications</Link>,
-          },
-        ]
-      : []),
-    ...(seesProfiles()
-      ? [
-          {
-            key: "/dashboard/profiles",
-            icon: <IdcardOutlined />,
-            label: <Link href="/dashboard/profiles">Profiles</Link>,
-          },
-          {
-            key: "/dashboard/resumes",
-            icon: <FileTextOutlined />,
-            label: <Link href="/dashboard/resumes">Resume builder</Link>,
-          },
-        ]
-      : []),
-    ...(seesApplications(role)
-      ? [
-          {
-            key: "/dashboard/blocklist",
-            icon: <BlockOutlined />,
-            label: <Link href="/dashboard/blocklist">Blocklist</Link>,
-          },
-        ]
-      : []),
+    {
+      key: "/dashboard/applications",
+      icon: <ProfileOutlined />,
+      label: <Link href="/dashboard/applications">Applications</Link>,
+    },
+    {
+      key: "/dashboard/profiles",
+      icon: <IdcardOutlined />,
+      label: <Link href="/dashboard/profiles">Profiles</Link>,
+    },
+    {
+      key: "/dashboard/resumes",
+      icon: <FileTextOutlined />,
+      label: <Link href="/dashboard/resumes">Resume builder</Link>,
+    },
+    {
+      key: "/dashboard/blocklist",
+      icon: <BlockOutlined />,
+      label: <Link href="/dashboard/blocklist">Blocklist</Link>,
+    },
     ...(canManageUsers(role)
       ? [
           {
@@ -98,32 +86,36 @@ export function DashboardShell({ name, email, role, children }: Props) {
         onCollapse={setCollapsed}
         breakpoint="lg"
         theme="dark"
+        width={232}
+        style={{ background: BRAND.sider }}
       >
         <Link
           href="/dashboard"
           style={{
-            height: 56,
+            height: 64,
             display: "flex",
             alignItems: "center",
             gap: 10,
-            padding: "0 16px",
+            padding: collapsed ? "0 0 0 27px" : "0 20px",
             color: "#fff",
             whiteSpace: "nowrap",
             overflow: "hidden",
+            marginBottom: 8,
           }}
         >
           <span
             aria-hidden
             style={{
               flex: "0 0 auto",
-              width: 26,
-              height: 26,
-              borderRadius: 7,
+              width: 28,
+              height: 28,
+              borderRadius: 8,
               display: "grid",
               placeItems: "center",
-              background: "linear-gradient(135deg, #2f5bea, #7c3aed)",
+              background: BRAND.gradient,
+              boxShadow: "0 6px 16px -6px rgba(139, 92, 246, 0.7)",
               fontWeight: 700,
-              fontSize: 13,
+              fontSize: 14,
             }}
           >
             T
@@ -133,26 +125,45 @@ export function DashboardShell({ name, email, role, children }: Props) {
             sider still reads as this product at 80px wide.
           */}
           {!collapsed && (
-            <span style={{ fontWeight: 600, letterSpacing: "-0.01em" }}>
-              Trueward <span style={{ opacity: 0.65 }}>Guru</span>
+            <span style={{ fontWeight: 650, fontSize: 15, letterSpacing: "-0.02em" }}>
+              Trueward <span style={{ opacity: 0.55, fontWeight: 500 }}>Guru</span>
             </span>
           )}
         </Link>
-        <Menu theme="dark" mode="inline" selectedKeys={selected} items={items} />
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={selected}
+          items={items}
+          style={{ background: "transparent", borderInlineEnd: 0 }}
+        />
       </Sider>
 
       <Layout>
         <Header
           style={{
+            // Sticky and frosted: the grids scroll under it rather than taking
+            // the account menu with them.
+            position: "sticky",
+            top: 0,
+            zIndex: 20,
             display: "flex",
             alignItems: "center",
             justifyContent: "flex-end",
             gap: 12,
-            paddingInline: 24,
-            borderBottom: "1px solid #e5e7eb",
+            paddingInline: 28,
+            borderBottom: `1px solid ${BRAND.line}`,
+            backdropFilter: "saturate(180%) blur(12px)",
+            WebkitBackdropFilter: "saturate(180%) blur(12px)",
           }}
         >
-          <Tag color={ROLE_META[role].color}>{ROLE_META[role].label}</Tag>
+          <Tag
+            color={ROLE_META[role].color}
+            bordered={false}
+            style={{ borderRadius: 999, paddingInline: 10, fontWeight: 500 }}
+          >
+            {ROLE_META[role].label}
+          </Tag>
           <Dropdown
             menu={{
               items: [
@@ -187,16 +198,27 @@ export function DashboardShell({ name, email, role, children }: Props) {
               ],
             }}
           >
-            <span style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              <Avatar size="small" style={{ background: "#2f5bea" }}>
+            <span
+              style={{
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "4px 10px 4px 4px",
+                borderRadius: 999,
+                border: `1px solid ${BRAND.line}`,
+                background: "#fff",
+              }}
+            >
+              <Avatar size={28} style={{ background: BRAND.gradient, fontWeight: 600 }}>
                 {name.slice(0, 1).toUpperCase()}
               </Avatar>
-              <Typography.Text>{name}</Typography.Text>
+              <Typography.Text style={{ fontWeight: 500 }}>{name}</Typography.Text>
             </span>
           </Dropdown>
         </Header>
 
-        <Content style={{ padding: 24 }}>{children}</Content>
+        <Content style={{ padding: "28px 32px 40px" }}>{children}</Content>
       </Layout>
     </Layout>
   );

@@ -2,6 +2,7 @@
 
 import { requireActor } from "@/lib/actor";
 import { canEditProfile } from "@/lib/profile-access";
+import { managesTeam } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -32,9 +33,12 @@ function encryptionKey(): string {
  *
  * Two independent gates, because either alone is insufficient:
  *
- *  1. The actor must be an admin, or the resume builder who owns this profile.
- *  2. The profile must be in that actor's team. These are checked here because
- *     this deployment intentionally has RLS disabled.
+ *  1. The actor must be a subadmin. Named positively rather than "not a
+ *     bidder", so a role added later starts without access instead of with
+ *     it — the super admin reviews the audit log but does not decrypt.
+ *  2. The profile must be in that actor's own team. Checked here, not left to
+ *     RLS, because the decrypt runs through the service role, which bypasses
+ *     every policy.
  *
  * Every successful reveal writes to ssn_access_log, which has no update or
  * delete policy — the trail cannot be edited from the app.
@@ -42,8 +46,11 @@ function encryptionKey(): string {
 export async function revealSsn(profileId: string): Promise<SsnResult> {
   const actor = await requireActor();
 
-  if (actor.role === "bidder" || actor.role === "super_admin") {
-    return { ok: false, error: "Only admins can reveal a Social Security number." };
+  if (!managesTeam(actor.role)) {
+    return {
+      ok: false,
+      error: "Only the team's subadmin can reveal a Social Security number.",
+    };
   }
 
   const supabase = await createClient();
@@ -104,8 +111,11 @@ export async function setSsn(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const actor = await requireActor();
 
-  if (actor.role === "bidder" || actor.role === "super_admin") {
-    return { ok: false, error: "Only admins can set a Social Security number." };
+  if (!managesTeam(actor.role)) {
+    return {
+      ok: false,
+      error: "Only the team's subadmin can set a Social Security number.",
+    };
   }
 
   const digits = plain.replace(/\D/g, "");

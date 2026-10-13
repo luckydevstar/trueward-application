@@ -1,18 +1,27 @@
 /**
  * Client-safe role vocabulary and the rules built on it.
  *
- * These predicates mirror the RLS policies in supabase/migrations — they are
- * not the enforcement. Their job is to keep the UI from offering actions the
+ * These predicates mirror the RLS policies in supabase/schema — they are not
+ * the enforcement. Their job is to keep the UI from offering actions the
  * database will reject. If the two ever disagree, the database wins and the
  * user sees a failed write, which is the safe direction for them to disagree in.
  */
 
-export const USER_ROLES = [
-  "super_admin",
-  "subadmin",
-  "resume_builder",
-  "bidder",
-] as const;
+/**
+ * Three roles, one per layer:
+ *
+ *   super_admin  runs the platform: adds and manages subadmins, reviews every
+ *                team's work, changes none of it
+ *   subadmin     runs one team: its profiles, its bidders, and who works which
+ *                candidate
+ *   bidder       works the profiles their subadmin assigns them — records
+ *                applications and builds resumes, reads the profile itself
+ *
+ * `resume_builder` existed once. The database still knows the enum value
+ * (Postgres cannot drop one) but a constraint refuses it, and every account
+ * that held it was converted to a bidder — see 01_tables.sql.
+ */
+export const USER_ROLES = ["super_admin", "subadmin", "bidder"] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
 
@@ -23,43 +32,40 @@ export const ROLE_META: Record<
   super_admin: {
     label: "Super admin",
     description:
-      "Runs the platform. Creates subadmins, and sees every team's work.",
+      "Runs the platform. Adds and manages subadmins, and reviews every team's work.",
     color: "purple",
   },
   subadmin: {
     label: "Subadmin",
     description:
-      "Owns one team: their own candidates, applications and the people they add.",
+      "Runs one team: their candidates, the bidders they add, and who works which profile.",
     color: "blue",
-  },
-  resume_builder: {
-    label: "Resume builder",
-    description:
-      "Creates candidate profiles and builds resumes from them. Sees only the profiles they created.",
-    color: "cyan",
   },
   bidder: {
     label: "Bidder",
-    description: "Records applications. No user management.",
+    description:
+      "Tracks applications and builds resumes for the profiles assigned to them.",
     color: "default",
   },
 };
 
 /**
- * The privileged roles.
+ * The roles that see a whole team — or, for a super admin, every team.
  *
- * Written as a positive list rather than "not a bidder". That phrasing was
- * the same thing while bidder was the only unprivileged role, and quietly
- * stopped being so the moment a second one existed — every check spelled that
- * way would have handed the new role admin rights by default.
- *
- * Mirrors is_admin() in supabase/schema/02_functions.sql. "Admin" here means
- * *has authority*, which both roles do; it says nothing about how far that
- * authority reaches. A subadmin's stops at their team, a super admin's does
- * not — and that distinction lives in scopeFor() rather than here.
+ * Mirrors is_admin() in supabase/schema/02_functions.sql. It answers *who may
+ * read broadly*, not who may write: a super admin reviews, and only a subadmin
+ * changes a team's records. That second question is managesTeam().
  */
 export function isAdminRole(role: UserRole): boolean {
   return role === "subadmin" || role === "super_admin";
+}
+
+/**
+ * The role that changes a team's records on anyone's behalf but their own.
+ * Mirrors is_subadmin().
+ */
+export function managesTeam(role: UserRole): boolean {
+  return role === "subadmin";
 }
 
 export type Actor = {
@@ -74,39 +80,37 @@ export function canManageUsers(role: UserRole): boolean {
 }
 
 /**
- * Which roles an actor may hand out.
+ * Which role an actor may hand out — one each.
  *
- * A super admin mints subadmins — that is the act of adding a tenant. A
- * subadmin mints only the people inside their own team; letting them mint a
- * peer would make the hierarchy decorative, since any subadmin could create a
- * second account and promote it.
+ * A super admin adds subadmins; that is the act of adding a team. A subadmin
+ * adds bidders to their own. Nobody mints a peer: a subadmin who could create
+ * another subadmin could create a second team and run both.
  */
 export function creatableRoles(role: UserRole): UserRole[] {
-  if (role === "super_admin") return ["subadmin", "resume_builder", "bidder"];
-  if (role === "subadmin") return ["resume_builder", "bidder"];
+  if (role === "super_admin") return ["subadmin"];
+  if (role === "subadmin") return ["bidder"];
   return [];
 }
 
+type Target = { id: string; role: UserRole; createdById: string | null };
+
 /**
- * Whether an actor may delete a target or change its role.
+ * Whether an actor may delete a target, reset their password or edit them.
  *
- * You may act on an account you could have created; admins only on the bidders
- * they actually created.
+ * Exactly the accounts one layer down that are yours to look after: a super
+ * admin manages subadmins (all of them — there is one platform), a subadmin
+ * manages the bidders they created. A super admin does not reach past a
+ * subadmin into their team; the team's people are the subadmin's to run.
  *
- * Never on yourself: deleting your own account signs you out mid-session, and
- * the last super admin demoting themselves would leave nobody able to appoint
+ * Never yourself: deleting your own account signs you out mid-session, and
+ * the last super admin removing themselves would leave nobody able to appoint
  * a replacement.
  */
-export function canModifyUser(
-  actor: Actor,
-  target: { id: string; role: UserRole; createdById: string | null },
-): boolean {
+export function canModifyUser(actor: Actor, target: Target): boolean {
   if (actor.id === target.id) return false;
-  if (actor.role === "super_admin") return true;
+  if (actor.role === "super_admin") return target.role === "subadmin";
   if (actor.role === "subadmin") {
-    return (
-      !isAdminRole(target.role) && target.createdById === actor.id
-    );
+    return target.role === "bidder" && target.createdById === actor.id;
   }
   return false;
 }
@@ -115,30 +119,9 @@ export function canModifyUser(
  * Whether the actor may open the edit form for this account.
  *
  * Broader than canModifyUser, because it includes your own row: changing your
- * own name, email or password is not an escalation, and locking someone out of
- * their own details to protect them from themselves is the wrong trade.
- *
- * What you may change once inside is a separate question — see
- * canChangeRoleOf, which is where the escalation risk actually lives.
+ * own name, email or password is not an escalation. Changing your own email or
+ * password does ask for your current password — see updateUser.
  */
-export function canEditUser(
-  actor: Actor,
-  target: { id: string; role: UserRole; createdById: string | null },
-): boolean {
+export function canEditUser(actor: Actor, target: Target): boolean {
   return actor.id === target.id || canModifyUser(actor, target);
-}
-
-/**
- * Whether the actor may set this account's role, and to what.
- *
- * Never your own: an admin promoting themselves to super admin, or the last
- * super admin demoting themselves, both leave the hierarchy in a state nobody
- * can undo. The available roles are the ones you could have created in the
- * first place — anything else would let an admin mint a peer indirectly.
- */
-export function canChangeRoleOf(
-  actor: Actor,
-  target: { id: string; role: UserRole; createdById: string | null },
-): boolean {
-  return canModifyUser(actor, target) && creatableRoles(actor.role).length > 0;
 }

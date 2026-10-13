@@ -58,11 +58,11 @@ as $$
 $$;
 
 /**
- * The team the caller belongs to, identified by an admin's id.
+ * The team the caller belongs to, identified by a subadmin's id.
  *
- *   admin                    their own id
- *   bidder, resume_builder   the admin who created them
- *   super_admin              none — they manage accounts, not records
+ *   subadmin     their own id
+ *   bidder       the subadmin who created them
+ *   super_admin  none — they review every team and belong to none
  *
  * Listing the roles it knows and returning null for the rest is a trap worth
  * naming: every policy starts with `team_id = app_team_id()`, and that against
@@ -78,7 +78,7 @@ set search_path = public
 as $$
   select case
     when u.role::text = 'subadmin' then u.id
-    when u.role::text in ('bidder', 'resume_builder') then u.created_by_id
+    when u.role::text = 'bidder' then u.created_by_id
     -- A super admin still has no team of their own. Their reach comes from
     -- in_team() below instead, which lets them past the team check entirely
     -- rather than pretending they belong to one — there is no single team id
@@ -155,20 +155,49 @@ as $$
   select coalesce(is_super_admin() or target = app_team_id(), false)
 $$;
 
-create or replace function public.is_builder()
+/**
+ * The owner of one team: the only role that changes a team's records on
+ * anyone's behalf but their own.
+ *
+ * Every write policy that used to say is_admin() says this instead, because a
+ * super admin *reviews* teams rather than running them. They read everything
+ * through in_team(); the writes they make are account management (server
+ * actions, service role) and the two structural moves below, which are
+ * SECURITY DEFINER functions with their own guard.
+ */
+create or replace function public.is_subadmin()
 returns boolean
 language sql
 stable
 as $$
-  select coalesce(app_role()::text = 'resume_builder', false)
+  select coalesce(app_role()::text = 'subadmin', false)
+$$;
+
+/**
+ * The team test for *writes*: the caller is a member of this team.
+ *
+ * The other half of in_team(). That one lets a super admin past the team check
+ * so they can read every team; this one deliberately does not, because a row
+ * has to belong to exactly one team and a super admin belongs to none. Writing
+ * `in_team(team_id)` in a WITH CHECK would let a super admin stamp a row into
+ * any team they liked, which is the one thing reviewing must not do.
+ *
+ *   reads   in_team(team_id)
+ *   writes  in_own_team(team_id)
+ */
+create or replace function public.in_own_team(target uuid)
+returns boolean
+language sql
+stable
+as $$
+  select coalesce(target = app_team_id(), false)
 $$;
 
 /**
  * Which profiles the caller may work with.
  *
- *   admin           every profile on the team
- *   resume_builder  only the ones they created
- *   bidder          only the ones assigned to them
+ *   subadmin, super_admin  every profile they can see (the team, or all teams)
+ *   bidder                 only the ones assigned to them
  *
  * SECURITY DEFINER so candidate_profile's policy can consult
  * profile_assignment without that table's policy re-entering
@@ -183,15 +212,37 @@ set search_path = public
 as $$
   select case
     when is_admin() then true
-    when is_builder() then exists (
-      select 1 from candidate_profile
-      where id = target and created_by = auth.uid()
-    )
     else exists (
       select 1 from profile_assignment
       where profile_id = target and user_id = auth.uid()
     )
   end
+$$;
+
+/**
+ * Whether a profile belongs to the given team.
+ *
+ * The cross-check that keeps a child row's team_id honest. A row's own team_id
+ * is pinned by in_own_team(), but the profile it points at was not: a subadmin
+ * could file an attachment, resume or application in their team against
+ * *another* team's profile id. Nothing leaked — they still could not read that
+ * profile — but the row would claim a relationship that does not exist.
+ *
+ * SECURITY DEFINER because the answer must not depend on whether the caller
+ * can see the profile; a bidder writing against an assigned profile can, but
+ * the check is about the data, not about them.
+ */
+create or replace function public.profile_in_team(target_profile uuid, target_team uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from candidate_profile
+    where id = target_profile and team_id = target_team
+  )
 $$;
 
 -- ===========================================================================
@@ -290,16 +341,47 @@ $$;
 -- PostgREST exposes public functions to any authenticated caller by default.
 -- These must not be reachable that way — anon or authenticated could otherwise
 -- call reveal_ssn with a guessed key and skip every check above.
+--
+-- Revoked from anon and authenticated *by name*, not only from public.
+-- Supabase's default privileges grant EXECUTE on every new function to anon,
+-- authenticated and service_role individually, and revoking from public does
+-- not touch a grant made to a role by name — so `from public` alone left all
+-- four callable from any browser session. service_role keeps its grant: it is
+-- the only caller (ssn-actions.ts), and the guarded block re-grants it in case
+-- a database was built without those defaults.
 revoke all on function public.reveal_ssn(uuid, text) from public;
 revoke all on function public.store_ssn(uuid, text, text) from public;
 revoke all on function public.encrypt_ssn(text, text) from public;
 revoke all on function public.decrypt_ssn(bytea, text) from public;
 
+do $$
+declare
+  fn text;
+begin
+  foreach fn in array array[
+    'public.reveal_ssn(uuid, text)',
+    'public.store_ssn(uuid, text, text)',
+    'public.encrypt_ssn(text, text)',
+    'public.decrypt_ssn(bytea, text)'
+  ] loop
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+      execute format('revoke all on function %s from anon', fn);
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+      execute format('revoke all on function %s from authenticated', fn);
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'service_role') then
+      execute format('grant execute on function %s to service_role', fn);
+    end if;
+  end loop;
+end
+$$;
+
 /**
  * Hands a candidate profile to a subadmin, with everything attached to it.
  *
- * A super admin's one structural power: deciding which tenant runs a
- * candidate. Everything else they do is reading and fixing.
+ * One of a super admin's two structural powers — the other is moving a whole
+ * team, transfer_team() below. Everything else they do to records is reading.
  *
  * **Why the history moves too.** The duplicate cooldown
  * (enforce_application_cooldown) only looks at applications in the *same*
@@ -343,9 +425,8 @@ begin
       message = 'Only a super admin can move a profile between teams.';
   end if;
 
-  -- A team is a subadmin's id. Handing a profile to a bidder or a resume
-  -- builder would create a team nobody administers, and app_team_id() would
-  -- never resolve to it.
+  -- A team is a subadmin's id. Handing a profile to a bidder would create a
+  -- team nobody administers, and app_team_id() would never resolve to it.
   select role::text into target_role from app_user where id = target_team;
 
   if target_role is null then
@@ -375,5 +456,124 @@ begin
 end;
 $$;
 
-revoke all on function public.assign_profile_to_team(uuid, uuid) from public;
-grant execute on function public.assign_profile_to_team(uuid, uuid) to authenticated;
+/**
+ * Moves a whole team to another subadmin: the step before deleting a subadmin.
+ *
+ * Deleting a subadmin's auth user cascades through every `team_id` foreign
+ * key, so without this, removing a subadmin silently deleted every profile,
+ * resume and application their team had ever recorded. The users page calls
+ * this first and only then deletes the account — by which point the team is
+ * empty and the cascade has nothing to take.
+ *
+ * Everything moves, in one transaction:
+ *
+ *   - records       profiles, applications, resumes, attachments, the SSN
+ *                   audit trail, and assignments (which stay valid: the
+ *                   bidders they name move too)
+ *   - people        bidders the old subadmin created now belong to the new one
+ *   - blocklist     merged; a company both teams blocked is kept once, as the
+ *                   inheritor's entry, since (team_id, normalized_name) is unique
+ *   - calendar      events and calendars the old subadmin created in Trueward
+ *                   Calendar, which shares this database — otherwise they
+ *                   would be left with no creator, editable by the super admin
+ *                   alone. Skipped when the calendar schema isn't installed.
+ *
+ * SECURITY DEFINER for the same reason as assign_profile_to_team(): a super
+ * admin can read these rows but no policy lets them write them. The guard is
+ * the explicit is_super_admin() check, which coalesces to false for a session
+ * with no app_user row.
+ */
+create or replace function public.transfer_team(from_team uuid, to_team uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  from_role text;
+  to_role   text;
+begin
+  if not is_super_admin() then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'Only a super admin can move a team to another subadmin.';
+  end if;
+
+  if from_team = to_team then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'A team cannot be handed to the subadmin who already runs it.';
+  end if;
+
+  select role::text into from_role from app_user where id = from_team;
+  select role::text into to_role   from app_user where id = to_team;
+
+  if from_role is distinct from 'subadmin' or to_role is distinct from 'subadmin' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'A team can only move from one subadmin to another.';
+  end if;
+
+  -- The blocklist first: the merge has to happen before the unique index sees
+  -- two rows for one company in one team.
+  delete from blocked_company b
+   where b.team_id = from_team
+     and exists (
+       select 1 from blocked_company keep
+        where keep.team_id = to_team
+          and keep.normalized_name = b.normalized_name
+     );
+  update blocked_company    set team_id = to_team where team_id = from_team;
+
+  update candidate_profile  set team_id = to_team where team_id = from_team;
+  update application        set team_id = to_team where team_id = from_team;
+  update resume_document    set team_id = to_team where team_id = from_team;
+  update profile_attachment set team_id = to_team where team_id = from_team;
+  update ssn_access_log     set team_id = to_team where team_id = from_team;
+  update profile_assignment set team_id = to_team where team_id = from_team;
+
+  update app_user set created_by_id = to_team
+   where created_by_id = from_team and role::text = 'bidder';
+
+  -- Dynamic, because these tables belong to the calendar's schema and this
+  -- function must still run on a database that doesn't have them — or has
+  -- them from before events had creators.
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'calendar_event'
+       and column_name = 'created_by'
+  ) then
+    execute 'update calendar_event set created_by = $1 where created_by = $2'
+      using to_team, from_team;
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'calendar_source'
+       and column_name = 'created_by'
+  ) then
+    execute 'update calendar_source set created_by = $1 where created_by = $2'
+      using to_team, from_team;
+  end if;
+end;
+$$;
+
+-- Reachable by a signed-in session, never by anon. The two moves decide inside
+-- who may call them; profile_in_team() is needed by policies that run as the
+-- signed-in caller.
+do $$
+declare
+  fn text;
+begin
+  foreach fn in array array[
+    'public.assign_profile_to_team(uuid, uuid)',
+    'public.transfer_team(uuid, uuid)',
+    'public.profile_in_team(uuid, uuid)'
+  ] loop
+    execute format('revoke all on function %s from public', fn);
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+      execute format('revoke all on function %s from anon', fn);
+    end if;
+    execute format('grant execute on function %s to authenticated', fn);
+  end loop;
+end
+$$;

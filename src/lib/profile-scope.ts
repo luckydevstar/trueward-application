@@ -9,16 +9,15 @@ import { isAdminRole } from "@/lib/roles";
  *
  * This mirrors `can_use_profile()` in supabase/schema/02_functions.sql:
  *
- *   admin           every profile on the team
- *   resume_builder  the ones they created
- *   bidder          the ones assigned to them, and nothing else
- *   super_admin     none — they hold no team
+ *   subadmin     every profile on the team
+ *   super_admin  every profile on every team (they review)
+ *   bidder       the ones assigned to them, and nothing else
  *
  * RLS remains the boundary. This exists because a *page payload* is worth
  * scoping too: every page that lists profiles was already doing it, and the
- * resume builder page did it for builders and forgot bidders, so a bidder's
- * profile dropdown offered the whole team's candidates. One rule written twice
- * is one rule that drifts; this is the one copy.
+ * resume builder page once did it for one role and forgot bidders, so a
+ * bidder's profile dropdown offered the whole team's candidates. One rule
+ * written twice is one rule that drifts; this is the one copy.
  *
  * Anything reading it must still assume the database will refuse a row it
  * shouldn't have — see CLAUDE.md.
@@ -54,8 +53,8 @@ const MATCHES_NOTHING = "00000000-0000-0000-0000-000000000000";
  * Resolves what this actor can reach, reading assignments where the answer
  * isn't derivable from the role alone.
  *
- * Costs one small indexed query for a builder or a bidder and none for an
- * admin, which is the trade for the two lists being provably the same set.
+ * Costs one small indexed query for a bidder and none for an admin, which is
+ * the trade for the two lists being provably the same set.
  */
 export async function profileReach(
   supabase: SupabaseClient<Database>,
@@ -71,15 +70,6 @@ export async function profileReach(
   // records at all. That was a symptom of the gap in_team() closed, and
   // leaving it would have made the page contradict the policies.
   if (isAdminRole(actor.role)) return { kind: "team" };
-
-  if (actor.role === "resume_builder") {
-    const { data } = await supabase
-      .from("candidate_profile")
-      .select("id")
-      .eq("team_id", teamId)
-      .eq("created_by", actor.id);
-    return { kind: "listed", profileIds: (data ?? []).map((row) => row.id) };
-  }
 
   if (actor.role === "bidder") {
     const { data } = await supabase

@@ -15,8 +15,11 @@ body {
 
 body {
   margin: 0;
+  background: #f5f7fb;
+  color: #0f172a;
   font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
+  font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -28,4 +31,34 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.22);
+}
+
+/* Thin, quiet scrollbars: the wide grids scroll a lot, and the platform
+   default is a grey bar heavier than anything else on the page. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+/* Cards that are links or summaries lift slightly under the pointer. */
+.tw-lift {
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+.tw-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -12px rgba(15, 23, 42, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tw-lift,
+  .tw-lift:hover {
+    transition: none;
+    transform: none;
+  }
 }

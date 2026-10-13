@@ -1,13 +1,13 @@
 /**
  * Creates or updates an account with a known password, and sets its role.
  *
- *   npm run seed:user -- --email you@example.com --role admin
+ *   npm run seed:user -- --email you@example.com
  *   npm run seed:user -- --email you@example.com --password 'hunter2hunter2'
  *
- * This is the only way to mint the *first* privileged account: signup through
- * the UI always lands on `bidder` (the handle_new_user trigger's default), and
- * nothing in the app can promote you until an admin already exists. After the
- * first admin, use the Users page.
+ * This is the only way to mint the *first* account: there is no public
+ * sign-up, and every other account is created on the Users page by the layer
+ * above it — the super admin adds subadmins, a subadmin adds bidders. So the
+ * default here is the super admin, the one account nobody else can create.
  *
  * Idempotent — running it again on the same email resets the password and role
  * rather than failing, so it doubles as a "I locked myself out" recovery.
@@ -43,17 +43,17 @@ function fail(message: string): never {
 
 const email = arg("email");
 const name = arg("name") ?? email?.split("@")[0] ?? "Admin";
-const role = (arg("role") ?? "admin") as UserRole;
+const role = (arg("role") ?? "super_admin") as UserRole;
 
 if (!email) {
   fail(
     "Missing --email.\n\n" +
-      "  npm run seed:user -- --email you@example.com --role admin\n\n" +
+      "  npm run seed:user -- --email you@example.com\n\n" +
       "Options:\n" +
       "  --email     required\n" +
       "  --password  optional; a strong one is generated and printed if omitted\n" +
       "  --name      optional; defaults to the local part of the email\n" +
-      `  --role      optional; one of ${USER_ROLES.join(", ")} (default: admin)`,
+      `  --role      optional; one of ${USER_ROLES.join(", ")} (default: super_admin)`,
   );
 }
 
@@ -168,9 +168,9 @@ async function main() {
   if (role === "super_admin") {
     console.log("");
     console.log(
-      "  Note: super_admin owns no records — app_team_id() is null for that\n" +
-        "  role, so applications, profiles, resumes and the blocklist will all\n" +
-        "  be empty. Use --role admin if you want to actually use the tracker.",
+      "  Next: sign in and add a subadmin on the Users page. A super admin\n" +
+        "  reviews every team but runs none, so the tracker stays read-only\n" +
+        "  for this account until a subadmin's team has something in it.",
     );
   }
   console.log("");

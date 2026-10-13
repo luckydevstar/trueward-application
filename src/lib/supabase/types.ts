@@ -217,6 +217,11 @@ export type Database = {
         Args: { target_profile: string; target_team: string };
         Returns: undefined;
       };
+      /** Moves a whole team to another subadmin, before the old one is deleted. */
+      transfer_team: {
+        Args: { from_team: string; to_team: string };
+        Returns: undefined;
+      };
       /** Service-role only — see supabase/migrations/0002. */
       reveal_ssn: { Args: { target: string; key: string }; Returns: string | null };
       store_ssn: {

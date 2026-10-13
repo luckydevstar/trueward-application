@@ -2,7 +2,7 @@ import { createUploadthing, type FileRouter } from "uploadthing/next";
 import { UploadThingError } from "uploadthing/server";
 
 import { requireActor } from "@/lib/actor";
-import { teamIdFor } from "@/lib/scope";
+import { canEditProfiles, teamIdFor } from "@/lib/scope";
 
 const f = createUploadthing();
 
@@ -28,6 +28,21 @@ const authorize = async () => {
     throw new UploadThingError(
       "Your account isn't attached to a team, so there's nowhere to file this.",
     );
+  }
+  return { teamId, userId: actor.id };
+};
+
+/**
+ * Profile attachments are part of the profile, which only its subadmin
+ * changes. The row would be refused by RLS anyway; refusing the upload too
+ * means a bidder cannot leave orphaned files in storage trying.
+ */
+const authorizeProfileEdit = async () => {
+  const actor = await requireActor();
+  const teamId = teamIdFor(actor);
+
+  if (!teamId || !canEditProfiles(actor.role)) {
+    throw new UploadThingError("Only the team's subadmin can attach files to a profile.");
   }
   return { teamId, userId: actor.id };
 };
@@ -76,7 +91,7 @@ export const uploadRouter = {
     },
     ROUTE_OPTIONS,
   )
-    .middleware(authorize)
+    .middleware(authorizeProfileEdit)
     .onUploadComplete(() => {
       // As above — the browser writes the profile_attachment row from the
       // upload result, so there is nothing to hand back.

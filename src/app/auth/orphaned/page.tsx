@@ -3,9 +3,10 @@ import { Button, Card, Result } from "antd";
 export const metadata = { title: "Account not set up · Application" };
 
 /**
- * Reached when auth.users has a row but app_user does not — the signup trigger
- * didn't fire. Nothing the user can fix themselves, so this explains rather
- * than retries, and offers the one action that isn't a dead end.
+ * Reached when auth.users has a row but app_user does not — the account was
+ * removed while signed in, or the handle_new_user trigger didn't fire. Nothing
+ * the user can fix themselves, so this explains rather than retries, and
+ * offers the one action that isn't a dead end.
  */
 export default function OrphanedPage() {
   return (

@@ -65,6 +65,7 @@ type DocumentRow = {
   template: string;
   style: ResumeStyle;
   updated_at: string;
+  created_by: string | null;
 };
 
 type Props = {
@@ -74,6 +75,10 @@ type Props = {
   userId: string;
   templates: TemplateSpec[];
   accents: string[];
+  /** A subadmin may overwrite any resume on their team, not only their own. */
+  canEditAny: boolean;
+  /** A super admin reviews: they may render and download, never save. */
+  readOnly: boolean;
 };
 
 /**
@@ -123,6 +128,8 @@ export function ResumeBuilder({
   userId,
   templates,
   accents,
+  canEditAny,
+  readOnly,
 }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
@@ -196,6 +203,18 @@ export function ResumeBuilder({
   const selectedProfile = options.find((p) => p.id === profileId);
   const isExample = profileId === EXAMPLE_PROFILE_ID;
   const profileDocuments = documents.filter((d) => d.profile_id === profileId);
+
+  /*
+   * Whether "Save" overwrites the open resume or files a new one.
+   *
+   * A bidder can open a teammate's resume for the same candidate — sharing a
+   * profile shares its resumes — but the policies let only its author (or the
+   * subadmin) change it. Offering "Save" there would update nothing and still
+   * report success, so their save becomes a copy of their own instead.
+   */
+  const openDocument = profileDocuments.find((d) => d.id === documentId);
+  const overwrites =
+    Boolean(openDocument) && (canEditAny || openDocument?.created_by === userId);
 
   const pickProfile = (id: string) => {
     setProfileId(id);
@@ -309,15 +328,28 @@ export function ResumeBuilder({
       style,
     };
 
-    const { error } = documentId
-      ? await supabase.from("resume_document").update(payload).eq("id", documentId)
+    // `.select()` so an update RLS quietly refused comes back as zero rows
+    // rather than as a success with nothing saved.
+    const { data, error } = overwrites
+      ? await supabase
+          .from("resume_document")
+          .update(payload)
+          .eq("id", documentId)
+          .select("id")
       : await supabase
           .from("resume_document")
-          .insert({ ...payload, team_id: teamId, created_by: userId });
+          .insert({ ...payload, team_id: teamId, created_by: userId })
+          .select("id");
     setSaving(false);
 
     if (error) {
       message.error(error.message);
+      return;
+    }
+    if (!data?.length) {
+      message.error(
+        "That resume can't be changed from this account. Try “Save as new”.",
+      );
       return;
     }
     message.success("Saved.");
@@ -491,18 +523,22 @@ export function ResumeBuilder({
         <Space>
           <Tooltip
             title={
-              isExample
-                ? "The demo profile has no database row to attach a resume to."
-                : undefined
+              readOnly
+                ? "Super admins review resumes; the team's subadmin and bidders save them."
+                : isExample
+                  ? "The demo profile has no database row to attach a resume to."
+                  : openDocument && !overwrites
+                    ? "Someone else wrote this one, so saving files your own copy."
+                    : undefined
             }
           >
             <Button
               icon={<SaveOutlined />}
               onClick={save}
               loading={saving}
-              disabled={parsed.kind !== "ok" || isExample}
+              disabled={readOnly || parsed.kind !== "ok" || isExample}
             >
-              {documentId ? "Save" : "Save as new"}
+              {overwrites ? "Save" : "Save as new"}
             </Button>
           </Tooltip>
           <Button

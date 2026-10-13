@@ -85,7 +85,10 @@ begin
 end
 $$;
 
--- For databases created before the role existed.
+-- Retired — see "Retiring resume_builder" at the end of this file. Postgres
+-- cannot drop an enum value, so every database that ever had this one keeps
+-- it; adding it here too means every database has the *same* type, whichever
+-- way it was built. Nothing may hold it: a check constraint below refuses it.
 alter type user_role add value if not exists 'resume_builder';
 
 -- ===========================================================================
@@ -336,3 +339,36 @@ create table if not exists ssn_access_log (
 
 create index if not exists ssn_access_log_profile_idx
   on ssn_access_log (profile_id, revealed_at desc);
+
+-- ===========================================================================
+-- Retiring resume_builder
+--
+-- Three roles now: a super admin who runs the platform, subadmins who each run
+-- a team, and bidders who work the profiles their subadmin assigns them —
+-- tracking applications and building resumes. A resume builder was a bidder
+-- that could also create profiles; creating profiles is the subadmin's job.
+--
+-- Each remaining builder becomes a bidder *assigned to every profile they
+-- created*, so nobody loses sight of a candidate they were working on. Only
+-- profiles in their own team: a builder's team is their creator's, and an
+-- assignment that crossed teams would name someone the owner cannot manage.
+--
+-- Roles compared as text, like everywhere else, so this runs in the same
+-- transaction as the `add value` above.
+-- ===========================================================================
+
+insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+select p.id, u.id, p.team_id, u.created_by_id
+  from app_user u
+  join candidate_profile p
+    on p.created_by = u.id
+   and p.team_id = u.created_by_id
+ where u.role::text = 'resume_builder'
+on conflict (profile_id, user_id) do nothing;
+
+update app_user set role = 'bidder' where role::text = 'resume_builder';
+
+-- Dropped and re-added so the definition here is always the live one.
+alter table app_user drop constraint if exists app_user_role_retired;
+alter table app_user add constraint app_user_role_retired
+  check (role::text <> 'resume_builder');

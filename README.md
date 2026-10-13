@@ -61,28 +61,29 @@ live, the policy that refused, and the team each account resolves to.
 ### The first account
 
 There is no seeded login — nothing is hardcoded, and Supabase Auth holds the
-password, so you choose it. The first privileged account is a chicken-and-egg
-case: signup through the UI always lands on `bidder` (the `handle_new_user`
-trigger's default), and nothing in the app can promote you until an admin
-already exists.
+password, so you choose it. Every account is created by the layer above it —
+the super admin adds subadmins, a subadmin adds bidders — so the one account
+nobody can create from the app is the first super admin:
 
 ```bash
-npm run seed:user -- --email you@example.com --role admin
+npm run seed:user -- --email you@example.com
 ```
 
-That creates the auth user, marks the address confirmed, sets the role, and
-prints the password. Omit `--password` and it generates a strong one and shows
-it once. It's idempotent — run it again on the same email to reset the password
-or change the role, which also makes it the way back in if you're locked out.
+That creates the auth user, marks the address confirmed, makes it the super
+admin, and prints the password. Omit `--password` and it generates a strong
+one and shows it once. It's idempotent — run it again on the same email to
+reset the password, which also makes it the way back in if you're locked out.
 
 Requires `SUPABASE_SERVICE_ROLE_KEY`, and the schema must already be applied.
 
-> **Pick `admin`, not `super_admin`, unless you specifically want an
-> account-management-only login.** `app_team_id()` returns null for
-> `super_admin`, so every record policy matches zero rows — applications,
-> profiles, resumes and the blocklist all come back empty by design.
+From there: sign in, add a subadmin on the Users page, and each subadmin adds
+their own bidders.
 
-From then on, the Users page creates the rest of the team.
+> **Turn off public sign-up in Supabase** (Authentication → Sign In / Providers
+> → "Allow new users to sign up"). The login page no longer offers it, but the
+> Auth API still would to anyone holding the public anon key. A self-registered
+> account has no team and reaches nothing — section 7b of the policy tests
+> holds that — but there is no reason to let it exist.
 
 ### Scripts
 
@@ -177,11 +178,8 @@ it. It costs ~300 fill operations, which is why that file is roughly 4 KB
 larger than the others, and it paints on page one only.
 
 Which templates and accents an account may use is set per account, on the Users
-page. Empty means "the default for their role", and `resume_builder` defaults to
-everything except the Banner template and the rust accent — the two loudest
-choices, and poor defaults for work that goes out under someone else's name
-without review. An admin can widen or narrow any individual account, and the
-per-account setting wins outright.
+page, by whoever manages it — a subadmin for their bidders, the super admin for
+a subadmin. Empty means everything.
 
 This is enforced in the UI, not the database: it is a style guideline, and
 treating a cosmetic field as a boundary would mean validating it on every write.
@@ -244,84 +242,103 @@ same perceived speed without that.
 
 ## Authorization
 
-The shape is multi-tenant: a **subadmin owns one team**, a **super admin owns
-the platform**.
+Three roles, one per layer:
+
+- the **super admin** runs the platform: adds and manages subadmins, and
+  reviews every team's work without changing it
+- a **subadmin** runs one team: its candidate profiles, the bidders they add,
+  and which bidder works which profile
+- a **bidder** works the profiles assigned to them — tracks applications and
+  builds resumes — and reads the profile itself, read-only
 
 Records belong to a *team*, identified by a subadmin's id:
 
 - a subadmin's team is their own id
-- a bidder's and a resume builder's team is the subadmin who created them
-- a super admin has no team of their own, and reaches every one of them
+- a bidder's team is the subadmin who created them
+- a super admin has no team of their own, and reads every one of them
 
-| Role | Sees | Creates | Pages |
+| Role | Reads | Writes | Manages accounts |
 | --- | --- | --- | --- |
-| `super_admin` | **every team's records** | subadmins, and accounts in any team | all |
-| `subadmin` | everything in their own team | bidders and resume builders | all |
-| `bidder` | applications they recorded, profiles assigned to them | applications | Applications, Profiles, Resume builder, Blocklist |
-| `resume_builder` | only the profiles they created | profiles, resumes | Profiles, Resume builder |
+| `super_admin` | **every team's records** | nothing directly — moves profiles and whole teams between subadmins | subadmins: add, edit, reset password, remove |
+| `subadmin` | everything in their own team | profiles, attachments, SSNs, assignments, blocklist, billing, any application or resume on the team | their own bidders |
+| `bidder` | profiles assigned to them, their applications, applications and resumes on those profiles | applications and resumes, **for assigned profiles only** | — |
 
-**Why `admin` became `subadmin`.** The role always *was* the owner of exactly
-one team; calling it "admin" beside "super admin" suggested a difference of
-degree where there is a difference of kind — one tenant versus all of them. It
-is a Postgres `ALTER TYPE ... RENAME VALUE`, so every existing row keeps its
-role untouched and no window exists where some accounts are `admin` and others
-`subadmin`. The statement is guarded, so a second run of the schema finds
-nothing to rename.
+A subadmin never sees another subadmin's team or people. Nobody changes an
+account's role: each layer creates exactly one, so there is nowhere to move an
+account that would not also move it out of its manager's reach.
 
-**A super admin reads everything and creates nothing.** Reading and fixing any
-team's rows is coherent; creating one is not, because a row belongs to exactly
-one `team_id` and theirs would be "all of them" — which is not an answer the
-column can hold. So the applications entry row and the blocklist's add form
-are hidden for them, with a sentence saying why, rather than offered and then
-refused. Authorship still binds: `created_by = auth.uid()` means even a super
-admin cannot write a row as somebody else, and there is a test asserting it.
+**`resume_builder` is retired.** It was a bidder that could also create
+profiles, and creating profiles is the subadmin's job. Part 1 of the schema
+converts every remaining one into a bidder *assigned to each profile they
+created*, so nobody loses sight of a candidate, and a check constraint refuses
+the value from then on. Postgres cannot drop an enum value, so the type keeps
+it; nothing can hold it.
 
-**What actually closed the gap.** Before this, `super_admin` could see *no
-records at all* — not by decision but by accident. Every policy began
-`team_id = app_team_id()`, and `app_team_id()` is null for a super admin;
-`null = anything` is **unknown**, not false, so they matched nothing, silently,
-with no error to notice. The fix is one helper:
+**Two team tests — one for reading, one for writing.** Every read policy
+starts `in_team(team_id)`, which lets the super admin past the team check:
 
 ```sql
 create or replace function public.in_team(target uuid)
 returns boolean language sql stable as $$
-  select is_super_admin() or target = app_team_id()
+  select coalesce(is_super_admin() or target = app_team_id(), false)
 $$;
 ```
 
-All 26 policy sites now call `in_team(team_id)`. Writing it once is the point:
-the next policy added inherits the rule by using the helper, rather than by
-someone remembering to append `or is_super_admin()`.
+Every write policy starts `in_own_team(team_id)` instead — membership, with no
+super-admin branch — and names the role allowed to write, usually
+`is_subadmin()`. A written row must belong to exactly one team, and a super
+admin belongs to none; using `in_team()` in a `WITH CHECK` would let them stamp
+rows into any team. The two structural things a super admin does — handing a
+profile to another subadmin (`assign_profile_to_team()`) and moving a whole
+team (`transfer_team()`) — are `SECURITY DEFINER` functions with their own
+`is_super_admin()` guard.
 
-> **Adding a role means auditing the policies, not just the enum.** Almost every
-> privileged check used to read `app_role() <> 'bidder'`, which was the same
-> thing as "is an admin" only while bidder was the *only* unprivileged role. A
-> second one made them different: `resume_builder` would have inherited admin
-> rights over applications, the blocklist, profile assignment and billing by
-> default. Anything meaning "is an admin" now says so, via `is_admin()`.
->
-> `app_team_id()` was the other trap — it listed the roles it knew and returned
-> null for the rest, and `team_id = app_team_id()` with a null is not false but
-> *unknown*, so it never matches. A new role could read nothing and write
-> nothing, with no error saying why. The policy tests caught it.
+> **Never write `team_id = app_team_id()` by hand.** Against a super admin's
+> null team it is *unknown*, not false, which is exactly how super admins once
+> came to see no records at all, silently. Use the helpers; every predicate in
+> them is coalesced to false, so a guard written `if not is_super_admin()` in
+> plpgsql cannot be skipped by a session with no `app_user` row.
 
-All of this is enforced by RLS in Postgres, via two `SECURITY DEFINER` helpers,
-`app_role()` and `app_team_id()`. Application code does not filter by team — if
-it did, that filter would be a second source of truth able to drift from the
-policy. `src/lib/scope.ts` mirrors the rules only so the UI can hide controls
-that would fail.
+**Removing a subadmin moves their team first.** Every `team_id` foreign key
+cascades from the subadmin's account, so deleting one outright would delete
+every profile, resume and application the team ever recorded. The Users page
+asks which subadmin inherits the team and calls `transfer_team()` — profiles,
+applications, resumes, attachments, the SSN audit trail, assignments, the
+bidders themselves, a merged blocklist, and the calendar events and calendars
+the old subadmin created in Trueward Calendar — and only then deletes the
+account. A subadmin with an empty team can go without one.
 
-`npm run test:rls` covers team isolation, bidder scoping, cross-team insert
-rejection, forged `created_by` rejection, and self-promotion.
+**No account can rewrite itself.** There is no update policy on `app_user`;
+every change goes through `src/app/dashboard/users/actions.ts` with the service
+role, after the action's own checks. The old self-update policy pinned `id` and
+`role` and nothing else, so any account could set its own `created_by_id` —
+which *is* a bidder's team — and, with open sign-up, a stranger could join any
+team whose subadmin id they knew. Changing your own email or password now also
+asks for your current password; whoever manages an account resets it without.
+
+All of this is enforced by RLS in Postgres. Application code does not filter by
+team — if it did, that filter would be a second source of truth able to drift
+from the policy. `src/lib/roles.ts` and `src/lib/scope.ts` mirror the rules
+only so the UI can hide controls that would fail.
+
+`npm run test:rls` covers team isolation, the super admin's read-only reach,
+bidder scoping to assigned profiles, read-only profiles and attachments,
+cross-team inserts and assignments, forged `created_by`, self-promotion and
+self-transfer, the `resume_builder` migration, team transfer, and which
+functions a browser session can call.
 
 ### Profile assignment
 
 Candidate profiles are **opt-in** for bidders. Without a `profile_assignment`
 row a bidder sees no profile at all, so a new candidate stays private to the
-admins until deliberately routed. Admins assign from the Profiles page.
+subadmin until deliberately routed. The subadmin assigns from the Profiles
+page, to their own bidders only — the policy checks both ends, the profile and
+the person, belong to the team. The super admin sees the assignments but
+leaves them to the subadmin.
 
-Editing a candidate's identity is an admin action — a bidder writes resume
-content, not someone's date of birth.
+Unassigning takes the profile away entirely: the bidder no longer sees it or
+its resumes, and can no longer change applications they recorded for it,
+though those stay visible to them as history.
 
 ### Column widths, overflow and paging
 
@@ -446,16 +463,20 @@ Stored encrypted with `pgp_sym_encrypt`. The key is `APP_ENCRYPTION_KEY`, held
 only in the server environment and never in the database, so a dump of
 `candidate_profile` yields ciphertext alone.
 
-Reading it takes three things at once: an admin role, an RLS-visible row, and
-the key. The reveal runs in a server action
+Reading it takes three things at once: the subadmin role, a profile in their
+own team, and the key. The super admin audits the log across every team but
+does not decrypt. The reveal runs in a server action
 (`src/app/dashboard/profiles/ssn-actions.ts`) and appends to `ssn_access_log`,
 which has no update or delete policy — the trail cannot be edited from the app.
 The plaintext never ships with the page; the field starts blank even when a
 number is on file.
 
-`reveal_ssn` and `store_ssn` are revoked from `public`, so PostgREST will not
-expose them to a browser session. They are reachable only via the service-role
-client, after the action's own checks.
+`reveal_ssn`, `store_ssn` and the two crypto helpers are revoked from `public`
+*and* from `anon` and `authenticated` by name — Supabase's default privileges
+grant each API role individually, and revoking from `public` alone left them
+callable from any browser session. They are reachable only via the
+service-role client, after the action's own checks. `supabase/diagnose.sql`
+prints the live grants.
 
 > Storing SSNs carries real obligations — retention limits, breach
 > notification, and access review among them. The controls here are the
@@ -497,7 +518,8 @@ Vercel, free tier, no special configuration — which is the whole point. There 
 no browser binary to trace, no `serverExternalPackages`, and no `maxDuration` to
 raise.
 
-Set the environment variables from `.env.example` in the project settings.
+Set the environment variables from `.env.example` in the project settings, and
+turn off public sign-up in Supabase Auth (see *The first account*).
 `SUPABASE_SERVICE_ROLE_KEY`, `UPLOADTHING_TOKEN` and `APP_ENCRYPTION_KEY` must
 not carry the `NEXT_PUBLIC_` prefix — that prefix is what inlines a value into
 the browser bundle.

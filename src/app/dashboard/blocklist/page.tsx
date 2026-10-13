@@ -1,26 +1,13 @@
-import { Alert } from "antd";
-
 import { BlocklistPanel } from "@/components/blocklist-panel";
 import { requireActor } from "@/lib/actor";
-import { isAdminRole } from "@/lib/roles";
-import { seesAllTeams, seesApplications, teamIdFor } from "@/lib/scope";
+import { managesTeam } from "@/lib/roles";
+import { teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Blocklist" };
 
 export default async function BlocklistPage() {
   const actor = await requireActor();
-
-  if (!seesApplications(actor.role)) {
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        title="Not available"
-        description="The blocklist governs applications, which your account doesn't record."
-      />
-    );
-  }
 
   const supabase = await createClient();
 
@@ -45,7 +32,9 @@ export default async function BlocklistPage() {
     <BlocklistPanel
       teamId={teamIdFor(actor) ?? ""}
       userId={actor.id}
-      canEdit={isAdminRole(actor.role) && !seesAllTeams(actor)}
+      // The subadmin's list to keep. A super admin reviews every team's, and
+      // has no team for a new entry to belong to.
+      canEdit={managesTeam(actor.role)}
       rows={blocked.data ?? []}
       cooling={cooling.data ?? []}
     />

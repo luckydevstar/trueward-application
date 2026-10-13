@@ -59,6 +59,11 @@ export type ProfileRow = {
 type Props = {
   canEdit: boolean;
   canAssign: boolean;
+  /**
+   * Show who works each profile without being able to change it — the super
+   * admin's view, who reviews assignments but leaves them to the subadmin.
+   */
+  showAssignees?: boolean;
   rows: ProfileRow[];
   teamMembers: Array<{ id: string; label: string }>;
   /** Super admin only: may move a profile to another subadmin's team. */
@@ -86,6 +91,7 @@ const DEFAULT_WIDTHS: Record<string, number> = {
 export function ProfilesList({
   canEdit,
   canAssign,
+  showAssignees = false,
   rows,
   teamMembers,
   canHandOver = false,
@@ -252,7 +258,7 @@ export function ProfilesList({
         return text ? <Marquee title={text}>{text}</Marquee> : <Muted />;
       },
     },
-    ...(canAssign
+    ...(canAssign || showAssignees
       ? ([
           {
             key: "assignees",
@@ -265,6 +271,7 @@ export function ProfilesList({
                 variant="borderless"
                 placeholder="Nobody"
                 style={{ width: "100%" }}
+                disabled={!canAssign}
                 value={row.assignee_ids}
                 onChange={(next) => setAssignees(row.id, next)}
                 options={teamMembers.map((m) => ({

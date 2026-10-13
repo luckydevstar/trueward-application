@@ -2,6 +2,7 @@ import { ResumeBuilder } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { profileSchema } from "@/lib/document/schema";
 import { profileReach, scopeToReach } from "@/lib/profile-scope";
+import { managesTeam } from "@/lib/roles";
 import { seesAllTeams, teamIdFor } from "@/lib/scope";
 import { allowedAccents, allowedTemplates } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/server";
@@ -27,8 +28,10 @@ export default async function ResumesPage() {
         documents={[]}
         teamId=""
         userId={actor.id}
-        templates={allowedTemplates(actor.role, actor.allowedTemplates)}
-        accents={allowedAccents(actor.role, actor.allowedAccents)}
+        templates={allowedTemplates(actor.allowedTemplates)}
+        accents={allowedAccents(actor.allowedAccents)}
+        canEditAny={false}
+        readOnly
       />
     );
   }
@@ -63,7 +66,9 @@ export default async function ResumesPage() {
       (() => {
         const query = supabase
           .from("resume_document")
-          .select("id, title, profile_id, content, template, style, updated_at")
+          .select(
+            "id, title, profile_id, content, template, style, updated_at, created_by",
+          )
           .order("updated_at", { ascending: false });
         return everyTeam ? query : query.eq("team_id", teamId);
       })(),
@@ -93,8 +98,12 @@ export default async function ResumesPage() {
       documents={documents.data ?? []}
       teamId={teamIdFor(actor) ?? ""}
       userId={actor.id}
-      templates={allowedTemplates(actor.role, actor.allowedTemplates)}
-      accents={allowedAccents(actor.role, actor.allowedAccents)}
+      templates={allowedTemplates(actor.allowedTemplates)}
+      accents={allowedAccents(actor.allowedAccents)}
+      canEditAny={managesTeam(actor.role)}
+      // A super admin reviews every team's resumes and saves none — they have
+      // no team for a new one to belong to.
+      readOnly={everyTeam}
     />
   );
 }

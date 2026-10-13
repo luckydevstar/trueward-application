@@ -1,19 +1,29 @@
 "use client";
 
 import { LockOutlined, MailOutlined } from "@ant-design/icons";
-import { App, Button, Form, Input, Tabs } from "antd";
+import { App, Button, Form, Input, Typography } from "antd";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 
-type Values = { email: string; password: string; name?: string };
+type Values = { email: string; password: string };
 
+/**
+ * Sign-in only.
+ *
+ * There was a "Create account" tab. Every account here is created by the layer
+ * above it — the super admin adds subadmins, a subadmin adds bidders — so a
+ * self-registered account never belonged to anyone, and while it existed the
+ * database had to be right about a stranger's every write. Turn sign-ups off
+ * in Supabase as well (Authentication → Sign In / Providers → "Allow new users
+ * to sign up"): removing the form does not stop someone calling the Auth API
+ * directly with the public anon key.
+ */
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const { message } = App.useApp();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [busy, setBusy] = useState(false);
 
   // Only ever a same-origin path. Taking `next` straight from the query string
@@ -21,23 +31,10 @@ export function LoginForm() {
   const raw = params.get("next");
   const next = raw?.startsWith("/") && !raw.startsWith("//") ? raw : "/dashboard";
 
-  const submit = async ({ email, password, name }: Values) => {
+  const submit = async ({ email, password }: Values) => {
     setBusy(true);
     const supabase = createClient();
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          // Read by the handle_new_user trigger to populate app_user.name.
-          options: { data: { name: name ?? "" } },
-        });
-        if (error) throw error;
-        message.success("Account created. Check your email to confirm.");
-        setMode("signin");
-        return;
-      }
-
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -60,24 +57,7 @@ export function LoginForm() {
 
   return (
     <>
-      <Tabs
-        activeKey={mode}
-        onChange={(key) => setMode(key as typeof mode)}
-        items={[
-          { key: "signin", label: "Sign in" },
-          { key: "signup", label: "Create account" },
-        ]}
-      />
       <Form<Values> layout="vertical" onFinish={submit} requiredMark={false}>
-        {mode === "signup" && (
-          <Form.Item
-            name="name"
-            label="Name"
-            rules={[{ required: true, message: "Enter your name" }]}
-          >
-            <Input placeholder="Jane Doe" autoComplete="name" />
-          </Form.Item>
-        )}
         <Form.Item
           name="email"
           label="Email"
@@ -95,22 +75,17 @@ export function LoginForm() {
         <Form.Item
           name="password"
           label="Password"
-          rules={[
-            { required: true, message: "Enter your password" },
-            { min: 8, message: "At least 8 characters" },
-          ]}
+          rules={[{ required: true, message: "Enter your password" }]}
         >
-          <Input.Password
-            prefix={<LockOutlined />}
-            autoComplete={
-              mode === "signup" ? "new-password" : "current-password"
-            }
-          />
+          <Input.Password prefix={<LockOutlined />} autoComplete="current-password" />
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>
-          {mode === "signup" ? "Create account" : "Sign in"}
+          Sign in
         </Button>
       </Form>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+        Accounts are created by your team&apos;s subadmin.
+      </Typography.Paragraph>
     </>
   );
 }

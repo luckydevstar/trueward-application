@@ -28,7 +28,8 @@ export default async function ProfilesPage() {
     );
   }
 
-  // A builder creates and edits their own; only an admin routes them to people.
+  // The subadmin keeps the team's profiles and routes them to bidders. A
+  // super admin sees the same columns read-only; a bidder sees only theirs.
   const canEdit = canEditProfiles(actor.role);
   const canAssign = canAssignProfiles(actor.role);
   const teamId = teamIdFor(actor) ?? "";
@@ -45,6 +46,10 @@ export default async function ProfilesPage() {
    * RLS — which already admits them through in_team() — is what decides.
    */
   const everyTeam = seesAllTeams(actor);
+
+  // Who works which profile: changeable by the subadmin, visible to the super
+  // admin reviewing them.
+  const showsAssignments = canAssign || everyTeam;
 
   const [profiles, assignments, members] = await Promise.all([
     scopeToReach(
@@ -63,7 +68,7 @@ export default async function ProfilesPage() {
       reach,
       "id",
     ),
-    canAssign
+    showsAssignments
       ? (() => {
           const query = supabase
             .from("profile_assignment")
@@ -71,21 +76,18 @@ export default async function ProfilesPage() {
           return everyTeam ? query : query.eq("team_id", teamId);
         })()
       : Promise.resolve({ data: [] as never[] }),
-    // Every team member, not just bidders. A member is either the team's admin
-    // or an account created by that admin; super admins have no team.
-    canAssign
+    // Bidders only: an assignment is how a bidder reaches a profile, and the
+    // subadmin already reaches all of them. The policy refuses anyone else.
+    showsAssignments
       ? (() => {
           const query = supabase
             .from("app_user")
-            .select("id, name, email, role")
-            .neq("role", "super_admin")
+            .select("id, name, email")
+            .eq("role", "bidder")
             .order("name");
-          // A subadmin's team is themselves plus the accounts they created.
-          // A super admin assigns across every team, so there is nobody to
-          // exclude.
-          return everyTeam
-            ? query
-            : query.or(`id.eq.${teamId},created_by_id.eq.${teamId}`);
+          // A subadmin's bidders are the accounts they created. A super admin
+          // reviews every team, so there is nobody to exclude.
+          return everyTeam ? query : query.eq("created_by_id", teamId);
         })()
       : Promise.resolve({ data: [] as never[] }),
   ]);
@@ -136,6 +138,7 @@ export default async function ProfilesPage() {
     <ProfilesList
       canEdit={canEdit}
       canAssign={canAssign}
+      showAssignees={showsAssignments}
       rows={rows}
       canHandOver={everyTeam}
       subadmins={subadmins.map((sa) => ({
@@ -144,7 +147,7 @@ export default async function ProfilesPage() {
       }))}
       teamMembers={(members.data ?? []).map((m) => ({
         id: m.id,
-        label: `${m.name ?? m.email}${m.role === "subadmin" ? " (subadmin)" : ""}`,
+        label: m.name ?? m.email,
       }))}
     />
   );

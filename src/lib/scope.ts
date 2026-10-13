@@ -1,21 +1,21 @@
-import { isAdminRole, type Actor, type UserRole } from "@/lib/roles";
+import { managesTeam, type Actor, type UserRole } from "@/lib/roles";
 
 /**
  * Who may see and record what.
  *
  * Records belong to a *team*, identified by a subadmin's id:
  *   - a subadmin's team is their own id
- *   - a bidder's and a resume builder's team is the subadmin who created them
- *   - a super admin has no team, and reaches every one of them
+ *   - a bidder's team is the subadmin who created them
+ *   - a super admin has no team, and reviews every one of them
  *
  * Within a team, reach narrows by role:
- *   - subadmin        everything in their team
- *   - bidder          applications they recorded, profiles assigned to them
- *   - resume_builder  only the profiles they created, and no applications
+ *   - subadmin  everything in their team, and the only one who changes it
+ *   - bidder    the profiles assigned to them (read-only), the applications
+ *               and resumes they record against those
  *
- * The database enforces all of this through in_team(), app_role() and
- * can_use_profile(); this module exists so the UI can stamp new rows with the
- * right team_id and hide controls that would fail.
+ * The database enforces all of this through in_team(), in_own_team(),
+ * is_subadmin() and can_use_profile(); this module exists so the UI can stamp
+ * new rows with the right team_id and hide controls that would fail.
  */
 
 export type Scope =
@@ -24,16 +24,16 @@ export type Scope =
    *
    * Distinct from "team" rather than a team with a special id, because there
    * is no id that means "all of them" — and because the difference matters at
-   * write time: reading everything is coherent, but a new row still has to
-   * belong to exactly one team, which a super admin has to choose.
+   * write time: a new row has to belong to exactly one team, which is why a
+   * super admin reviews rather than records.
    */
   | { kind: "all" }
   /** Subadmin: every row in their team, and may add. */
   | { kind: "team"; adminId: string }
-  /** Bidder: only their own rows, added into their admin's team. */
+  /** Bidder: their own rows, for assigned profiles, in their subadmin's team. */
   | { kind: "own"; userId: string; adminId: string }
   /**
-   * Someone with no admin — created out of band, or whose admin was deleted.
+   * Someone with no subadmin — created out of band, or signed up on their own.
    * They can't record, because there'd be no team to record into.
    */
   | { kind: "orphan" };
@@ -56,10 +56,9 @@ export function teamIdFor(actor: Actor): string | null {
 /**
  * Whether this actor belongs to a team at all — a new record needs one.
  *
- * False for a super admin, deliberately: they can read and fix every team's
- * rows, but a row they *created* would have no team to belong to. Creating is
- * the one thing that needs an answer to "whose?", and theirs is "everyone's",
- * which is not an answer a `team_id` column can hold.
+ * False for a super admin, deliberately: a row they created would have no team
+ * to belong to, and the policies' in_own_team() refuses it for the same
+ * reason.
  */
 export function canRecord(actor: Actor): boolean {
   return teamIdFor(actor) !== null;
@@ -75,44 +74,18 @@ export function canBrowseRecords(actor: Actor): boolean {
   return canRecord(actor) || seesAllTeams(actor);
 }
 
-/**
- * The tracker is for people who send applications.
- *
- * A super admin manages accounts; a resume builder writes resumes. Neither has
- * a use for the applications grid, the blocklist, or the cooldown that governs
- * them, and the policies refuse both regardless.
- */
-export function seesApplications(role: UserRole): boolean {
-  return role === "subadmin" || role === "bidder" || role === "super_admin";
-}
-
-/**
- * Whether the profiles and resume-builder pages are of any use to this role.
- *
- * Everyone, now. A super admin used to be excluded because app_team_id() was
- * null for them and both pages were permanently empty — that was a symptom of
- * the gap this change closed, not a decision.
- */
-export function seesProfiles(): boolean {
-  return true;
-}
-
-/** Only admins route candidates to people. */
+/** Only the subadmin routes candidates to people. */
 export function canAssignProfiles(role: UserRole): boolean {
-  return isAdminRole(role);
+  return managesTeam(role);
 }
 
 /**
  * Whether this actor may create and edit candidate profiles.
  *
  * A bidder is deliberately absent: they write resume *content* against a
- * profile someone else owns, never the person's identity.
+ * profile their subadmin keeps, never the person's identity. A super admin is
+ * absent because they review.
  */
 export function canEditProfiles(role: UserRole): boolean {
-  return isAdminRole(role) || role === "resume_builder";
-}
-
-/** Resume builders see only what they made, so ownership columns are noise. */
-export function seesWholeTeam(role: UserRole): boolean {
-  return isAdminRole(role);
+  return managesTeam(role);
 }

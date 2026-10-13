@@ -4,12 +4,8 @@ import { ApplicationsGrid } from "@/components/applications-grid";
 import { requireActor } from "@/lib/actor";
 import { ROW_COLUMNS, type ApplicationRow as Row } from "@/lib/application-row";
 import { fetchAll } from "@/lib/fetch-all";
-import {
-  canBrowseRecords,
-  seesAllTeams,
-  seesApplications,
-  teamIdFor,
-} from "@/lib/scope";
+import { isAdminRole } from "@/lib/roles";
+import { canBrowseRecords, seesAllTeams, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Applications" };
@@ -17,27 +13,13 @@ export const metadata = { title: "Applications" };
 export default async function ApplicationsPage() {
   const actor = await requireActor();
 
-  // Refused here as well as hidden from the nav, because a URL is typeable.
-  // RLS refuses it a third time; this only produces a sentence instead of an
-  // empty grid.
-  if (!seesApplications(actor.role)) {
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        title="Not available"
-        description="The applications tracker is for admins and bidders. Your account builds resumes."
-      />
-    );
-  }
-
   if (!canBrowseRecords(actor)) {
     return (
       <Alert
         type="warning"
         showIcon
         title="No team"
-        description="Your account isn't attached to a team, so there's nowhere to record applications. An admin needs to set your account up."
+        description="Your account isn't attached to a team, so there's nowhere to record applications. A subadmin needs to set your account up."
       />
     );
   }
@@ -50,8 +32,9 @@ export default async function ApplicationsPage() {
    *
    * None of them filters by team or by assignment. RLS already narrows
    * applications to "my team, and either mine or for a profile I share", and
-   * candidate_profile to the profiles I can use — a filter here would be a
-   * second copy of those rules, free to drift from them.
+   * candidate_profile to the profiles I can use — which, for a bidder, is
+   * exactly the assigned ones the entry row may offer. A filter here would be
+   * a second copy of those rules, free to drift from them.
    */
   const [applications, profiles, members, blocked] = await Promise.all([
     /*
@@ -87,7 +70,7 @@ export default async function ApplicationsPage() {
       teamId={teamIdFor(actor) ?? ""}
       readOnly={seesAllTeams(actor)}
       userId={actor.id}
-      isAdmin={actor.role !== "bidder"}
+      isAdmin={isAdminRole(actor.role)}
       rows={rows}
       profiles={(profiles.data ?? []).map((p) => ({
         id: p.id,

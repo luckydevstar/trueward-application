@@ -26,5 +26,19 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'authenticated') then
     create role authenticated nologin;
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin;
+  end if;
 end
 $$;
+
+-- What Supabase does to every function created in `public`: EXECUTE granted to
+-- each API role *by name*. Reproduced here because it is the reason
+-- `revoke ... from public` is not enough on its own — a test cluster without
+-- these grants would pass a schema that leaves reveal_ssn callable in
+-- production.
+alter default privileges in schema public
+  grant execute on functions to anon, authenticated, service_role;
