@@ -90,6 +90,21 @@ as $$
 $$;
 
 /**
+ * Every predicate here is wrapped in coalesce(..., false): they answer false,
+ * never null, for a caller with no app_user row (a session whose account was
+ * deleted, or an auth.users row that never got one).
+ *
+ * In a policy the difference is invisible — RLS denies on null exactly as it
+ * denies on false. In plpgsql it inverts the check: `if not is_super_admin()`
+ * on a null is `if null`, which does not branch, so the guard is skipped and
+ * the body runs. assign_profile_to_team() was reachable that way.
+ *
+ * Fixing it in the predicates rather than at the one call site is deliberate.
+ * The next `if not is_admin()` someone writes is then safe by default, instead
+ * of safe only if they knew about this.
+ */
+
+/**
  * The privileged roles.
  *
  * A positive list rather than "not a bidder". That phrasing was the same thing
@@ -102,7 +117,7 @@ returns boolean
 language sql
 stable
 as $$
-  select app_role()::text in ('subadmin', 'super_admin')
+  select coalesce(app_role()::text in ('subadmin', 'super_admin'), false)
 $$;
 
 /**
@@ -117,7 +132,7 @@ returns boolean
 language sql
 stable
 as $$
-  select app_role()::text = 'super_admin'
+  select coalesce(app_role()::text = 'super_admin', false)
 $$;
 
 /**
@@ -137,7 +152,7 @@ returns boolean
 language sql
 stable
 as $$
-  select is_super_admin() or target = app_team_id()
+  select coalesce(is_super_admin() or target = app_team_id(), false)
 $$;
 
 create or replace function public.is_builder()
@@ -145,7 +160,7 @@ returns boolean
 language sql
 stable
 as $$
-  select app_role()::text = 'resume_builder'
+  select coalesce(app_role()::text = 'resume_builder', false)
 $$;
 
 /**

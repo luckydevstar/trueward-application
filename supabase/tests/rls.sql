@@ -680,6 +680,47 @@ select 'nor its history' as check, count(*) = 0 as expect_true
   from application where id = '00000000-0000-0000-0000-00000000a900';
 reset role;
 
+\echo ''
+\echo '=== 15c. a session with no app_user row cannot hand profiles over ==='
+
+-- A valid JWT whose account has no app_user row: an account that was deleted
+-- while signed in, or an auth.users row that never got one.
+--
+-- Every role predicate answers null for them, and the guard was written
+-- `if not is_super_admin()`. `if null` does not branch, so the guard was
+-- skipped and the body — SECURITY DEFINER, so RLS does not stop it either —
+-- ran. The predicates coalesce to false now; this is what holds that shut.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000de';
+
+select 'no app_user row, so no role' as check, app_role() is null as expect_true;
+select 'is_super_admin() is false, not null' as check,
+       is_super_admin() = false as expect_true;
+select 'is_admin() is false, not null' as check, is_admin() = false as expect_true;
+select 'in_team() is false, not null' as check,
+       in_team('00000000-0000-0000-0000-00000000000c') = false as expect_true;
+
+do $$
+begin
+  perform assign_profile_to_team(
+    '00000000-0000-0000-0000-0000000000f9',
+    '00000000-0000-0000-0000-00000000000a');
+  raise exception 'FAIL: a session with no app_user row moved a profile';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: a roleless session is refused the hand-over';
+end $$;
+reset role;
+
+-- And it really did not move.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select 'the profile stayed where it was' as check,
+       team_id = '00000000-0000-0000-0000-00000000000c' as expect_true
+  from candidate_profile where id = '00000000-0000-0000-0000-0000000000f9';
+reset role;
+
+\echo ''
 \echo '=== 9. blocklist is team-wide readable, bidder cannot delete ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000000a';
