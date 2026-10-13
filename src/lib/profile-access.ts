@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Actor } from "@/lib/roles";
 import { isAdminRole } from "@/lib/roles";
-import { teamIdFor } from "@/lib/scope";
+import { seesAllTeams, teamIdFor } from "@/lib/scope";
 
 /** The ownership fields required to apply the profile access rules. */
 export type ProfileAccessRow = {
@@ -10,8 +10,18 @@ export type ProfileAccessRow = {
   created_by: string | null;
 };
 
-/** The profile is in the actor's team, before considering their role. */
+/**
+ * The profile is in the actor's team, before considering their role.
+ *
+ * This is the TypeScript mirror of the database's `in_team()`, and it carries
+ * the same super-admin branch for the same reason. A super admin has no team
+ * of their own, so `teamIdFor(actor)` is null and `null === <uuid>` is false —
+ * every edit and every view is refused, with "Profile not found." as the only
+ * explanation. The database stopped making that mistake when the policies
+ * moved to `in_team()`; this is the half that still did.
+ */
 export function isInActorTeam(actor: Actor, profile: ProfileAccessRow): boolean {
+  if (seesAllTeams(actor)) return true;
   return teamIdFor(actor) === profile.team_id;
 }
 

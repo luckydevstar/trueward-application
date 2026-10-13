@@ -114,34 +114,40 @@ export async function replaceProfileAssignees(
   requestedUserIds: string[],
 ): Promise<Result> {
   const actor = await requireActor();
-  const teamId = teamIdFor(actor);
-  if (!teamId || !canAssignProfiles(actor.role)) {
+  if (!canAssignProfiles(actor.role)) {
     return fail("Only an admin can change profile assignments.");
   }
 
-  const userIds = [...new Set(requestedUserIds)];
   const supabase = await createClient();
-  const [{ data: profile }, { data: members }, { data: assignments }] =
-    await Promise.all([
-      supabase
-        .from("candidate_profile")
-        .select("id")
-        .eq("id", profileId)
-        .eq("team_id", teamId)
-        .maybeSingle(),
-      supabase
-        .from("app_user")
-        .select("id")
-        .or(`id.eq.${teamId},created_by_id.eq.${teamId}`)
-        .neq("role", "super_admin"),
-      supabase
-        .from("profile_assignment")
-        .select("user_id")
-        .eq("profile_id", profileId)
-        .eq("team_id", teamId),
-    ]);
+
+  // The team is the *profile's*, not the actor's. Reading it off the actor
+  // refused a super admin outright: they have no team, so teamIdFor() is null
+  // and the gate above rejected them before any row was looked at. Which
+  // profiles each actor can see is RLS's answer, already given by this select;
+  // this row's team_id then says whose assignment list is being changed.
+  const { data: profile } = await supabase
+    .from("candidate_profile")
+    .select("id, team_id")
+    .eq("id", profileId)
+    .maybeSingle();
 
   if (!profile) return fail("Profile not found.");
+  const teamId = profile.team_id;
+
+  const userIds = [...new Set(requestedUserIds)];
+  const [{ data: members }, { data: assignments }] = await Promise.all([
+    supabase
+      .from("app_user")
+      .select("id")
+      .or(`id.eq.${teamId},created_by_id.eq.${teamId}`)
+      .neq("role", "super_admin"),
+    supabase
+      .from("profile_assignment")
+      .select("user_id")
+      .eq("profile_id", profileId)
+      .eq("team_id", teamId),
+  ]);
+
   const memberIds = new Set((members ?? []).map((member) => member.id));
   if (userIds.some((id) => !memberIds.has(id))) {
     return fail("Profiles can only be assigned to members of this team.");
