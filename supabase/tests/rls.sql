@@ -588,6 +588,98 @@ select 'admin sees the builder''s profile' as check, count(*) = 1 as expect_true
 reset role;
 
 \echo ''
+\echo ''
+\echo '=== 15. a super admin hands a profile to a subadmin, history and all ==='
+
+-- A second team to hand to. admin_c is already a subadmin from fixture setup.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+insert into candidate_profile (id, team_id, created_by, full_name, profile)
+values ('00000000-0000-0000-0000-0000000000f9', app_team_id(), auth.uid(),
+        'Moving Candidate', '{}'::jsonb);
+insert into application (id, title, company, job_url, profile_id, team_id, created_by)
+values ('00000000-0000-0000-0000-00000000a900', 'Moved Role', 'Umbrella',
+        'https://example.com/moved', '00000000-0000-0000-0000-0000000000f9',
+        app_team_id(), auth.uid());
+-- A bidder in the *old* team is assigned to it.
+insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+values ('00000000-0000-0000-0000-0000000000f9',
+        '00000000-0000-0000-0000-0000000000b1', app_team_id(), auth.uid());
+reset role;
+
+-- A subadmin may not hand profiles around, even their own.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+do $$
+begin
+  perform assign_profile_to_team(
+    '00000000-0000-0000-0000-0000000000f9',
+    '00000000-0000-0000-0000-00000000000c');
+  raise exception 'FAIL: a subadmin moved a profile between teams';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: only a super admin can hand a profile over';
+end $$;
+reset role;
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+
+-- Not to a bidder: a team is a subadmin's id, and handing a profile to a
+-- bidder would make a team app_team_id() can never resolve to.
+do $$
+begin
+  perform assign_profile_to_team(
+    '00000000-0000-0000-0000-0000000000f9',
+    '00000000-0000-0000-0000-0000000000b1');
+  raise exception 'FAIL: a profile was handed to a bidder';
+exception
+  when invalid_parameter_value then
+    raise notice 'PASS: profiles can only be handed to a subadmin';
+end $$;
+
+-- The real move.
+select assign_profile_to_team(
+  '00000000-0000-0000-0000-0000000000f9',
+  '00000000-0000-0000-0000-00000000000c');
+reset role;
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select 'profile moved to the new team' as check,
+       team_id = '00000000-0000-0000-0000-00000000000c' as expect_true
+  from candidate_profile where id = '00000000-0000-0000-0000-0000000000f9';
+
+-- The point of the whole exercise: history travels, so the cooldown still
+-- knows where this candidate has already been sent.
+select 'its applications moved too' as check,
+       team_id = '00000000-0000-0000-0000-00000000000c' as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a900';
+
+-- The old team's bidder loses it; the new owner re-assigns to their own.
+select 'old assignments were dropped' as check, count(*) = 0 as expect_true
+  from profile_assignment
+ where profile_id = '00000000-0000-0000-0000-0000000000f9';
+reset role;
+
+\echo ''
+\echo '=== 15b. the new owner sees it; the old one does not ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000c';
+select 'new owner sees the profile' as check, count(*) = 1 as expect_true
+  from candidate_profile where id = '00000000-0000-0000-0000-0000000000f9';
+select 'new owner sees its history' as check, count(*) = 1 as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a900';
+reset role;
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'previous owner no longer sees it' as check, count(*) = 0 as expect_true
+  from candidate_profile where id = '00000000-0000-0000-0000-0000000000f9';
+select 'nor its history' as check, count(*) = 0 as expect_true
+  from application where id = '00000000-0000-0000-0000-00000000a900';
+reset role;
+
 \echo '=== 9. blocklist is team-wide readable, bidder cannot delete ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000000a';

@@ -55,7 +55,7 @@ export default async function ProfilesPage() {
           // *whether* one exists, which the boolean below answers without
           // moving ciphertext.
           .select(
-            "id, full_name, email, phone, city, state, country, updated_at, ssn_encrypted",
+            "id, full_name, email, phone, city, state, country, updated_at, ssn_encrypted, team_id",
           )
           .order("full_name");
         return everyTeam ? query : query.eq("team_id", teamId);
@@ -95,6 +95,25 @@ export default async function ProfilesPage() {
     byProfile.set(a.profile_id, [...(byProfile.get(a.profile_id) ?? []), a.user_id]);
   }
 
+  /*
+   * The teams a profile can be handed to, and who owns each one.
+   *
+   * Only a super admin can hand profiles over, so this is only fetched for
+   * them — a subadmin would see a control they cannot use, and the function
+   * would refuse it anyway.
+   */
+  const subadmins = everyTeam
+    ? ((
+        await supabase
+          .from("app_user")
+          .select("id, name, email")
+          .eq("role", "subadmin")
+          .order("name")
+      ).data ?? [])
+    : [];
+
+  const teamName = new Map(subadmins.map((s) => [s.id, s.name ?? s.email]));
+
   const rows = (profiles.data ?? []).map((p) => ({
     id: p.id,
     full_name: p.full_name,
@@ -107,6 +126,10 @@ export default async function ProfilesPage() {
     // Only whether one exists — the ciphertext never leaves the server.
     has_ssn: p.ssn_encrypted !== null,
     assignee_ids: byProfile.get(p.id) ?? [],
+    team_id: p.team_id,
+    // Null for a team with no subadmin — the old owner's team, say, after
+    // they were promoted. Shown as "unassigned" rather than as a blank.
+    team_label: teamName.get(p.team_id) ?? null,
   }));
 
   return (
@@ -114,6 +137,11 @@ export default async function ProfilesPage() {
       canEdit={canEdit}
       canAssign={canAssign}
       rows={rows}
+      canHandOver={everyTeam}
+      subadmins={subadmins.map((sa) => ({
+        id: sa.id,
+        label: sa.name ?? sa.email,
+      }))}
       teamMembers={(members.data ?? []).map((m) => ({
         id: m.id,
         label: `${m.name ?? m.email}${m.role === "subadmin" ? " (subadmin)" : ""}`,

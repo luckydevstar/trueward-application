@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import { requireActor } from "@/lib/actor";
 import { canEditProfile } from "@/lib/profile-access";
 import type { ProfileRowValues } from "@/lib/profile-form";
@@ -227,4 +229,36 @@ export async function deleteProfileAttachment(attachmentId: string): Promise<Res
     .eq("id", attachment.id)
     .eq("team_id", attachment.team_id);
   return error ? fail(error.message) : ok();
+}
+
+/**
+ * Hands a profile to a subadmin, with its applications and resumes.
+ *
+ * A thin wrapper: every rule — super-admin only, subadmin-only target, and
+ * which rows travel — lives in `assign_profile_to_team()` in
+ * supabase/schema/02_functions.sql, so it is one transaction and cannot be
+ * half-done. Putting the moves here instead would mean five updates and a
+ * delete over six HTTP round trips, any of which could be the last.
+ */
+export async function handProfileToTeam(
+  profileId: string,
+  teamId: string,
+): Promise<Result> {
+  const actor = await requireActor();
+
+  // Checked here only so the UI can say something useful; the function
+  // refuses a non-super-admin regardless, which is what actually protects it.
+  if (actor.role !== "super_admin") {
+    return fail("Only a super admin can hand a profile to another team.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("assign_profile_to_team", {
+    target_profile: profileId,
+    target_team: teamId,
+  });
+
+  if (error) return fail(error.message);
+  revalidatePath("/dashboard/profiles");
+  return ok();
 }

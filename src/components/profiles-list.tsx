@@ -21,6 +21,7 @@ import { useMemo, useState } from "react";
 import {
   createProfile,
   deleteProfile,
+  handProfileToTeam,
   replaceProfileAssignees,
 } from "@/app/dashboard/profiles/actions";
 import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
@@ -50,6 +51,9 @@ export type ProfileRow = {
   updated_at: string;
   has_ssn: boolean;
   assignee_ids: string[];
+  team_id: string;
+  /** The subadmin who owns this profile, or null if no subadmin owns its team. */
+  team_label: string | null;
 };
 
 type Props = {
@@ -57,6 +61,10 @@ type Props = {
   canAssign: boolean;
   rows: ProfileRow[];
   teamMembers: Array<{ id: string; label: string }>;
+  /** Super admin only: may move a profile to another subadmin's team. */
+  canHandOver?: boolean;
+  /** The teams it can be handed to. Empty unless canHandOver. */
+  subadmins?: Array<{ id: string; label: string }>;
 };
 
 const WIDTH_STORAGE_KEY = "tw.profiles.columnWidths";
@@ -80,9 +88,11 @@ export function ProfilesList({
   canAssign,
   rows,
   teamMembers,
+  canHandOver = false,
+  subadmins = [],
 }: Props) {
   const router = useRouter();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
@@ -151,6 +161,41 @@ export function ProfilesList({
    * this diffs against what's stored rather than tracking individual add and
    * remove events.
    */
+  /**
+   * Hands a profile to another subadmin.
+   *
+   * Confirmed rather than applied on change, because this is not an edit —
+   * it moves the candidate, their applications and their resumes out of one
+   * team and into another, and drops the old team's bidder assignments. The
+   * dialog says so in those words rather than "Are you sure?".
+   */
+  const handOver = (row: ProfileRow, teamId: string) => {
+    if (teamId === row.team_id) return;
+    const to = subadmins.find((sa) => sa.id === teamId)?.label ?? "that team";
+
+    modal.confirm({
+      title: `Hand ${row.full_name} to ${to}?`,
+      content: (
+        <>
+          Their applications and resumes move too — otherwise the duplicate
+          cooldown would stop knowing where this candidate has already been
+          sent. Assignments to the current team&apos;s bidders are dropped;{" "}
+          {to} re-assigns to their own.
+        </>
+      ),
+      okText: "Hand over",
+      onOk: async () => {
+        const result = await handProfileToTeam(row.id, teamId);
+        if (!result.ok) {
+          message.error(result.error);
+          return;
+        }
+        message.success(`${row.full_name} is now ${to}'s.`);
+        router.refresh();
+      },
+    });
+  };
+
   const setAssignees = async (profileId: string, next: string[]) => {
     const result = await replaceProfileAssignees(profileId, next);
     if (!result.ok) {
@@ -238,6 +283,33 @@ export function ProfilesList({
       sorter: (a, b) => a.updated_at.localeCompare(b.updated_at),
       render: (value: string) => formatDate(value),
     },
+    ...(canHandOver
+      ? ([
+          {
+            key: "team",
+            title: "Owner",
+            render: (_: unknown, row: ProfileRow) => (
+              <Select
+                size="small"
+                variant="borderless"
+                style={{ width: "100%" }}
+                value={row.team_id}
+                // The value is a team id, but a team with no subadmin has no
+                // label — show the raw state rather than an empty cell, so
+                // "nobody owns this" is visible rather than inferred.
+                placeholder="Unassigned"
+                options={[
+                  ...(row.team_label
+                    ? []
+                    : [{ value: row.team_id, label: "Unassigned", disabled: true }]),
+                  ...subadmins.map((sa) => ({ value: sa.id, label: sa.label })),
+                ]}
+                onChange={(teamId) => handOver(row, teamId)}
+              />
+            ),
+          },
+        ] satisfies ColumnsType<ProfileRow>)
+      : []),
     {
       key: "actions",
       title: "",

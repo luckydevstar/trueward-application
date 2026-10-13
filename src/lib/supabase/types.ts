@@ -212,6 +212,11 @@ export type Database = {
       app_role: { Args: Record<never, never>; Returns: UserRole };
       app_team_id: { Args: Record<never, never>; Returns: string | null };
       can_use_profile: { Args: { target: string }; Returns: boolean };
+      /** Moves a profile and everything attached to it to another team. */
+      assign_profile_to_team: {
+        Args: { target_profile: string; target_team: string };
+        Returns: undefined;
+      };
       /** Service-role only — see supabase/migrations/0002. */
       reveal_ssn: { Args: { target: string; key: string }; Returns: string | null };
       store_ssn: {

@@ -279,3 +279,86 @@ revoke all on function public.reveal_ssn(uuid, text) from public;
 revoke all on function public.store_ssn(uuid, text, text) from public;
 revoke all on function public.encrypt_ssn(text, text) from public;
 revoke all on function public.decrypt_ssn(bytea, text) from public;
+
+/**
+ * Hands a candidate profile to a subadmin, with everything attached to it.
+ *
+ * A super admin's one structural power: deciding which tenant runs a
+ * candidate. Everything else they do is reading and fixing.
+ *
+ * **Why the history moves too.** The duplicate cooldown
+ * (enforce_application_cooldown) only looks at applications in the *same*
+ * team. Move a profile without its applications and the new owner could
+ * re-apply to a company that candidate was sent to last week, with nothing to
+ * stop them — which is the exact harm the cooldown exists to prevent, and it
+ * lands on the candidate rather than on us. So this is not "set a column": it
+ * is one transaction that moves the profile and every row that hangs off it.
+ *
+ * **Why assignments are dropped rather than moved.** A profile_assignment
+ * names a bidder in the *old* team. Carrying those across would leave the new
+ * owner's profile assigned to people who are not in their team and cannot be
+ * managed by them. The new owner re-assigns to their own bidders, which is the
+ * point of handing it over.
+ *
+ * SECURITY DEFINER, because the moving rows are in tables the caller is about
+ * to stop being able to see — the update that takes a profile out of your team
+ * is the update that makes it invisible to you. The guard is the explicit
+ * is_super_admin() check, not RLS.
+ */
+create or replace function public.assign_profile_to_team(
+  -- `target_profile`, not `profile`: candidate_profile has a column called
+  -- `profile` (the jsonb document), and a parameter of the same name makes
+  -- every `where id = profile` ambiguous. Postgres says so loudly, which is
+  -- the good case; the bad case would have been it silently resolving to the
+  -- column.
+  target_profile uuid,
+  target_team uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_role text;
+begin
+  if not is_super_admin() then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'Only a super admin can move a profile between teams.';
+  end if;
+
+  -- A team is a subadmin's id. Handing a profile to a bidder or a resume
+  -- builder would create a team nobody administers, and app_team_id() would
+  -- never resolve to it.
+  select role::text into target_role from app_user where id = target_team;
+
+  if target_role is null then
+    raise exception using
+      errcode = 'foreign_key_violation',
+      message = 'No such account to hand the profile to.';
+  end if;
+
+  if target_role <> 'subadmin' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Profiles can only be handed to a subadmin; %s is a %s.',
+        target_team, target_role
+      );
+  end if;
+
+  -- Order matters only for readability; it is one transaction either way.
+  update candidate_profile  set team_id = target_team where id = target_profile;
+  update application        set team_id = target_team where profile_id = target_profile;
+  update resume_document    set team_id = target_team where profile_id = target_profile;
+  update profile_attachment set team_id = target_team where profile_id = target_profile;
+  update ssn_access_log     set team_id = target_team where profile_id = target_profile;
+
+  -- The old team's bidders lose it. See the note above.
+  delete from profile_assignment where profile_id = target_profile;
+end;
+$$;
+
+revoke all on function public.assign_profile_to_team(uuid, uuid) from public;
+grant execute on function public.assign_profile_to_team(uuid, uuid) to authenticated;
