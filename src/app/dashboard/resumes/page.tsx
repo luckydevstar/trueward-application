@@ -1,13 +1,42 @@
 import { ResumeBuilder } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
+import { openRouterConfigured } from "@/lib/ai/openrouter";
 import { profileSchema } from "@/lib/document/schema";
 import { profileReach, scopeToReach } from "@/lib/profile-scope";
 import { managesTeam } from "@/lib/roles";
 import { seesAllTeams, teamIdFor } from "@/lib/scope";
 import { allowedAccents, allowedTemplates } from "@/lib/style-access";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Resume builder" };
+
+/**
+ * Seconds this page's server actions may run — the generation call to the
+ * model takes tens of seconds. The OpenRouter client gives up at 55, so a
+ * slow model fails with a sentence rather than a platform timeout.
+ */
+export const maxDuration = 60;
+
+/**
+ * Whether the Generate button works, and with which model — shown beside it
+ * so whoever generates knows what they're spending. Read with the service
+ * role: the settings row is the super admin's, but the model name is not a
+ * secret. The system prompt is not read here and never reaches the browser.
+ */
+async function generation() {
+  if (!openRouterConfigured()) return { enabled: false, model: null };
+  try {
+    const { data } = await createAdminClient()
+      .from("generation_setting")
+      .select("model")
+      .maybeSingle();
+    return { enabled: true, model: data?.model ?? null };
+  } catch {
+    // No service-role key: the action could not log or read settings either.
+    return { enabled: false, model: null };
+  }
+}
 
 export default async function ResumesPage() {
   const actor = await requireActor();
@@ -32,6 +61,7 @@ export default async function ResumesPage() {
         accents={allowedAccents(actor.allowedAccents)}
         canEditAny={false}
         readOnly
+        generation={{ enabled: false, model: null }}
       />
     );
   }
@@ -50,7 +80,7 @@ export default async function ResumesPage() {
    */
   const reach = await profileReach(supabase, actor, teamId);
 
-  const [profiles, documents] = await Promise.all([
+  const [profiles, documents, ai] = await Promise.all([
     scopeToReach(
       (() => {
         const query = supabase
@@ -75,6 +105,7 @@ export default async function ResumesPage() {
       reach,
       "profile_id",
     ),
+    generation(),
   ]);
 
   // Parsed on the server so a profile that no longer satisfies the schema
@@ -104,6 +135,7 @@ export default async function ResumesPage() {
       // A super admin reviews every team's resumes and saves none — they have
       // no team for a new one to belong to.
       readOnly={everyTeam}
+      generation={ai}
     />
   );
 }

@@ -1151,6 +1151,11 @@ create table calendar_event (
 );
 insert into calendar_event (created_by) values ('00000000-0000-0000-0000-00000000000d');
 
+-- A generation logged against the team, which should follow it.
+insert into resume_generation (team_id, created_by, model, ok)
+values ('00000000-0000-0000-0000-00000000000d',
+        '00000000-0000-0000-0000-00000000000d', 'test/model', true);
+
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000000d';
 insert into candidate_profile (id, full_name, profile, team_id, created_by)
@@ -1233,6 +1238,7 @@ select 'nothing is left on team D' as check,
      + (select count(*) from resume_document    where team_id = '00000000-0000-0000-0000-00000000000d')
      + (select count(*) from profile_assignment where team_id = '00000000-0000-0000-0000-00000000000d')
      + (select count(*) from blocked_company    where team_id = '00000000-0000-0000-0000-00000000000d')
+     + (select count(*) from resume_generation  where team_id = '00000000-0000-0000-0000-00000000000d')
      + (select count(*) from app_user where created_by_id = '00000000-0000-0000-0000-00000000000d')
        = 0 as expect_true;
 select 'the blocklist merged, one row per company' as check,
@@ -1293,4 +1299,60 @@ set test.uid = '00000000-0000-0000-0000-00000000000a';
 delete from blocked_company where normalized_name = 'evil corp';
 select 'subadmin can remove an entry' as check, count(*) = 0 as expect_true
   from blocked_company;
+reset role;
+
+\echo ''
+\echo '=== 17. generation settings are the super admin''s; the log is read-only ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select 'super admin reads the one settings row' as check, count(*) = 1 as expect_true
+  from generation_setting;
+update generation_setting
+   set system_prompt = 'Write tight resumes.', model = 'test/model', updated_by = auth.uid();
+select 'super admin changes the prompt and model' as check,
+       system_prompt = 'Write tight resumes.' and model = 'test/model' as expect_true
+  from generation_setting;
+do $$
+begin
+  update generation_setting set updated_by = '00000000-0000-0000-0000-00000000000a';
+  raise exception 'FAIL: the change was signed as someone else';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: updated_by must be the super admin';
+end $$;
+
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'a subadmin cannot read the prompt' as check, count(*) = 0 as expect_true
+  from generation_setting;
+update generation_setting set system_prompt = 'Hijacked';
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+select 'nor can a bidder' as check, count(*) = 0 as expect_true from generation_setting;
+reset role;
+select 'nobody else changed it' as check, system_prompt = 'Write tight resumes.' as expect_true
+  from generation_setting;
+
+-- The log: one row per team, written as the owner (the server's service role).
+insert into resume_generation (team_id, created_by, model, ok) values
+  ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000b1', 'test/model', true),
+  ('00000000-0000-0000-0000-00000000000c', '00000000-0000-0000-0000-00000000000c', 'test/model', false);
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'a subadmin sees their team''s generations only' as check,
+       count(*) = 1 and bool_and(team_id = '00000000-0000-0000-0000-00000000000a') as expect_true
+  from resume_generation;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+select 'a bidder sees none' as check, count(*) = 0 as expect_true from resume_generation;
+do $$
+begin
+  insert into resume_generation (team_id, created_by, model, ok)
+  values (app_team_id(), auth.uid(), 'forged', true);
+  raise exception 'FAIL: a browser session wrote to the generation log';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: the generation log is written by the server only';
+end $$;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select 'the super admin sees every team''s' as check, count(*) >= 3 as expect_true
+  from resume_generation;
 reset role;

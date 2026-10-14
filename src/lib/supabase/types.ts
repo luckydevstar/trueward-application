@@ -150,6 +150,33 @@ export type ApplicationRow = Owned &
     archived_at: string | null;
   };
 
+/** The one row of resume-generation settings — see 01_tables.sql. */
+export type GenerationSettingRow = {
+  id: boolean;
+  system_prompt: string;
+  /** An OpenRouter model id. */
+  model: string;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+/** One generation, written by the server for the per-model averages. */
+export type ResumeGenerationRow = {
+  id: string;
+  profile_id: string | null;
+  team_id: string;
+  created_by: string | null;
+  model: string;
+  attempts: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cost_usd: number | null;
+  latency_ms: number | null;
+  ok: boolean;
+  error: string | null;
+  created_at: string;
+};
+
 /**
  * `Insert` drops the database-defaulted columns; `Update` makes everything
  * optional. Written as helpers rather than spelled out per table so a column
@@ -188,6 +215,8 @@ export type Database = {
       resume_document: Table<ResumeDocumentRow>;
       blocked_company: Table<BlockedCompanyRow>;
       application: Table<ApplicationRow>;
+      generation_setting: Table<GenerationSettingRow>;
+      resume_generation: Table<ResumeGenerationRow>;
     };
     Views: {
       /**

@@ -2,8 +2,10 @@
 
 import {
   DownloadOutlined,
+  RobotOutlined,
   SaveOutlined,
   ThunderboltOutlined,
+  UndoOutlined,
 } from "@ant-design/icons";
 import {
   Alert,
@@ -23,8 +25,9 @@ import {
   Typography,
 } from "antd";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { generateResumeContent, type GenerateResult } from "@/app/dashboard/resumes/actions";
 import {
   DEFAULT_STYLE,
   ResumeStyleToolbar,
@@ -79,7 +82,12 @@ type Props = {
   canEditAny: boolean;
   /** A super admin reviews: they may render and download, never save. */
   readOnly: boolean;
+  /** Whether Generate works, and with which model — see the page. */
+  generation: { enabled: boolean; model: string | null };
 };
+
+/** The last generation's receipt, shown under the button. */
+type Run = Extract<GenerateResult, { ok: true }>;
 
 /**
  * Both panels are pinned to the viewport rather than growing with content.
@@ -94,6 +102,8 @@ const PANEL_HEIGHT = "calc(100dvh - 236px)";
 type Preset = { template: string; style: ResumeStyle };
 
 const STYLE_STORAGE_KEY = "tw.resume.style";
+/** The additional prompt is usually reused across resumes, so it's remembered. */
+const EXTRA_PROMPT_KEY = "tw.resume.additionalPrompt";
 
 const DEFAULT_PRESET: Preset = { template: "classic", style: DEFAULT_STYLE };
 
@@ -130,9 +140,25 @@ export function ResumeBuilder({
   accents,
   canEditAny,
   readOnly,
+  generation,
 }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
+
+  /*
+   * Generation inputs. The job description is per resume and deliberately
+   * not remembered; the additional prompt — "keep it to one page", "lean on
+   * the fintech work" — tends to carry over, so it is.
+   */
+  const [jobDescription, setJobDescription] = useState("");
+  const [additionalPrompt, setAdditionalPrompt] = usePersistentState<string>(
+    EXTRA_PROMPT_KEY,
+    "",
+  );
+  const [generating, setGenerating] = useState(false);
+  const [lastRun, setLastRun] = useState<Run | null>(null);
+  /** What the editor held before the last generation replaced it — for Undo. */
+  const [beforeGeneration, setBeforeGeneration] = useState<string | null>(null);
 
   const options = useMemo(() => [...profiles, EXAMPLE_OPTION], [profiles]);
 
@@ -218,6 +244,8 @@ export function ResumeBuilder({
 
   const pickProfile = (id: string) => {
     setProfileId(id);
+    setLastRun(null);
+    setBeforeGeneration(null);
     // Documents belong to one profile; keeping a selection across a switch
     // would show content whose employmentIds can't resolve.
     setDocumentId("");
@@ -502,6 +530,58 @@ export function ResumeBuilder({
     );
   };
 
+  /**
+   * Asks the model for this profile's content, for this job.
+   *
+   * The answer replaces the editor's JSON — kept for Undo — and then goes
+   * through exactly the same validation, preview and Save as pasted JSON. A
+   * reply that still fails validation after the server's one repair attempt
+   * is put in the editor anyway, where the errors are shown and can be fixed
+   * by hand, rather than thrown away along with what it cost.
+   */
+  const generate = async () => {
+    if (!selectedProfile?.profile || isExample) return;
+    setGenerating(true);
+    const result = await generateResumeContent({
+      profileId,
+      jobDescription,
+      additionalPrompt,
+    });
+    setGenerating(false);
+
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+
+    setBeforeGeneration(json);
+    setJson(result.content);
+    setLastRun(result);
+    if (!title.trim()) {
+      try {
+        const target = JSON.parse(result.content)?.targetTitle;
+        if (typeof target === "string" && target.trim()) setTitle(target.trim());
+      } catch {
+        // A title is a convenience; the content is what matters.
+      }
+    }
+    if (result.valid) message.success("Generated. Review it, then save or download.");
+    else message.warning("Generated, but it needs a fix — see the errors under the content.");
+  };
+
+  const undoGeneration = () => {
+    if (beforeGeneration === null) return;
+    setJson(beforeGeneration);
+    setBeforeGeneration(null);
+    setLastRun(null);
+  };
+
+  const canGenerate =
+    generation.enabled &&
+    !isExample &&
+    Boolean(selectedProfile?.profile) &&
+    jobDescription.trim().length > 0;
+
   return (
     <>
       <Space
@@ -512,12 +592,12 @@ export function ResumeBuilder({
         }}
       >
         <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
+          <Typography.Title level={3} style={{ margin: 0, letterSpacing: "-0.02em" }}>
             Resume builder
           </Typography.Title>
           <Typography.Text type="secondary">
-            Identity comes from the profile. Paste tailored content from your
-            model, style it, download.
+            Identity comes from the profile. Add the job, generate the tailored
+            content — or paste your own — then style and download.
           </Typography.Text>
         </div>
         <Space>
@@ -565,15 +645,17 @@ export function ResumeBuilder({
       <Row gutter={16}>
         <Col xs={24} lg={10}>
           <Card
-            title="Content"
-            size="small"
+            variant="borderless"
             styles={{
-              body: { height: PANEL_HEIGHT, overflowY: "auto" },
+              body: { height: PANEL_HEIGHT, overflowY: "auto", padding: 20 },
             }}
           >
             <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+              <Step number={1} title="Candidate" />
               <div>
-                <Typography.Text type="secondary">Profile</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Profile
+                </Typography.Text>
                 <Select
                   style={{ width: "100%" }}
                   value={profileId || undefined}
@@ -612,7 +694,9 @@ export function ResumeBuilder({
               {!isExample && (
                 <>
                   <div>
-                    <Typography.Text type="secondary">Saved resumes</Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Saved resumes
+                    </Typography.Text>
                     <Select
                       style={{ width: "100%" }}
                       value={documentId || undefined}
@@ -635,13 +719,95 @@ export function ResumeBuilder({
                 </>
               )}
 
+              <Step number={2} title="Job" />
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Job description
+                </Typography.Text>
+                <Input.TextArea
+                  value={jobDescription}
+                  onChange={(e) => setJobDescription(e.target.value)}
+                  autoSize={{ minRows: 5, maxRows: 14 }}
+                  placeholder="Paste the job posting — title, responsibilities, requirements."
+                  disabled={isExample}
+                />
+              </div>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Additional prompt <span style={{ opacity: 0.7 }}>— optional, remembered</span>
+                </Typography.Text>
+                <Input.TextArea
+                  value={additionalPrompt}
+                  onChange={(e) => setAdditionalPrompt(e.target.value)}
+                  autoSize={{ minRows: 2, maxRows: 6 }}
+                  placeholder="Anything extra for this resume, e.g. “Keep it to one page. Lead with the payments work.”"
+                  disabled={isExample}
+                />
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <Tooltip
+                  title={
+                    !generation.enabled
+                      ? "Generation is off — the super admin needs to set the OpenRouter key."
+                      : isExample
+                        ? "Pick a real candidate to generate for."
+                        : !jobDescription.trim()
+                          ? "Paste the job description first."
+                          : json.trim()
+                            ? "Replaces the content below. Undo puts it back."
+                            : undefined
+                  }
+                >
+                  <Button
+                    type="primary"
+                    icon={<RobotOutlined />}
+                    loading={generating}
+                    disabled={!canGenerate}
+                    onClick={generate}
+                  >
+                    {generating ? "Generating…" : "Generate"}
+                  </Button>
+                </Tooltip>
+                <Space size={6}>
+                  {beforeGeneration !== null && !generating && (
+                    <Button size="small" type="text" icon={<UndoOutlined />} onClick={undoGeneration}>
+                      Undo
+                    </Button>
+                  )}
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {lastRun
+                      ? [
+                          lastRun.model,
+                          lastRun.tokens ? `${lastRun.tokens.toLocaleString()} tokens` : null,
+                          lastRun.costUsd !== null ? `$${lastRun.costUsd.toFixed(4)}` : null,
+                          `${(lastRun.latencyMs / 1000).toFixed(1)}s`,
+                          lastRun.attempts > 1 ? "1 repair" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : generation.model
+                        ? `Model: ${generation.model}`
+                        : null}
+                  </Typography.Text>
+                </Space>
+              </div>
+
+              <Step number={3} title="Content" />
               {employmentIds.length > 0 && (
                 <Alert
                   type="info"
                   title={
                     <Space size={4} wrap>
                       <Typography.Text style={{ fontSize: 12 }}>
-                        Your model must use these employment ids:
+                        Pasted content must use these employment ids:
                       </Typography.Text>
                       {employmentIds.map((id) => (
                         <Tag key={id} style={{ margin: 0 }}>
@@ -661,7 +827,7 @@ export function ResumeBuilder({
                 }}
               >
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Tailored content
+                  Tailored content (JSON)
                 </Typography.Text>
                 <Space size={4}>
                   <Tooltip title="Fill in the skeleton — employment ids in the right order, ready to edit or paste over">
@@ -698,7 +864,7 @@ export function ResumeBuilder({
                 <Alert
                   type="info"
                   showIcon
-                  title="Paste your model's content JSON, or press “Start from profile”."
+                  title="Generate from the job above, paste content JSON, or press “Start from profile”."
                   description="Until then the preview shows what the profile already knows — identity, employers and dates."
                 />
               )}
@@ -790,7 +956,7 @@ export function ResumeBuilder({
         <Col xs={24} lg={14}>
           <Card
             title="Preview"
-            size="small"
+            variant="borderless"
             extra={
               parsed.kind === "ok" && (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -804,7 +970,8 @@ export function ResumeBuilder({
                 height: PANEL_HEIGHT,
                 overflowY: "auto",
                 // The sheet reads as paper against the dashboard's grey.
-                background: "#fafafa",
+                background: "#f1f4f9",
+                padding: 16,
               },
             }}
           >
@@ -940,3 +1107,33 @@ function ProfileOnlyPreview({
   );
 }
 
+/**
+ * A numbered section heading in the left panel: the page reads as three steps
+ * — who, for what job, with what content — which is the order they are done in.
+ */
+function Step({ number, title }: { number: number; title: string }): ReactNode {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: number > 1 ? 8 : 0 }}>
+      <span
+        aria-hidden
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 999,
+          display: "grid",
+          placeItems: "center",
+          fontSize: 12,
+          fontWeight: 600,
+          color: "#4f46e5",
+          background: "#eef0ff",
+        }}
+      >
+        {number}
+      </span>
+      <Typography.Text strong style={{ fontSize: 14 }}>
+        {title}
+      </Typography.Text>
+      <div style={{ flex: 1, height: 1, background: "#edf0f5" }} />
+    </div>
+  );
+}

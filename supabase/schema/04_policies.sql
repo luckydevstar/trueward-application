@@ -46,6 +46,8 @@ alter table resume_document    enable row level security;
 alter table blocked_company    enable row level security;
 alter table application        enable row level security;
 alter table ssn_access_log     enable row level security;
+alter table generation_setting enable row level security;
+alter table resume_generation  enable row level security;
 
 -- --- app_user -------------------------------------------------------------
 
@@ -283,6 +285,29 @@ create policy ssn_access_log_insert on ssn_access_log
   for insert with check (
     in_own_team(team_id) and is_subadmin() and actor_id = auth.uid()
   );
+
+-- --- generation_setting ---------------------------------------------------
+-- The super admin's to read and change. Nobody else reads the prompt: the
+-- builder's server action fetches it with the service role after checking the
+-- caller may use the profile, so the prompt never travels to a browser.
+-- No insert or delete policy — the one row is created by part 1.
+
+drop policy if exists generation_setting_select on generation_setting;
+create policy generation_setting_select on generation_setting
+  for select using (is_super_admin());
+
+drop policy if exists generation_setting_update on generation_setting;
+create policy generation_setting_update on generation_setting
+  for update using (is_super_admin())
+  with check (is_super_admin() and updated_by = auth.uid());
+
+-- --- resume_generation ----------------------------------------------------
+-- Read-only from the app: subadmins see their team's, the super admin every
+-- team's. Written by the server with the service role, so no insert policy.
+
+drop policy if exists resume_generation_select on resume_generation;
+create policy resume_generation_select on resume_generation
+  for select using (in_team(team_id) and is_admin());
 
 -- ===========================================================================
 -- Retired with the resume_builder role. Dropped here rather than in part 2

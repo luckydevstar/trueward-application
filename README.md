@@ -487,6 +487,42 @@ prints the live grants.
 > `maskSsn` in `src/lib/profile.ts` and a last-four column would remove the risk
 > entirely.
 
+## Generating resumes
+
+The resume builder writes a resume's content itself: pick the candidate, paste
+the job description, optionally add a prompt for this one, and press Generate.
+The answer lands in the same JSON editor pasted content always used, so
+validation, the live preview, Save and Download are unchanged — and pasting
+your own still works.
+
+- **Through OpenRouter**, so the model is a setting, not a dependency. Set
+  `OPENROUTER_API_KEY` (server-only) in the deployment; without it the button
+  is off and nothing else changes.
+- **The model and the system prompt** are the super admin's, on the
+  **Generation** page. Saving takes effect on the next generation; no deploy.
+  Left empty, the prompt falls back to a built-in default
+  (`src/lib/ai/resume-prompt.ts`).
+- **The output contract is fixed.** After the editable prompt, a fixed section
+  describes the resume's shape, and the request uses strict structured output
+  with the profile's employment ids as an enum — the model cannot answer with
+  an employer that doesn't resolve. The answer is then validated against
+  `resumeDocumentSchema`; if it fails (ordering, a multi-paragraph summary),
+  the server shows the model its errors once and asks again.
+- **What is sent**: the profile's employments and education, the job
+  description and the additional prompt. Not the candidate's name, email,
+  phone or address — the model writes positioning, and identity is joined
+  from the profile at render time.
+- **Every generation is logged** (`resume_generation`): model, attempts,
+  tokens, OpenRouter's reported cost, time, and whether it validated. The
+  Generation page averages these per model over 30 days, with the projected
+  cost at 5,000 resumes a month, so a model can be chosen on evidence.
+- **A per-person cap** (`GENERATION_HOURLY_LIMIT`, default 60 an hour) stops a
+  runaway loop or a borrowed session spending the balance.
+
+The system prompt never reaches a browser: the generate action reads it with
+the service role after checking, through the caller's own client, that they
+may use the profile.
+
 ## The resume document
 
 `src/lib/document/schema.ts` splits a resume along the line that matters:

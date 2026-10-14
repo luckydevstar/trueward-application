@@ -2,6 +2,7 @@
 
 import {
   BlockOutlined,
+  ExperimentOutlined,
   FileTextOutlined,
   IdcardOutlined,
   LogoutOutlined,
@@ -61,6 +62,16 @@ export function DashboardShell({ name, email, role, children }: Props) {
             key: "/dashboard/users",
             icon: <TeamOutlined />,
             label: <Link href="/dashboard/users">Users</Link>,
+          },
+        ]
+      : []),
+    // The model and system prompt the resume builder uses: platform settings.
+    ...(role === "super_admin"
+      ? [
+          {
+            key: "/dashboard/generation",
+            icon: <ExperimentOutlined />,
+            label: <Link href="/dashboard/generation">Generation</Link>,
           },
         ]
       : []),

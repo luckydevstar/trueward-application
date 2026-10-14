@@ -340,6 +340,59 @@ create table if not exists ssn_access_log (
 create index if not exists ssn_access_log_profile_idx
   on ssn_access_log (profile_id, revealed_at desc);
 
+-- --------------------------------------------------------------------------
+-- Resume generation — settings and the log
+--
+-- The resume builder can ask a model (through OpenRouter) to write a
+-- resume's content. Which model, and the system prompt it works from, are
+-- platform settings rather than code: they are tuned by trying them, and a
+-- deploy per attempt would make that slow. One row, enforced by the key.
+-- --------------------------------------------------------------------------
+
+create table if not exists generation_setting (
+  -- Always true, so the table holds exactly one row.
+  id            boolean primary key default true check (id),
+  system_prompt text not null default '',
+  -- An OpenRouter model id, e.g. "anthropic/claude-sonnet-5.5". A starting
+  -- point to benchmark from, not a recommendation.
+  model         text not null default 'anthropic/claude-sonnet-5.5',
+  updated_by    uuid references app_user (id) on delete set null,
+  updated_at    timestamptz not null default now()
+);
+
+insert into generation_setting (id) values (true) on conflict (id) do nothing;
+
+/*
+ * One row per generation, successful or not.
+ *
+ * Kept so model choice can be decided on evidence: the settings page averages
+ * cost, tokens, time and how often the output validated, per model. Written by
+ * the server alone (service role, after its own checks), so a client cannot
+ * pad or erase it.
+ */
+create table if not exists resume_generation (
+  id                uuid primary key default gen_random_uuid(),
+  profile_id        uuid references candidate_profile (id) on delete set null,
+  team_id           uuid not null references app_user (id) on delete cascade,
+  created_by        uuid references app_user (id) on delete set null,
+  model             text not null,
+  -- Calls made, counting a repair attempt after output that didn't validate.
+  attempts          integer not null default 1,
+  prompt_tokens     integer,
+  completion_tokens integer,
+  -- In US dollars, as OpenRouter reports it. Null when it didn't say.
+  cost_usd          numeric(12, 6),
+  latency_ms        integer,
+  ok                boolean not null,
+  error             text,
+  created_at        timestamptz not null default now()
+);
+
+create index if not exists resume_generation_created_idx
+  on resume_generation (created_at desc);
+create index if not exists resume_generation_team_idx
+  on resume_generation (team_id, created_at desc);
+
 -- ===========================================================================
 -- Retiring resume_builder
 --
