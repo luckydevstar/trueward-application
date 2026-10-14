@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 
 import { ProfileDetail } from "@/components/profile-detail";
 import { requireActor } from "@/lib/actor";
-import { canEditProfile, canViewProfile } from "@/lib/profile-access";
+import { canEditProfile, canHandleSsn, canViewProfile } from "@/lib/profile-access";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function ProfileDetailPage({
@@ -65,6 +65,7 @@ export default async function ProfileDetailPage({
     <ProfileDetail
       profileId={row.id}
       canEdit={canEditProfile(actor, profile)}
+      canSeeSsn={canHandleSsn(actor, profile)}
       // The ciphertext stops here: only the boolean crosses to the client.
       row={{ ...row, has_ssn: profile.ssn_encrypted !== null }}
       attachments={attachments ?? []}

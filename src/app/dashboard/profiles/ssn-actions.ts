@@ -1,7 +1,7 @@
 "use server";
 
 import { requireActor } from "@/lib/actor";
-import { canEditProfile } from "@/lib/profile-access";
+import { canHandleSsn } from "@/lib/profile-access";
 import { managesTeam } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -62,7 +62,7 @@ export async function revealSsn(profileId: string): Promise<SsnResult> {
     .eq("id", profileId)
     .maybeSingle();
 
-  if (!visible || !canEditProfile(actor, visible)) {
+  if (!visible || !canHandleSsn(actor, visible)) {
     return { ok: false, error: "Profile not found." };
   }
 
@@ -130,7 +130,7 @@ export async function setSsn(
     .eq("id", profileId)
     .maybeSingle();
 
-  if (!visible || !canEditProfile(actor, visible)) {
+  if (!visible || !canHandleSsn(actor, visible)) {
     return { ok: false, error: "Profile not found." };
   }
 

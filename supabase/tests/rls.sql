@@ -276,7 +276,7 @@ select 'super sees both teams' as check,
 reset role;
 
 \echo ''
-\echo '=== 8a. ...and changes none of them ==='
+\echo '=== 8a. ...and changes none of their records, except profiles ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-00000000005a';
 
@@ -311,15 +311,48 @@ exception
     raise notice 'PASS: super admin cannot create profiles';
 end $$;
 
+-- Profiles are the exception: the super admin corrects and removes them in
+-- any team.
 update candidate_profile set full_name = 'Rewritten'
  where id = '00000000-0000-0000-0000-0000000000f0';
-select 'super cannot edit a profile' as check,
-       full_name = 'First Candidate' as expect_true
+select 'super can edit any team''s profile' as check,
+       full_name = 'Rewritten' as expect_true
   from candidate_profile where id = '00000000-0000-0000-0000-0000000000f0';
+update candidate_profile set full_name = 'First Candidate'
+ where id = '00000000-0000-0000-0000-0000000000f0';
 
-delete from candidate_profile where id = '00000000-0000-0000-0000-0000000000f0';
-select 'super cannot delete a profile' as check, count(*) = 1 as expect_true
-  from candidate_profile where id = '00000000-0000-0000-0000-0000000000f0';
+-- ...but not move one by rewriting team_id: that would leave its
+-- applications behind, and the cooldown blind.
+do $$
+begin
+  update candidate_profile set team_id = '00000000-0000-0000-0000-00000000000c'
+   where id = '00000000-0000-0000-0000-0000000000f0';
+  raise exception 'FAIL: a profile was moved without its history';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: team_id only changes through the hand-over';
+end $$;
+
+insert into profile_attachment (id, profile_id, label, file_key, file_url, team_id, created_by)
+values ('00000000-0000-0000-0000-0000000005a1', '00000000-0000-0000-0000-0000000000f0',
+        'Reviewed', 'key-s', 'https://files.example.com/s',
+        '00000000-0000-0000-0000-00000000000a', auth.uid());
+select 'super can attach a file to any profile' as check, count(*) = 1 as expect_true
+  from profile_attachment where id = '00000000-0000-0000-0000-0000000005a1';
+delete from profile_attachment where id = '00000000-0000-0000-0000-0000000005a1';
+select 'and remove it' as check, count(*) = 0 as expect_true
+  from profile_attachment where id = '00000000-0000-0000-0000-0000000005a1';
+reset role;
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000c';
+insert into candidate_profile (id, full_name, profile, team_id, created_by)
+values ('00000000-0000-0000-0000-0000000000fe', 'Short-lived', '{}'::jsonb,
+        app_team_id(), auth.uid());
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+delete from candidate_profile where id = '00000000-0000-0000-0000-0000000000fe';
+select 'super can delete any team''s profile' as check, count(*) = 0 as expect_true
+  from candidate_profile where id = '00000000-0000-0000-0000-0000000000fe';
 
 do $$
 begin
@@ -370,6 +403,15 @@ select 'subadmin sees no other team''s bidder' as check, count(*) = 0 as expect_
   from app_user where id = '00000000-0000-0000-0000-0000000000b3';
 select 'subadmin sees its own bidders' as check, count(*) = 2 as expect_true
   from app_user where created_by_id = auth.uid();
+do $$
+begin
+  update candidate_profile set team_id = '00000000-0000-0000-0000-00000000000c'
+   where id = '00000000-0000-0000-0000-0000000000f0';
+  raise exception 'FAIL: a subadmin moved a profile out of their team';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: a subadmin cannot move a profile by update';
+end $$;
 reset role;
 
 \echo ''

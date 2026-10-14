@@ -32,8 +32,10 @@
 -- Who writes what:
 --   subadmin  everything in their team
 --   bidder    applications and resumes, for profiles assigned to them only
---   super     nothing directly; account management goes through server
---             actions, and team moves through SECURITY DEFINER functions
+--   super     profiles and their attachments in any team (update and delete,
+--             not create — a new profile needs a team, and they have none);
+--             account management goes through server actions, and moves
+--             through SECURITY DEFINER functions
 -- ===========================================================================
 
 alter table app_user           enable row level security;
@@ -79,9 +81,15 @@ drop policy if exists candidate_profile_select on candidate_profile;
 create policy candidate_profile_select on candidate_profile
   for select using (in_team(team_id) and can_use_profile(id));
 
--- Profiles are the subadmin's to create and keep. A bidder reads the ones
--- assigned to them and edits none — they write resume content against a
--- profile, never the person's identity.
+-- Profiles are the subadmin's to create and keep, and the super admin may
+-- correct or remove any of them. A bidder reads the ones assigned to them and
+-- edits none — they write resume content against a profile, never the
+-- person's identity.
+--
+-- The super admin's WITH CHECK admits any team, so moving a profile by
+-- rewriting team_id is stopped by a trigger instead (guard_profile_team() in
+-- part 2): a profile moved without its applications would leave the cooldown
+-- blind to where that candidate has been sent.
 drop policy if exists candidate_profile_insert on candidate_profile;
 create policy candidate_profile_insert on candidate_profile
   for insert with check (
@@ -90,12 +98,12 @@ create policy candidate_profile_insert on candidate_profile
 
 drop policy if exists candidate_profile_update on candidate_profile;
 create policy candidate_profile_update on candidate_profile
-  for update using (in_own_team(team_id) and is_subadmin())
-  with check (in_own_team(team_id));
+  for update using (is_super_admin() or (in_own_team(team_id) and is_subadmin()))
+  with check (is_super_admin() or in_own_team(team_id));
 
 drop policy if exists candidate_profile_delete on candidate_profile;
 create policy candidate_profile_delete on candidate_profile
-  for delete using (in_own_team(team_id) and is_subadmin());
+  for delete using (is_super_admin() or (in_own_team(team_id) and is_subadmin()));
 
 -- --- profile_assignment ---------------------------------------------------
 
@@ -132,7 +140,8 @@ create policy profile_assignment_delete on profile_assignment
 
 -- --- profile_attachment ---------------------------------------------------
 -- Part of the profile, so it follows the profile: readable by whoever may use
--- the profile, written only by the subadmin who keeps it.
+-- the profile, written by whoever may edit it — its subadmin, or the super
+-- admin.
 
 drop policy if exists profile_attachment_select on profile_attachment;
 create policy profile_attachment_select on profile_attachment
@@ -141,15 +150,14 @@ create policy profile_attachment_select on profile_attachment
 drop policy if exists profile_attachment_insert on profile_attachment;
 create policy profile_attachment_insert on profile_attachment
   for insert with check (
-    in_own_team(team_id)
-    and is_subadmin()
+    (is_super_admin() or (in_own_team(team_id) and is_subadmin()))
     and created_by = auth.uid()
     and profile_in_team(profile_id, team_id)
   );
 
 drop policy if exists profile_attachment_delete on profile_attachment;
 create policy profile_attachment_delete on profile_attachment
-  for delete using (in_own_team(team_id) and is_subadmin());
+  for delete using (is_super_admin() or (in_own_team(team_id) and is_subadmin()));
 
 -- --- resume_document ------------------------------------------------------
 -- Follows the profile: you may write a resume for a candidate you may work

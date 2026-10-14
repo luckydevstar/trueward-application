@@ -444,6 +444,10 @@ begin
       );
   end if;
 
+  -- Lets this transaction past guard_profile_team(). Transaction-local, so it
+  -- ends with this call.
+  perform set_config('app.moving_profile', 'on', true);
+
   -- Order matters only for readability; it is one transaction either way.
   update candidate_profile  set team_id = target_team where id = target_profile;
   update application        set team_id = target_team where profile_id = target_profile;
@@ -514,6 +518,8 @@ begin
       message = 'A team can only move from one subadmin to another.';
   end if;
 
+  perform set_config('app.moving_profile', 'on', true);
+
   -- The blocklist first: the merge has to happen before the unique index sees
   -- two rows for one company in one team.
   delete from blocked_company b
@@ -556,6 +562,40 @@ begin
   end if;
 end;
 $$;
+
+/**
+ * A profile changes team only through the two functions above.
+ *
+ * Both move the profile's applications, resumes and attachments with it, in
+ * one transaction. A plain `update candidate_profile set team_id = …` would
+ * move the profile alone, and the cooldown — which matches applications in
+ * the profile's team — would stop knowing where this candidate has already
+ * been sent. The super admin's update policy admits any team, so this is what
+ * holds that shut; for a subadmin, in_own_team() already does.
+ *
+ * The functions set `app.moving_profile` for their own transaction only. A
+ * client cannot set it: PostgREST runs nothing but exposed tables and
+ * functions, and set_config is in pg_catalog.
+ */
+create or replace function public.guard_profile_team()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.team_id is distinct from old.team_id
+     and current_setting('app.moving_profile', true) is distinct from 'on' then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'Move a profile with the hand-over, which takes its applications and resumes with it.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists candidate_profile_team_guard on candidate_profile;
+create trigger candidate_profile_team_guard
+  before update of team_id on candidate_profile
+  for each row execute function public.guard_profile_team();
 
 -- Reachable by a signed-in session, never by anon. The two moves decide inside
 -- who may call them; profile_in_team() is needed by policies that run as the

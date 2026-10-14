@@ -72,7 +72,7 @@ export async function updateProfile(
   const access = await editableProfile(profileId);
   if (!access) return fail("Profile not found.");
 
-  const { error } = await access.supabase
+  const { data, error } = await access.supabase
     .from("candidate_profile")
     .update({
       full_name: row.full_name,
@@ -89,9 +89,13 @@ export async function updateProfile(
       profile: row.profile,
     })
     .eq("id", access.profile.id)
-    .eq("team_id", access.profile.team_id);
+    .eq("team_id", access.profile.team_id)
+    // RLS refuses an update by matching nothing, which is not an error —
+    // without the returned row this would report "Saved." for a no-op.
+    .select("id");
 
-  return error ? fail(error.message) : ok();
+  if (error) return fail(error.message);
+  return data?.length ? ok() : fail("This profile can't be changed from your account.");
 }
 
 /** Deletes a profile only when it belongs to the server-side actor's scope. */
@@ -99,13 +103,15 @@ export async function deleteProfile(profileId: string): Promise<Result> {
   const access = await editableProfile(profileId);
   if (!access) return fail("Profile not found.");
 
-  const { error } = await access.supabase
+  const { data, error } = await access.supabase
     .from("candidate_profile")
     .delete()
     .eq("id", access.profile.id)
-    .eq("team_id", access.profile.team_id);
+    .eq("team_id", access.profile.team_id)
+    .select("id");
 
-  return error ? fail(error.message) : ok();
+  if (error) return fail(error.message);
+  return data?.length ? ok() : fail("This profile can't be deleted from your account.");
 }
 
 /**

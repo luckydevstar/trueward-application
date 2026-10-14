@@ -50,8 +50,13 @@ changes none, and the two helpers are how that is said once:
   stamp rows into any team. Pair it with the role that may write —
   `is_subadmin()` for anything a team manages.
 
-The super admin's only structural writes are `assign_profile_to_team()` and
-`transfer_team()`, `SECURITY DEFINER` functions with their own guard.
+The super admin's writes are deliberate exceptions: updating and deleting any
+team's profiles and attachments (their policies say `is_super_admin() or …`),
+and the two moves, `assign_profile_to_team()` and `transfer_team()`,
+`SECURITY DEFINER` functions with their own guard. A profile's `team_id`
+changes only inside those two — `guard_profile_team()` refuses a plain update
+— because a profile moved without its applications leaves the cooldown blind.
+SSNs stay with the team's subadmin (`canHandleSsn()`).
 
 **A `BEFORE` trigger runs before RLS.** `enforce_application_cooldown()` is
 `SECURITY DEFINER` and its refusal names the company, date and applicant, so

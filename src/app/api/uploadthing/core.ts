@@ -2,7 +2,7 @@ import { createUploadthing, type FileRouter } from "uploadthing/next";
 import { UploadThingError } from "uploadthing/server";
 
 import { requireActor } from "@/lib/actor";
-import { canEditProfiles, teamIdFor } from "@/lib/scope";
+import { canEditProfiles, seesAllTeams, teamIdFor } from "@/lib/scope";
 
 const f = createUploadthing();
 
@@ -33,16 +33,24 @@ const authorize = async () => {
 };
 
 /**
- * Profile attachments are part of the profile, which only its subadmin
- * changes. The row would be refused by RLS anyway; refusing the upload too
- * means a bidder cannot leave orphaned files in storage trying.
+ * Profile attachments are part of the profile, which its subadmin — or the
+ * super admin, in any team — changes. The row would be refused by RLS anyway;
+ * refusing the upload too means a bidder cannot leave orphaned files in
+ * storage trying.
+ *
+ * Which profile is not known here (the browser writes the row afterwards), so
+ * this asks only whether the role edits profiles at all; the row's own policy
+ * and addProfileAttachments() check the particular one.
  */
 const authorizeProfileEdit = async () => {
   const actor = await requireActor();
   const teamId = teamIdFor(actor);
 
+  if (seesAllTeams(actor)) return { teamId: null, userId: actor.id };
   if (!teamId || !canEditProfiles(actor.role)) {
-    throw new UploadThingError("Only the team's subadmin can attach files to a profile.");
+    throw new UploadThingError(
+      "Only the team's subadmin or the super admin can attach files to a profile.",
+    );
   }
   return { teamId, userId: actor.id };
 };

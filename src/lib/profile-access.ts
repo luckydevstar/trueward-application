@@ -27,13 +27,27 @@ export function isInActorTeam(actor: Actor, profile: ProfileAccessRow): boolean 
 }
 
 /**
- * Whether an actor may change a profile: its own team's subadmin, and nobody
- * else. A bidder reads the profiles assigned to them; a super admin reviews.
+ * Whether an actor may change or delete a profile, and its attachments: its
+ * own team's subadmin, or the super admin, in any team. A bidder reads the
+ * profiles assigned to them.
+ *
+ * Creating one is narrower — see canEditProfiles() in scope.ts: a new profile
+ * needs a team, and the super admin has none.
  *
  * This is enforced by the profile server actions. It deliberately does not
  * trust an id, team id, or role sent by the browser.
  */
 export function canEditProfile(actor: Actor, profile: ProfileAccessRow): boolean {
+  if (actor.role === "super_admin") return true;
+  return managesTeam(actor.role) && teamIdFor(actor) === profile.team_id;
+}
+
+/**
+ * Whether an actor may set or reveal this profile's SSN: its own team's
+ * subadmin only. Narrower than editing on purpose — the super admin corrects
+ * profiles and audits the reveal log, but does not decrypt.
+ */
+export function canHandleSsn(actor: Actor, profile: ProfileAccessRow): boolean {
   return managesTeam(actor.role) && teamIdFor(actor) === profile.team_id;
 }
 

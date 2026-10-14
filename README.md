@@ -244,8 +244,8 @@ same perceived speed without that.
 
 Three roles, one per layer:
 
-- the **super admin** runs the platform: adds and manages subadmins, and
-  reviews every team's work without changing it
+- the **super admin** runs the platform: adds and manages subadmins, reviews
+  every team's work, and corrects, removes or re-homes any team's profiles
 - a **subadmin** runs one team: its candidate profiles, the bidders they add,
   and which bidder works which profile
 - a **bidder** works the profiles assigned to them — tracks applications and
@@ -259,7 +259,7 @@ Records belong to a *team*, identified by a subadmin's id:
 
 | Role | Reads | Writes | Manages accounts |
 | --- | --- | --- | --- |
-| `super_admin` | **every team's records** | nothing directly — moves profiles and whole teams between subadmins | subadmins: add, edit, reset password, remove |
+| `super_admin` | **every team's records** | any team's profiles and their attachments (edit, delete — not create); moves profiles and whole teams between subadmins | subadmins: add, edit, reset password, remove |
 | `subadmin` | everything in their own team | profiles, attachments, SSNs, assignments, blocklist, billing, any application or resume on the team | their own bidders |
 | `bidder` | profiles assigned to them, their applications, applications and resumes on those profiles | applications and resumes, **for assigned profiles only** | — |
 
@@ -286,7 +286,10 @@ $$;
 
 Every write policy starts `in_own_team(team_id)` instead — membership, with no
 super-admin branch — and names the role allowed to write, usually
-`is_subadmin()`. A written row must belong to exactly one team, and a super
+`is_subadmin()`. Profiles and their attachments are the one exception: their
+update and delete policies also admit `is_super_admin()`, and a trigger
+(`guard_profile_team()`) refuses any change of `team_id` outside the two move
+functions, so a profile can never travel without its applications. A written row must belong to exactly one team, and a super
 admin belongs to none; using `in_team()` in a `WITH CHECK` would let them stamp
 rows into any team. The two structural things a super admin does — handing a
 profile to another subadmin (`assign_profile_to_team()`) and moving a whole

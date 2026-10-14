@@ -28,9 +28,11 @@ export default async function ProfilesPage() {
     );
   }
 
-  // The subadmin keeps the team's profiles and routes them to bidders. A
-  // super admin sees the same columns read-only; a bidder sees only theirs.
-  const canEdit = canEditProfiles(actor.role);
+  // The subadmin keeps the team's profiles and routes them to bidders. The
+  // super admin corrects, deletes and re-homes any team's profiles but cannot
+  // create one — it would have no team. A bidder sees only theirs.
+  const canCreate = canEditProfiles(actor.role);
+  const canEdit = canCreate || seesAllTeams(actor);
   const canAssign = canAssignProfiles(actor.role);
   const teamId = teamIdFor(actor) ?? "";
   const supabase = await createClient();
@@ -136,6 +138,7 @@ export default async function ProfilesPage() {
 
   return (
     <ProfilesList
+      canCreate={canCreate}
       canEdit={canEdit}
       canAssign={canAssign}
       showAssignees={showsAssignments}

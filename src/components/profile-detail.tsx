@@ -52,6 +52,8 @@ type Attachment = {
 type Props = {
   profileId: string;
   canEdit: boolean;
+  /** Narrower than canEdit: the team's subadmin only, never the super admin. */
+  canSeeSsn: boolean;
   row: Parameters<typeof toFormValues>[0] & { has_ssn: boolean };
   attachments: Attachment[];
 };
@@ -59,6 +61,7 @@ type Props = {
 export function ProfileDetail({
   profileId,
   canEdit,
+  canSeeSsn,
   row,
   attachments,
 }: Props) {
@@ -224,7 +227,11 @@ export function ProfileDetail({
               <Descriptions.Item label="SSN">
                 {/* Never the value, only whether one exists. Revealing is a
                     logged action inside the editor. */}
-                {row.has_ssn ? "On file — reveal from Edit profile" : "—"}
+                {row.has_ssn
+                  ? canSeeSsn
+                    ? "On file — reveal from Edit profile"
+                    : "On file"
+                  : "—"}
               </Descriptions.Item>
             </Descriptions>
           </Card>
@@ -382,7 +389,7 @@ export function ProfileDetail({
         open={open}
         busy={busy}
         profileId={profileId}
-        canSeeSsn={canEdit}
+        canSeeSsn={canSeeSsn}
         hasSsn={row.has_ssn}
         initialValues={values}
         onCancel={() => setOpen(false)}

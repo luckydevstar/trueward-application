@@ -57,6 +57,9 @@ export type ProfileRow = {
 };
 
 type Props = {
+  /** May create profiles — the team's subadmin. */
+  canCreate: boolean;
+  /** May delete them — the subadmin, or the super admin in any team. */
   canEdit: boolean;
   canAssign: boolean;
   /**
@@ -90,6 +93,7 @@ const DEFAULT_WIDTHS: Record<string, number> = {
 };
 
 export function ProfilesList({
+  canCreate,
   canEdit,
   canAssign,
   showAssignees = false,
@@ -397,7 +401,7 @@ export function ProfilesList({
               setPage(1);
             }}
           />
-          {canEdit && (
+          {canCreate && (
             <Button
               type="primary"
               icon={<PlusOutlined />}
@@ -440,9 +444,11 @@ export function ProfilesList({
           tableLayout="fixed"
           scroll={{ x: totalWidth }}
           locale={{
-            emptyText: canEdit
+            emptyText: canCreate
               ? "No profiles yet. Create one to start building resumes."
-              : "No profiles have been assigned to you yet.",
+              : canEdit
+                ? "No profiles yet."
+                : "No profiles have been assigned to you yet.",
           }}
         />
       </Card>
@@ -452,7 +458,7 @@ export function ProfilesList({
       <ProfileEditor
         open={open}
         busy={busy}
-        canSeeSsn={canEdit}
+        canSeeSsn={canCreate}
         onCancel={() => setOpen(false)}
         onSubmit={create}
       />
