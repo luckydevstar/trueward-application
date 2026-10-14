@@ -122,16 +122,17 @@ back. The previous one drifted immediately: template, header position and
 accent were wired to the PDF and silently did nothing on screen, so what you
 styled was not what you downloaded.
 
-## Generation goes through one action
+## Generation goes through one function
 
-`src/app/dashboard/resumes/actions.ts` is the only caller of OpenRouter. It
-reads the profile through the caller's client (so RLS decides), and the system
-prompt and log with the service role (the prompt is not the caller's to read,
-the log not theirs to write). Keep it that way: no client-side model calls, no
-prompt in a page payload, and nothing sent beyond what `buildMessages()` sends
-— employments, education, the job and the additional prompt, never contact
-details. The model only ever writes `content`, which is what keeps the split
-below meaningful.
+`generateContent()` in `src/lib/ai/generate.ts` is the only caller of
+OpenRouter, used by the builder's action and the model lab's route. Both read
+the profile through the caller's client (so RLS decides) and write the log
+with the service role (the log is not the caller's to write). The input is the
+person's: their base prompt and additional prompt, plus the profile's
+employments and education — never contact details. `buildMessages()` appends
+only the response contract. Keep it that way: no client-side model calls, and
+the model only ever writes `content`, which is what keeps the split below
+meaningful.
 
 ## The profile / content split
 

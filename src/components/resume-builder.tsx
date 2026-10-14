@@ -85,8 +85,11 @@ type Props = {
   canEditAny: boolean;
   /** A super admin reviews: they may render and download, never save. */
   readOnly: boolean;
-  /** Whether Generate works, and with which model — see the page. */
-  generation: { enabled: boolean; model: string | null };
+  /**
+   * Whether Generate works, with which model, and the saved resume base
+   * prompt that pre-fills the base-prompt field — see the page.
+   */
+  generation: { enabled: boolean; model: string | null; basePrompt: string };
 };
 
 /** The last generation's receipt, shown under the button. */
@@ -105,8 +108,12 @@ const PANEL_HEIGHT = "calc(100dvh - 236px)";
 type Preset = { template: string; style: ResumeStyle };
 
 const STYLE_STORAGE_KEY = "tw.resume.style";
-/** The additional prompt is usually reused across resumes, so it's remembered. */
-const EXTRA_PROMPT_KEY = "tw.resume.additionalPrompt";
+/**
+ * The resume base prompt as this person edited it. Empty means "the saved
+ * default", so an edit survives navigation and Reset goes back to whatever
+ * the super admin saved, including later changes to it.
+ */
+const BASE_PROMPT_KEY = "tw.resume.basePrompt";
 
 /**
  * Where the content comes from: generated here, or pasted from elsewhere.
@@ -158,15 +165,21 @@ export function ResumeBuilder({
   const { message } = App.useApp();
 
   /*
-   * Generation inputs. The job description is per resume and deliberately
-   * not remembered; the additional prompt — "keep it to one page", "lean on
-   * the fintech work" — tends to carry over, so it is.
+   * Generation inputs: the selected profile, the resume base prompt, and the
+   * additional prompt. The base prompt is reused across resumes, so an edit
+   * to it is remembered; the additional prompt carries the job description,
+   * which belongs to one resume, so it is not.
    */
-  const [jobDescription, setJobDescription] = useState("");
-  const [additionalPrompt, setAdditionalPrompt] = usePersistentState<string>(
-    EXTRA_PROMPT_KEY,
+  const [storedBasePrompt, setStoredBasePrompt] = usePersistentState<string>(
+    BASE_PROMPT_KEY,
     "",
   );
+  const basePrompt = storedBasePrompt || generation.basePrompt;
+  const basePromptEdited = Boolean(storedBasePrompt) && storedBasePrompt !== generation.basePrompt;
+  const setBasePrompt = (value: string) =>
+    // Typing it back to the saved text returns to following the saved one.
+    setStoredBasePrompt(value === generation.basePrompt ? "" : value);
+  const [additionalPrompt, setAdditionalPrompt] = useState("");
   const [source, setSource] = usePersistentState<Source>(SOURCE_KEY, "ai");
   const [generating, setGenerating] = useState(false);
   const [lastRun, setLastRun] = useState<Run | null>(null);
@@ -557,7 +570,7 @@ export function ResumeBuilder({
     setGenerating(true);
     const result = await generateResumeContent({
       profileId,
-      jobDescription,
+      basePrompt,
       additionalPrompt,
     });
     setGenerating(false);
@@ -593,7 +606,8 @@ export function ResumeBuilder({
     generation.enabled &&
     !isExample &&
     Boolean(selectedProfile?.profile) &&
-    jobDescription.trim().length > 0;
+    basePrompt.trim().length > 0 &&
+    additionalPrompt.trim().length > 0;
 
   return (
     <>
@@ -767,28 +781,67 @@ export function ResumeBuilder({
                       description="The super admin needs to add the OpenRouter key. Until then, use Paste JSON."
                     />
                   )}
-                  <div>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Job description
-                    </Typography.Text>
-                    <Input.TextArea
-                      value={jobDescription}
-                      onChange={(e) => setJobDescription(e.target.value)}
-                      autoSize={{ minRows: 6, maxRows: 16 }}
-                      placeholder="Paste the job posting — title, responsibilities, requirements."
-                      disabled={isExample}
-                    />
-                  </div>
+                  {/*
+                    The base prompt is long and reused, so it stays folded once
+                    set; the additional prompt is the one that changes per
+                    resume, so it is always open.
+                  */}
+                  <Collapse
+                    size="small"
+                    defaultActiveKey={basePrompt.trim() ? [] : ["base"]}
+                    items={[
+                      {
+                        key: "base",
+                        label: (
+                          <Space size={6} wrap>
+                            <span>Resume base prompt</span>
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              {basePrompt.trim()
+                                ? `${basePrompt.trim().split(/\s+/).length.toLocaleString()} words`
+                                : "empty"}
+                            </Typography.Text>
+                            <Tag style={{ margin: 0 }}>
+                              {basePromptEdited ? "edited" : "saved default"}
+                            </Tag>
+                          </Space>
+                        ),
+                        extra: basePromptEdited ? (
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStoredBasePrompt("");
+                            }}
+                          >
+                            Reset
+                          </Button>
+                        ) : null,
+                        children: (
+                          <Input.TextArea
+                            value={basePrompt}
+                            onChange={(e) => setBasePrompt(e.target.value)}
+                            autoSize={{ minRows: 8, maxRows: 20 }}
+                            placeholder="Paste your resume base prompt — the instructions the model writes every resume by."
+                            disabled={isExample}
+                            style={{ fontSize: 12 }}
+                          />
+                        ),
+                      },
+                    ]}
+                  />
                   <div>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       Additional prompt{" "}
-                      <span style={{ opacity: 0.7 }}>— optional, remembered</span>
+                      <span style={{ opacity: 0.7 }}>
+                        — the job description, and anything else for this resume
+                      </span>
                     </Typography.Text>
                     <Input.TextArea
                       value={additionalPrompt}
                       onChange={(e) => setAdditionalPrompt(e.target.value)}
-                      autoSize={{ minRows: 2, maxRows: 6 }}
-                      placeholder="Anything extra for this resume, e.g. “Keep it to one page. Lead with the payments work.”"
+                      autoSize={{ minRows: 7, maxRows: 18 }}
+                      placeholder={"Paste the job posting here.\n\nAdd anything else for this resume, e.g. “Keep it to one page. Lead with the payments work.”"}
                       disabled={isExample}
                     />
                   </div>
@@ -798,9 +851,11 @@ export function ResumeBuilder({
                         ? "Generation is off — the super admin needs to set the OpenRouter key."
                         : isExample
                           ? "Pick a real candidate to generate for."
-                          : !jobDescription.trim()
-                            ? "Paste the job description first."
-                            : json.trim()
+                          : !basePrompt.trim()
+                            ? "Enter the resume base prompt first."
+                            : !additionalPrompt.trim()
+                              ? "Enter the additional prompt — the job description and anything else."
+                              : json.trim()
                               ? "Replaces the current content. Undo puts it back."
                               : undefined
                     }
@@ -942,7 +997,7 @@ export function ResumeBuilder({
                   showIcon
                   title={
                     source === "ai"
-                      ? "Paste the job description and press Generate resume."
+                      ? "Enter the additional prompt and press Generate resume."
                       : "Paste content JSON, or press “Start from profile”."
                   }
                   description="Until then the preview shows what the profile already knows — identity, employers and dates."

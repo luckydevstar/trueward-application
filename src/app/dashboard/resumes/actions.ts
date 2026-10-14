@@ -29,24 +29,26 @@ export type GenerateResult =
  */
 const HOURLY_LIMIT = Number(process.env.GENERATION_HOURLY_LIMIT ?? 60);
 
-const MAX_JOB_DESCRIPTION = 30_000;
-const MAX_ADDITIONAL_PROMPT = 4_000;
+const MAX_BASE_PROMPT = 50_000;
+const MAX_ADDITIONAL_PROMPT = 30_000;
 
 /**
- * Writes a resume's content for one profile and one job, with the platform's
- * model, reasoning setting and system prompt.
+ * Writes a resume's content from exactly what the person supplied: the
+ * selected profile, their resume base prompt, and their additional prompt
+ * (the job description and anything else). The app adds only the response
+ * contract, and the platform's model and reasoning setting.
  *
  * The profile is read through the caller's own client, so RLS decides whether
  * they may use it — a bidder gets only their assigned profiles, exactly as on
- * the page. Settings and the log go through the service role: the system
- * prompt is not the caller's to read, and the log is not theirs to write.
+ * the page. The settings and the log go through the service role: the log is
+ * not the caller's to write.
  *
  * Nothing is saved here. The content goes into the editor, where the person
  * reviews it, and Save is the same as for pasted JSON.
  */
 export async function generateResumeContent(input: {
   profileId: string;
-  jobDescription: string;
+  basePrompt: string;
   additionalPrompt: string;
 }): Promise<GenerateResult> {
   const actor = await requireActor();
@@ -55,14 +57,15 @@ export async function generateResumeContent(input: {
     return { ok: false, error: "Generation is off: OPENROUTER_API_KEY is not set." };
   }
 
-  const jobDescription = input.jobDescription.trim();
+  const basePrompt = input.basePrompt.trim();
   const additionalPrompt = input.additionalPrompt.trim();
-  if (!jobDescription) return { ok: false, error: "Paste the job description first." };
-  if (jobDescription.length > MAX_JOB_DESCRIPTION) {
-    return { ok: false, error: "That job description is too long — trim it to the posting itself." };
+  if (!basePrompt) return { ok: false, error: "Enter the resume base prompt first." };
+  if (!additionalPrompt) {
+    return { ok: false, error: "Enter the additional prompt — the job description and anything else." };
   }
+  if (basePrompt.length > MAX_BASE_PROMPT) return { ok: false, error: "The base prompt is too long." };
   if (additionalPrompt.length > MAX_ADDITIONAL_PROMPT) {
-    return { ok: false, error: "The additional prompt is too long." };
+    return { ok: false, error: "The additional prompt is too long — trim the job description to the posting itself." };
   }
 
   const supabase = await createClient();
@@ -96,7 +99,7 @@ export async function generateResumeContent(input: {
 
   const { data: settings } = await admin
     .from("generation_setting")
-    .select("system_prompt, model, reasoning")
+    .select("model, reasoning")
     .maybeSingle();
   const model = settings?.model?.trim() || "anthropic/claude-sonnet-5.5";
   const reasoning = settings?.reasoning ?? "lowest";
@@ -104,8 +107,7 @@ export async function generateResumeContent(input: {
   const outcome = await generateContent({
     profile: profile.data,
     model,
-    systemPrompt: settings?.system_prompt ?? "",
-    jobDescription,
+    systemPrompt: basePrompt,
     additionalPrompt,
     reasoning,
   });

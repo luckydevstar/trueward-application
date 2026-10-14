@@ -24,10 +24,10 @@ const body = z.object({
   runId: z.string().uuid(),
   model: z.string().regex(/^[a-z0-9][\w.-]*\/[\w.:-]+$/i),
   profileId: z.string().uuid(),
-  jobDescription: z.string().trim().min(1).max(30_000),
-  additionalPrompt: z.string().max(4_000).default(""),
-  /** Null means the saved system prompt; a string is a one-off custom prompt. */
-  systemPrompt: z.string().max(50_000).nullable(),
+  /** The resume base prompt, as entered for this test. */
+  basePrompt: z.string().trim().min(1, "Enter the resume base prompt.").max(50_000),
+  /** The job description and anything else, as entered. */
+  additionalPrompt: z.string().trim().min(1, "Enter the additional prompt.").max(30_000),
   reasoning: z.enum(["lowest", "low", "medium", "high", "default"]),
 });
 
@@ -65,20 +65,16 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminClient();
-  let systemPrompt = input.systemPrompt;
-  if (systemPrompt === null) {
-    const { data: settings } = await admin
-      .from("generation_setting")
-      .select("system_prompt")
-      .maybeSingle();
-    systemPrompt = settings?.system_prompt ?? "";
-  }
+  // Only to label the run: whether it used the saved prompt or an edit of it.
+  const { data: settings } = await admin
+    .from("generation_setting")
+    .select("system_prompt")
+    .maybeSingle();
 
   const outcome = await generateContent({
     profile: profile.data,
     model: input.model,
-    systemPrompt,
-    jobDescription: input.jobDescription,
+    systemPrompt: input.basePrompt,
     additionalPrompt: input.additionalPrompt,
     reasoning: input.reasoning,
   });
@@ -92,7 +88,7 @@ export async function POST(request: Request) {
     source: "lab",
     run_id: input.runId,
     reasoning: input.reasoning,
-    prompt_label: input.systemPrompt === null ? "saved" : "custom",
+    prompt_label: input.basePrompt === (settings?.system_prompt ?? "").trim() ? "saved" : "custom",
     output: outcome.content ?? null,
   });
 

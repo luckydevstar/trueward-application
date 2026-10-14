@@ -489,8 +489,11 @@ prints the live grants.
 
 ## Generating resumes
 
-The resume builder writes a resume's content itself: pick the candidate, paste
-the job description, optionally add a prompt for this one, and press Generate.
+The resume builder writes a resume's content itself. The input is exactly
+three things: the selected profile, the **resume base prompt** (the system
+prompt — pre-filled from the saved default, editable, remembered per browser)
+and the **additional prompt** (the job description and anything else for this
+resume). The app adds only the response contract.
 The answer lands in the same JSON editor pasted content always used, so
 validation, the live preview, Save and Download are unchanged — and pasting
 your own still works.
@@ -498,18 +501,18 @@ your own still works.
 - **Through OpenRouter**, so the model is a setting, not a dependency. Set
   `OPENROUTER_API_KEY` (server-only) in the deployment; without it the button
   is off and nothing else changes.
-- **The model and the system prompt** are the super admin's, on the
-  **Generation** page. Saving takes effect on the next generation; no deploy.
-  Left empty, the prompt falls back to a built-in default
-  (`src/lib/ai/resume-prompt.ts`).
-- **The output contract is fixed.** After the editable prompt, a fixed section
+- **The model, reasoning and default base prompt** are the super admin's, on
+  the **Generation** page. Saving takes effect on the next generation; no
+  deploy. A starter prompt (`src/lib/ai/resume-prompt.ts`) can be inserted
+  there, but nothing falls back to it silently.
+- **The response contract is the app's only addition.** After the base prompt, a fixed section
   describes the resume's shape, and the request uses strict structured output
   with the profile's employment ids as an enum — the model cannot answer with
   an employer that doesn't resolve. The answer is then validated against
   `resumeDocumentSchema`; if it fails (ordering, a multi-paragraph summary),
   the server shows the model its errors once and asks again.
-- **What is sent**: the profile's employments and education, the job
-  description and the additional prompt. Not the candidate's name, email,
+- **What is sent**: the base prompt, the profile's employments and education,
+  and the additional prompt. Not the candidate's name, email,
   phone or address — the model writes positioning, and identity is joined
   from the profile at render time.
 - **Every generation is logged** (`resume_generation`): model, attempts,
@@ -533,10 +536,10 @@ your own still works.
 ### Model lab
 
 `/dashboard/generation/lab`, from the Generation page — super admin only, and
-temporary scaffolding for choosing a model. Pick a candidate, paste a job,
-tick up to eight models and run them all at once on identical input; optionally
-with a one-off system prompt, to compare prompts without changing the saved
-one. Each model's answer is shown as a readable resume beside the others, with
+temporary scaffolding for choosing a model. Pick a candidate, edit the base
+prompt if you want to try a variant (the saved one is untouched), put the job
+in the additional prompt, tick up to eight models and run them all at once on
+identical input. Each model's answer is shown as a readable resume beside the others, with
 a PDF preview, and a table of tokens in, cached, out and reasoning, cost, time
 and validity. Every run is kept (`resume_generation`, `source = 'lab'`, with
 its output) and can be reopened; the page averages them per model and shows
@@ -548,9 +551,8 @@ models would otherwise queue. It shares `generateContent()` with the builder,
 so what it measures is what production does. Lab runs are excluded from the
 Generation page's averages and from the hourly cap.
 
-The system prompt never reaches a browser: the generate action reads it with
-the service role after checking, through the caller's own client, that they
-may use the profile.
+Both the builder's action and the lab's route read the profile through the
+caller's own client, so RLS decides who may generate for which candidate.
 
 ## The resume document
 

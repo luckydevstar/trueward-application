@@ -3,19 +3,22 @@ import { monthYearKey, type ResumeProfile } from "@/lib/document/schema";
 /**
  * What the model is told, and the shape it must answer in.
  *
- * Three parts, and only the first is editable:
+ * The person generating supplies the instructions; the app supplies only what
+ * the response needs:
  *
- *   1. the system prompt — the super admin's, from the Generation settings
- *      page; DEFAULT_SYSTEM_PROMPT below until one is saved
- *   2. the output contract — always appended, because the document schema is
- *      code, not a preference: a prompt edited to say "write a cover letter"
- *      must still come back as resume content the builder can render
- *   3. the facts — the profile's employments and education, the job
- *      description, and the per-resume additional prompt
+ *   system  their resume base prompt, then the output contract — appended
+ *           because the document schema is code, not a preference: whatever
+ *           the base prompt says, the answer must come back as resume content
+ *           the builder can render
+ *   user    the selected profile's employments and education, then their
+ *           additional prompt (the job description and anything else)
  *
  * The profile goes in without the candidate's name, email, phone or address.
  * The model writes positioning, not identity — identity is joined from the
  * profile at render time — so there is no reason to send it to a third party.
+ *
+ * DEFAULT_SYSTEM_PROMPT is only a starting point offered on the Generation
+ * page; nothing falls back to it silently.
  */
 
 export const DEFAULT_SYSTEM_PROMPT = `You are an expert resume writer who tailors a candidate's experience to one specific job.
@@ -48,9 +51,10 @@ const monthYearText = (value: { year: number; month: number | null } | null | un
   value ? (value.month ? `${value.year}-${String(value.month).padStart(2, "0")}` : `${value.year}`) : null;
 
 export function buildMessages(input: {
+  /** The resume base prompt, as entered. */
   systemPrompt: string;
   profile: ResumeProfile;
-  jobDescription: string;
+  /** The job description and anything else for this resume, as entered. */
   additionalPrompt: string;
 }) {
   const facts = {
@@ -70,20 +74,15 @@ export function buildMessages(input: {
     })),
   };
 
-  const system = `${input.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT}\n\n${OUTPUT_CONTRACT}`;
+  const system = `${input.systemPrompt.trim()}\n\n${OUTPUT_CONTRACT}`;
 
   const user = [
     "## Candidate profile",
-    "The facts you may draw on. Do not contradict them.",
     "```json",
     JSON.stringify(facts, null, 2),
     "```",
     "",
-    "## Job description",
-    input.jobDescription.trim(),
-    ...(input.additionalPrompt.trim()
-      ? ["", "## Additional instructions for this resume", input.additionalPrompt.trim()]
-      : []),
+    input.additionalPrompt.trim(),
   ].join("\n");
 
   return [

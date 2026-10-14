@@ -15,7 +15,6 @@ import {
   Empty,
   Input,
   Row,
-  Segmented,
   Select,
   Space,
   Spin,
@@ -134,13 +133,12 @@ export function ModelLab({
   const { message } = App.useApp();
 
   const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
-  const [jobDescription, setJobDescription] = useState("");
-  const [additionalPrompt, setAdditionalPrompt] = usePersistentState<string>(
-    "tw.lab.additionalPrompt",
-    "",
-  );
-  const [promptMode, setPromptMode] = useState<"saved" | "custom">("saved");
-  const [customPrompt, setCustomPrompt] = useState(savedPrompt);
+  // The three inputs, as in the builder: profile, base prompt, additional
+  // prompt. The base prompt starts as the saved one and can be edited for a
+  // test without changing what is saved.
+  const [basePrompt, setBasePrompt] = useState(savedPrompt);
+  const [additionalPrompt, setAdditionalPrompt] = useState("");
+  const basePromptEdited = basePrompt.trim() !== savedPrompt.trim();
   const [reasoning, setReasoning] = useState(savedReasoning);
   const [storedModels, setSelectedModels] = usePersistentState<string[]>(
     "tw.lab.models",
@@ -162,14 +160,13 @@ export function ModelLab({
   const estimate = (id: string) => {
     const m = byId.get(id);
     if (!m) return null;
-    const system = tokensOf(promptMode === "custom" ? customPrompt : savedPrompt) + 400;
-    const input = system + tokensOf(jobDescription) + tokensOf(additionalPrompt) + 300;
+    const input = tokensOf(basePrompt) + 400 + tokensOf(additionalPrompt) + 300;
     return (input * m.price.input + 1350 * m.price.output) / 1e6;
   };
   const totalEstimate = selectedModels.reduce((sum, id) => sum + (estimate(id) ?? 0), 0);
 
   const run = async () => {
-    if (!profileId || !jobDescription.trim() || !selectedModels.length) return;
+    if (!profileId || !basePrompt.trim() || !additionalPrompt.trim() || !selectedModels.length) return;
     const runId = crypto.randomUUID();
     setRunning(true);
     setViewing(runId);
@@ -185,9 +182,8 @@ export function ModelLab({
               runId,
               model,
               profileId,
-              jobDescription,
+              basePrompt,
               additionalPrompt,
-              systemPrompt: promptMode === "custom" ? customPrompt : null,
               reasoning,
             }),
           });
@@ -343,7 +339,7 @@ export function ModelLab({
 
       <Card variant="borderless" style={{ marginBottom: 16 }}>
         <Row gutter={[16, 12]}>
-          <Col xs={24} lg={8}>
+          <Col xs={24} lg={12}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>Profile</Typography.Text>
             <Select
               style={{ width: "100%" }}
@@ -355,52 +351,41 @@ export function ModelLab({
               placeholder="Choose a candidate"
             />
           </Col>
-          <Col xs={24} lg={8}>
+          <Col xs={24} lg={12}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>Reasoning</Typography.Text>
             <Select style={{ width: "100%" }} value={reasoning} onChange={setReasoning} options={REASONING_OPTIONS} />
           </Col>
-          <Col xs={24} lg={8}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>System prompt</Typography.Text>
-            <Segmented<"saved" | "custom">
-              block
-              value={promptMode}
-              onChange={setPromptMode}
-              options={[
-                { value: "saved", label: "Saved prompt" },
-                { value: "custom", label: "Custom for this test" },
-              ]}
-            />
-          </Col>
 
-          {promptMode === "custom" && (
-            <Col span={24}>
-              <Input.TextArea
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
-                autoSize={{ minRows: 6, maxRows: 18 }}
-                placeholder="A prompt to try without changing the saved one."
-              />
-            </Col>
-          )}
-
-          <Col xs={24} lg={14}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>Job description</Typography.Text>
+          <Col xs={24} lg={12}>
+            <Space style={{ width: "100%", justifyContent: "space-between" }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Resume base prompt{" "}
+                <Tag style={{ marginInlineStart: 4 }}>{basePromptEdited ? "edited for this test" : "saved"}</Tag>
+              </Typography.Text>
+              {basePromptEdited && (
+                <Button size="small" type="link" onClick={() => setBasePrompt(savedPrompt)}>
+                  Reset to saved
+                </Button>
+              )}
+            </Space>
             <Input.TextArea
-              value={jobDescription}
-              onChange={(e) => setJobDescription(e.target.value)}
-              autoSize={{ minRows: 6, maxRows: 14 }}
-              placeholder="Paste the job posting."
+              value={basePrompt}
+              onChange={(e) => setBasePrompt(e.target.value)}
+              autoSize={{ minRows: 10, maxRows: 22 }}
+              placeholder="Paste the resume base prompt."
+              style={{ fontSize: 12 }}
             />
           </Col>
-          <Col xs={24} lg={10}>
+          <Col xs={24} lg={12}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Additional prompt <span style={{ opacity: 0.7 }}>— optional</span>
+              Additional prompt{" "}
+              <span style={{ opacity: 0.7 }}>— the job description, and anything else</span>
             </Typography.Text>
             <Input.TextArea
               value={additionalPrompt}
               onChange={(e) => setAdditionalPrompt(e.target.value)}
-              autoSize={{ minRows: 6, maxRows: 14 }}
-              placeholder="Anything extra for this resume."
+              autoSize={{ minRows: 10, maxRows: 22 }}
+              placeholder="Paste the job posting, plus anything else for this resume."
             />
           </Col>
 
@@ -440,7 +425,13 @@ export function ModelLab({
                 size="large"
                 icon={<ExperimentOutlined />}
                 loading={running}
-                disabled={!configured || !profileId || !jobDescription.trim() || !selectedModels.length}
+                disabled={
+                  !configured ||
+                  !profileId ||
+                  !basePrompt.trim() ||
+                  !additionalPrompt.trim() ||
+                  !selectedModels.length
+                }
                 onClick={run}
               >
                 Run {selectedModels.length} model{selectedModels.length === 1 ? "" : "s"}

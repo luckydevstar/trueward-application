@@ -40,8 +40,9 @@ export type GenerationOutcome = {
 export async function generateContent(input: {
   profile: ResumeProfile;
   model: string;
+  /** The resume base prompt. */
   systemPrompt: string;
-  jobDescription: string;
+  /** The job description and anything else for this resume. */
   additionalPrompt: string;
   /** "default" | "lowest" | an effort name — see reasoningParam(). */
   reasoning: string;

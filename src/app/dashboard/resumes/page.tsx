@@ -19,22 +19,23 @@ export const metadata = { title: "Resume builder" };
 export const maxDuration = 60;
 
 /**
- * Whether the Generate button works, and with which model — shown beside it
- * so whoever generates knows what they're spending. Read with the service
- * role: the settings row is the super admin's, but the model name is not a
- * secret. The system prompt is not read here and never reaches the browser.
+ * Whether the Generate button works, with which model — shown beside it so
+ * whoever generates knows what they're spending — and the saved resume base
+ * prompt, which pre-fills the builder's base-prompt field. Read with the
+ * service role: the settings row is the super admin's to change, but the
+ * builder's users are meant to see and edit the prompt they generate with.
  */
 async function generation() {
-  if (!openRouterConfigured()) return { enabled: false, model: null };
+  if (!openRouterConfigured()) return { enabled: false, model: null, basePrompt: "" };
   try {
     const { data } = await createAdminClient()
       .from("generation_setting")
-      .select("model")
+      .select("model, system_prompt")
       .maybeSingle();
-    return { enabled: true, model: data?.model ?? null };
+    return { enabled: true, model: data?.model ?? null, basePrompt: data?.system_prompt ?? "" };
   } catch {
     // No service-role key: the action could not log or read settings either.
-    return { enabled: false, model: null };
+    return { enabled: false, model: null, basePrompt: "" };
   }
 }
 
@@ -61,7 +62,7 @@ export default async function ResumesPage() {
         accents={allowedAccents(actor.allowedAccents)}
         canEditAny={false}
         readOnly
-        generation={{ enabled: false, model: null }}
+        generation={{ enabled: false, model: null, basePrompt: "" }}
       />
     );
   }

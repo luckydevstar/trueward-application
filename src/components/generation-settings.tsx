@@ -141,8 +141,8 @@ export function GenerationSettings({
             Generation
           </Typography.Title>
           <Typography.Text type="secondary">
-            The model and system prompt the resume builder writes with, and how
-            each model has done.
+            The model, reasoning and default base prompt the resume builder
+            writes with, and how each model has done.
             {updatedAt ? ` Last changed ${formatDate(updatedAt)}.` : ""}
           </Typography.Text>
         </div>
@@ -241,10 +241,10 @@ export function GenerationSettings({
         <Col xs={24} xl={15}>
           <Card
             variant="borderless"
-            title="System prompt"
+            title="Default resume base prompt"
             extra={
               <Button size="small" type="text" onClick={() => setSystemPrompt(DEFAULT_SYSTEM_PROMPT)}>
-                Use the default
+                Insert the starter prompt
               </Button>
             }
           >
@@ -252,7 +252,7 @@ export function GenerationSettings({
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
               autoSize={{ minRows: 12, maxRows: 28 }}
-              placeholder="Paste your resume-generation prompt. Left empty, the built-in default is used."
+              placeholder="Paste your resume base prompt. It pre-fills the base-prompt field in the builder and the model lab, where it can be edited per person or per test."
               style={{ fontSize: 13 }}
             />
             <Collapse
@@ -262,14 +262,16 @@ export function GenerationSettings({
               items={[
                 {
                   key: "contract",
-                  label: "Always appended after your prompt",
+                  label: "What the app adds — the response format",
                   children: (
                     <>
                       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-                        The resume&apos;s shape is fixed by the builder, so this part
-                        isn&apos;t editable. The candidate&apos;s employments, the job
-                        description and the per-resume additional prompt follow as
-                        the user message. Names and contact details are not sent.
+                        The input is yours: the base prompt as the system message,
+                        then the selected profile&apos;s employments and education and
+                        the additional prompt as the user message. The app appends
+                        only this, so the answer comes back as resume JSON the builder
+                        can render, and passes the profile&apos;s employment ids as the
+                        only allowed values. Names and contact details are not sent.
                       </Typography.Paragraph>
                       <pre
                         style={{
