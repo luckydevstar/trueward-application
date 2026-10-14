@@ -1356,3 +1356,20 @@ set test.uid = '00000000-0000-0000-0000-00000000005a';
 select 'the super admin sees every team''s' as check, count(*) >= 3 as expect_true
   from resume_generation;
 reset role;
+
+\echo ''
+\echo '=== 18. reasoning defaults to the cheapest; lab runs keep their output ==='
+select 'reasoning defaults to lowest' as check,
+       (select column_default from information_schema.columns
+         where table_name = 'generation_setting' and column_name = 'reasoning') like '%lowest%' as expect_true;
+insert into resume_generation (team_id, created_by, model, ok, source, run_id, output)
+values ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000005a',
+        'test/model', true, 'lab', '00000000-0000-0000-0000-00000000aaaa', '{"targetTitle":"X"}');
+select 'a builder row defaults to source builder' as check, count(*) >= 1 as expect_true
+  from resume_generation where source = 'builder';
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select 'the super admin reads a lab run with its output' as check,
+       output->>'targetTitle' = 'X' as expect_true
+  from resume_generation where run_id = '00000000-0000-0000-0000-00000000aaaa';
+reset role;

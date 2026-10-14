@@ -1,6 +1,6 @@
 "use client";
 
-import { SaveOutlined } from "@ant-design/icons";
+import { ExperimentOutlined, SaveOutlined } from "@ant-design/icons";
 import {
   Alert,
   App,
@@ -12,10 +12,12 @@ import {
   Empty,
   Input,
   Row,
+  Select,
   Space,
   Table,
   Typography,
 } from "antd";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -37,6 +39,7 @@ export type ModelStats = {
 type Props = {
   systemPrompt: string;
   model: string;
+  reasoning: string;
   updatedAt: string | null;
   configured: boolean;
   /** Price per million tokens, from OpenRouter's model list. */
@@ -44,6 +47,14 @@ type Props = {
   stats: ModelStats[];
   days: number;
 };
+
+const REASONING_OPTIONS = [
+  { value: "lowest", label: "Lowest the model allows (recommended)" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "default", label: "Model default" },
+];
 
 /** The volume the projections are for — the target the user gave. */
 const MONTHLY_VOLUME = 5000;
@@ -61,6 +72,7 @@ const usd = (value: number | null, digits = 4) =>
 export function GenerationSettings({
   systemPrompt: savedPrompt,
   model: savedModel,
+  reasoning: savedReasoning,
   updatedAt,
   configured,
   models,
@@ -71,9 +83,11 @@ export function GenerationSettings({
   const { message } = App.useApp();
   const [systemPrompt, setSystemPrompt] = useState(savedPrompt);
   const [model, setModel] = useState(savedModel);
+  const [reasoning, setReasoning] = useState(savedReasoning);
   const [saving, setSaving] = useState(false);
 
-  const dirty = systemPrompt !== savedPrompt || model.trim() !== savedModel;
+  const dirty =
+    systemPrompt !== savedPrompt || model.trim() !== savedModel || reasoning !== savedReasoning;
   const pricing = models.find((m) => m.id === model.trim());
   const observed = stats.find((s) => s.model === model.trim());
 
@@ -106,7 +120,7 @@ export function GenerationSettings({
 
   const save = async () => {
     setSaving(true);
-    const result = await saveGenerationSettings({ systemPrompt, model });
+    const result = await saveGenerationSettings({ systemPrompt, model, reasoning });
     setSaving(false);
     if (!result.ok) {
       message.error(result.error);
@@ -132,15 +146,20 @@ export function GenerationSettings({
             {updatedAt ? ` Last changed ${formatDate(updatedAt)}.` : ""}
           </Typography.Text>
         </div>
-        <Button
-          type="primary"
-          icon={<SaveOutlined />}
-          loading={saving}
-          disabled={!dirty}
-          onClick={save}
-        >
-          Save
-        </Button>
+        <Space>
+          <Link href="/dashboard/generation/lab">
+            <Button icon={<ExperimentOutlined />}>Model lab</Button>
+          </Link>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            disabled={!dirty}
+            onClick={save}
+          >
+            Save
+          </Button>
+        </Space>
       </Space>
 
       {!configured && (
@@ -164,9 +183,24 @@ export function GenerationSettings({
               placeholder="anthropic/claude-sonnet-5.5"
               popupMatchSelectWidth={460}
             />
-            <Typography.Paragraph type="secondary" style={{ marginTop: 10, marginBottom: 0 }}>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 10, marginBottom: 16 }}>
               Any OpenRouter model id. The list shows models that support
               structured output, with prices per million input / output tokens.
+            </Typography.Paragraph>
+
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Reasoning
+            </Typography.Text>
+            <Select
+              style={{ width: "100%" }}
+              value={reasoning}
+              onChange={setReasoning}
+              options={REASONING_OPTIONS}
+            />
+            <Typography.Paragraph type="secondary" style={{ marginTop: 6, marginBottom: 0, fontSize: 12 }}>
+              Hidden reasoning is billed as output and can triple a resume&apos;s
+              cost. Some models can&apos;t turn it off (Claude Sonnet 5.5, GPT-6.1
+              Sol); &ldquo;lowest&rdquo; then uses their cheapest effort.
             </Typography.Paragraph>
 
             <div

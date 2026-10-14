@@ -21,6 +21,10 @@ export type Completion = {
   model: string;
   promptTokens: number | null;
   completionTokens: number | null;
+  /** Of the prompt tokens, how many were read from the provider's cache. */
+  cachedTokens: number | null;
+  /** Of the completion tokens, how many were hidden reasoning. */
+  reasoningTokens: number | null;
   /** US dollars, as OpenRouter reports it; null if it didn't. */
   costUsd: number | null;
 };
@@ -34,11 +38,31 @@ export function openRouterConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY);
 }
 
+/**
+ * Messages as sent. For Anthropic models the system prompt is marked
+ * cacheable: it is identical on every call and is most of the input, and
+ * Claude only caches what a request marks (OpenAI and DeepSeek cache a
+ * repeated prefix by themselves). A cached read costs a tenth of input.
+ */
+function wire(model: string, messages: ChatMessage[]) {
+  if (!model.startsWith("anthropic/")) return messages;
+  return messages.map((m) =>
+    m.role === "system"
+      ? {
+          role: m.role,
+          content: [{ type: "text", text: m.content, cache_control: { type: "ephemeral" } }],
+        }
+      : m,
+  );
+}
+
 export async function completeJson(options: {
   model: string;
   messages: ChatMessage[];
   schemaName: string;
   schema: Record<string, unknown>;
+  /** The `reasoning` field, already fitted to this model — see models.ts. */
+  reasoning?: Record<string, unknown>;
 }): Promise<Completion> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set, so generation is off.");
@@ -58,17 +82,22 @@ export async function completeJson(options: {
       },
       body: JSON.stringify({
         model: options.model,
-        messages: options.messages,
+        messages: wire(options.model, options.messages),
         response_format: {
           type: "json_schema",
           json_schema: { name: options.schemaName, strict: true, schema: options.schema },
         },
+        // Only providers that honour every parameter sent. Which is why there
+        // is no `temperature` here: Claude 5.5 and GPT-6 don't accept it, and
+        // with this flag set its presence made those requests fail outright.
         provider: { require_parameters: true },
         // Asks OpenRouter to include what the call cost, which the
         // generation log averages per model.
         usage: { include: true },
-        temperature: 0.4,
-        max_tokens: 6000,
+        ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+        // Room for reasoning as well as the answer: on a model that must
+        // reason, its thinking counts against this too.
+        max_tokens: 16000,
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
@@ -82,7 +111,13 @@ export async function completeJson(options: {
   const payload = (await response.json().catch(() => null)) as {
     model?: string;
     choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      cost?: number;
+      prompt_tokens_details?: { cached_tokens?: number };
+      completion_tokens_details?: { reasoning_tokens?: number };
+    };
     error?: { message?: string; code?: number | string };
   } | null;
 
@@ -106,6 +141,8 @@ export async function completeJson(options: {
     model: payload.model ?? options.model,
     promptTokens: payload.usage?.prompt_tokens ?? null,
     completionTokens: payload.usage?.completion_tokens ?? null,
+    cachedTokens: payload.usage?.prompt_tokens_details?.cached_tokens ?? null,
+    reasoningTokens: payload.usage?.completion_tokens_details?.reasoning_tokens ?? null,
     costUsd: typeof payload.usage?.cost === "number" ? payload.usage.cost : null,
   };
 }

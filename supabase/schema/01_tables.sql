@@ -388,8 +388,31 @@ create table if not exists resume_generation (
   created_at        timestamptz not null default now()
 );
 
+-- How hard the model should reason. Reasoning tokens are billed as output
+-- and can triple a resume's cost, so the default is the least each model
+-- allows ("lowest"); "default" leaves it to the model, or an effort name
+-- ("low", "medium", "high") asks for that where the model offers it.
+alter table generation_setting
+  add column if not exists reasoning text not null default 'lowest';
+
+-- Where a generation came from, and the detail benchmarking needs.
+--   source        'builder' for real resumes, 'lab' for the model lab's tests
+--   run_id        groups one lab run's models, so they can be compared
+--   output        the lab's answers, kept so a run can be reviewed later;
+--                 null for builder rows, whose content lives in the editor
+alter table resume_generation
+  add column if not exists source           text not null default 'builder',
+  add column if not exists run_id           uuid,
+  add column if not exists reasoning        text,
+  add column if not exists prompt_label     text,
+  add column if not exists cached_tokens    integer,
+  add column if not exists reasoning_tokens integer,
+  add column if not exists output           jsonb;
+
 create index if not exists resume_generation_created_idx
   on resume_generation (created_at desc);
+create index if not exists resume_generation_run_idx
+  on resume_generation (run_id) where run_id is not null;
 create index if not exists resume_generation_team_idx
   on resume_generation (team_id, created_at desc);
 

@@ -156,6 +156,8 @@ export type GenerationSettingRow = {
   system_prompt: string;
   /** An OpenRouter model id. */
   model: string;
+  /** "lowest" | "default" | an effort name — see src/lib/ai/models.ts. */
+  reasoning: string;
   updated_by: string | null;
   updated_at: string;
 };
@@ -174,6 +176,17 @@ export type ResumeGenerationRow = {
   latency_ms: number | null;
   ok: boolean;
   error: string | null;
+  /** "builder" for real resumes, "lab" for model-lab tests. */
+  source: string;
+  /** Groups one lab run's models. */
+  run_id: string | null;
+  reasoning: string | null;
+  /** Which prompt a lab run used: "saved" or "custom". */
+  prompt_label: string | null;
+  cached_tokens: number | null;
+  reasoning_tokens: number | null;
+  /** The lab's parsed answer; null for builder rows. */
+  output: unknown;
   created_at: string;
 };
 

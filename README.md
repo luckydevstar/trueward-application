@@ -518,6 +518,35 @@ your own still works.
   cost at 5,000 resumes a month, so a model can be chosen on evidence.
 - **A per-person cap** (`GENERATION_HOURLY_LIMIT`, default 60 an hour) stops a
   runaway loop or a borrowed session spending the balance.
+- **Reasoning** is a setting too, because hidden reasoning tokens are billed as
+  output and can triple a resume's cost. "Lowest" (the default) turns it off
+  where a model allows and uses its cheapest effort where it doesn't — Claude
+  Sonnet 5.5 and GPT-6.1 Sol always reason. What each model accepts comes from
+  OpenRouter's model list (`src/lib/ai/models.ts`); requests use
+  `require_parameters`, so sending something a model rejects (as `temperature`
+  once was for Claude 5.5 and GPT-6) fails the call instead of being ignored.
+- **Prompt caching**: the system prompt is the same on every call, so it is
+  marked cacheable for Claude, which only caches what a request marks; OpenAI
+  and DeepSeek cache a repeated prefix themselves. Cached input costs about a
+  tenth.
+
+### Model lab
+
+`/dashboard/generation/lab`, from the Generation page — super admin only, and
+temporary scaffolding for choosing a model. Pick a candidate, paste a job,
+tick up to eight models and run them all at once on identical input; optionally
+with a one-off system prompt, to compare prompts without changing the saved
+one. Each model's answer is shown as a readable resume beside the others, with
+a PDF preview, and a table of tokens in, cached, out and reasoning, cost, time
+and validity. Every run is kept (`resume_generation`, `source = 'lab'`, with
+its output) and can be reopened; the page averages them per model and shows
+the OpenRouter balance.
+
+It runs through a route handler (`/api/generation-lab`) rather than a server
+action, because Next.js runs a page's server actions one at a time — the
+models would otherwise queue. It shares `generateContent()` with the builder,
+so what it measures is what production does. Lab runs are excluded from the
+Generation page's averages and from the hourly cap.
 
 The system prompt never reaches a browser: the generate action reads it with
 the service role after checking, through the caller's own client, that they

@@ -1,14 +1,9 @@
 "use server";
 
 import { requireActor } from "@/lib/actor";
-import { completeJson, openRouterConfigured, type ChatMessage } from "@/lib/ai/openrouter";
-import { buildMessages, contentJsonSchema } from "@/lib/ai/resume-prompt";
-import {
-  fieldErrors,
-  profileSchema,
-  resumeDocumentSchema,
-  type FieldError,
-} from "@/lib/document/schema";
+import { generateContent, logRow } from "@/lib/ai/generate";
+import { openRouterConfigured } from "@/lib/ai/openrouter";
+import { profileSchema } from "@/lib/document/schema";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -39,7 +34,7 @@ const MAX_ADDITIONAL_PROMPT = 4_000;
 
 /**
  * Writes a resume's content for one profile and one job, with the platform's
- * model and system prompt.
+ * model, reasoning setting and system prompt.
  *
  * The profile is read through the caller's own client, so RLS decides whether
  * they may use it — a bidder gets only their assigned profiles, exactly as on
@@ -90,6 +85,7 @@ export async function generateResumeContent(input: {
     .from("resume_generation")
     .select("id", { count: "exact", head: true })
     .eq("created_by", actor.id)
+    .eq("source", "builder")
     .gte("created_at", since);
   if ((count ?? 0) >= HOURLY_LIMIT) {
     return {
@@ -100,121 +96,43 @@ export async function generateResumeContent(input: {
 
   const { data: settings } = await admin
     .from("generation_setting")
-    .select("system_prompt, model")
+    .select("system_prompt, model, reasoning")
     .maybeSingle();
   const model = settings?.model?.trim() || "anthropic/claude-sonnet-5.5";
+  const reasoning = settings?.reasoning ?? "lowest";
 
-  const employmentIds = profile.data.employments.map((e) => e.id);
-  const messages: ChatMessage[] = buildMessages({
-    systemPrompt: settings?.system_prompt ?? "",
+  const outcome = await generateContent({
     profile: profile.data,
+    model,
+    systemPrompt: settings?.system_prompt ?? "",
     jobDescription,
     additionalPrompt,
+    reasoning,
   });
-  const schema = contentJsonSchema(employmentIds);
 
-  const started = Date.now();
-  let attempts = 0;
-  let promptTokens = 0;
-  let completionTokens = 0;
-  let costUsd: number | null = null;
-  let modelUsed = model;
-  let content: unknown = null;
-  let problems: FieldError[] = [];
+  await admin.from("resume_generation").insert({
+    ...logRow(outcome),
+    profile_id: row.id,
+    team_id: row.team_id,
+    created_by: actor.id,
+    model,
+    source: "builder",
+    run_id: null,
+    reasoning,
+    prompt_label: null,
+    output: null,
+  });
 
-  const log = (ok: boolean, error: string | null) =>
-    admin.from("resume_generation").insert({
-      profile_id: row.id,
-      team_id: row.team_id,
-      created_by: actor.id,
-      model,
-      attempts,
-      prompt_tokens: promptTokens || null,
-      completion_tokens: completionTokens || null,
-      cost_usd: costUsd,
-      latency_ms: Date.now() - started,
-      ok,
-      error,
-    });
-
-  try {
-    /*
-     * At most two calls: the answer, and one repair if it fails validation.
-     * The repair shows the model its own answer and the exact errors, which
-     * fixes the rules a JSON schema can't state (ordering, one paragraph).
-     * A third call is rarely better than a person reading the errors, which
-     * the editor shows.
-     */
-    for (attempts = 1; attempts <= 2; attempts += 1) {
-      const completion = await completeJson({
-        model,
-        messages,
-        schemaName: "resume_content",
-        schema,
-      });
-      modelUsed = completion.model;
-      promptTokens += completion.promptTokens ?? 0;
-      completionTokens += completion.completionTokens ?? 0;
-      if (completion.costUsd !== null) costUsd = (costUsd ?? 0) + completion.costUsd;
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(completion.content);
-      } catch {
-        problems = [{ path: "", message: "the reply was not valid JSON" }];
-        messages.push(
-          { role: "assistant", content: completion.content },
-          { role: "user", content: "That was not valid JSON. Reply with the JSON object only." },
-        );
-        continue;
-      }
-
-      content = parsed;
-      const check = resumeDocumentSchema.safeParse({
-        schemaVersion: 2,
-        profile: profile.data,
-        content: parsed,
-      });
-      if (check.success) {
-        problems = [];
-        break;
-      }
-
-      problems = fieldErrors(check.error);
-      messages.push(
-        { role: "assistant", content: completion.content },
-        {
-          role: "user",
-          content:
-            "That JSON failed validation:\n" +
-            problems.map((p) => `- ${p.path || "(root)"}: ${p.message}`).join("\n") +
-            "\nReturn the corrected JSON object only.",
-        },
-      );
-    }
-    attempts = Math.min(attempts, 2);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Generation failed.";
-    await log(false, message);
-    return { ok: false, error: message };
-  }
-
-  if (content === null) {
-    await log(false, "no parseable JSON");
-    return { ok: false, error: "The model didn't return usable JSON. Try again." };
-  }
-
-  const valid = problems.length === 0;
-  await log(valid, valid ? null : problems.map((p) => `${p.path}: ${p.message}`).join("; ").slice(0, 2000));
+  if (outcome.error && outcome.content === null) return { ok: false, error: outcome.error };
 
   return {
     ok: true,
-    content: JSON.stringify(content, null, 2),
-    valid,
-    model: modelUsed,
-    attempts,
-    tokens: promptTokens + completionTokens || null,
-    costUsd,
-    latencyMs: Date.now() - started,
+    content: JSON.stringify(outcome.content, null, 2),
+    valid: outcome.valid,
+    model: outcome.servedModel,
+    attempts: outcome.attempts,
+    tokens: outcome.promptTokens + outcome.completionTokens || null,
+    costUsd: outcome.costUsd,
+    latencyMs: outcome.latencyMs,
   };
 }

@@ -73,7 +73,10 @@ export default async function GenerationPage() {
   const since = windowStart(DAYS);
 
   const [{ data: settings }, log, models] = await Promise.all([
-    supabase.from("generation_setting").select("system_prompt, model, updated_at").maybeSingle(),
+    supabase
+      .from("generation_setting")
+      .select("system_prompt, model, reasoning, updated_at")
+      .maybeSingle(),
     fetchAll<{
       model: string;
       ok: boolean;
@@ -86,6 +89,8 @@ export default async function GenerationPage() {
       supabase
         .from("resume_generation")
         .select("model, ok, attempts, prompt_tokens, completion_tokens, cost_usd, latency_ms")
+        // Real resumes only; the model lab keeps its own numbers.
+        .eq("source", "builder")
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .range(from, to),
@@ -120,6 +125,7 @@ export default async function GenerationPage() {
     <GenerationSettings
       systemPrompt={settings?.system_prompt ?? ""}
       model={settings?.model ?? "anthropic/claude-sonnet-5.5"}
+      reasoning={settings?.reasoning ?? "lowest"}
       updatedAt={settings?.updated_at ?? null}
       configured={openRouterConfigured()}
       models={models}
