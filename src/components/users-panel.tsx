@@ -87,6 +87,17 @@ export function UsersPanel({
   const [editing, setEditing] = useState<Row | null>(null);
   const [editForm] = Form.useForm<EditValues>();
   const [removing, setRemoving] = useState<Row | null>(null);
+  /**
+   * Whether the edit form shows a password field at all.
+   *
+   * Hidden until asked for, because a visible password input in an edit form
+   * is one a browser will autofill — with the *signed-in* person's saved
+   * password — and saving the form to fix a name then silently resets the
+   * other account's password to it. That is exactly how a subadmin got locked
+   * out. No field, nothing to autofill.
+   */
+  const [changingPassword, setChangingPassword] = useState(false);
+  const editedEmail = Form.useWatch("email", editForm);
   const [inheritor, setInheritor] = useState<string | undefined>();
 
   const saveEdit = async (values: EditValues) => {
@@ -96,9 +107,9 @@ export function UsersPanel({
       id: editing.id,
       name: values.name,
       email: values.email,
-      // Blank means "leave it alone" rather than "set an empty password", so
-      // fixing a typo in someone's name doesn't reset their login.
-      password: values.password?.trim() ? values.password : undefined,
+      // Only when asked for, and blank still means "leave it alone".
+      password:
+        changingPassword && values.password?.trim() ? values.password : undefined,
       currentPassword: values.currentPassword || undefined,
       allowedTemplates: values.allowedTemplates ?? [],
       allowedAccents: values.allowedAccents ?? [],
@@ -109,7 +120,11 @@ export function UsersPanel({
       message.error(result.error);
       return;
     }
-    message.success("Account updated.");
+    message.success(
+      changingPassword && values.password?.trim()
+        ? `Saved. ${editing.isSelf ? "Your" : `${editing.name ?? editing.email}'s`} password has changed.`
+        : "Account updated.",
+    );
     setEditing(null);
     router.refresh();
   };
@@ -240,6 +255,7 @@ export function UsersPanel({
                       aria-label={`Edit ${row.name ?? row.email}`}
                       onClick={() => {
                         setEditing(row);
+                        setChangingPassword(false);
                         editForm.setFieldsValue({
                           name: row.name ?? "",
                           email: row.email,
@@ -383,35 +399,37 @@ export function UsersPanel({
           >
             <Input />
           </Form.Item>
-          <Form.Item
-            name="password"
-            label="New password"
-            extra="Leave blank to keep the current one."
-            rules={[{ min: 8, message: "At least 8 characters" }]}
-          >
-            <Input.Password autoComplete="new-password" />
-          </Form.Item>
-          {editing?.isSelf && (
+          {changingPassword ? (
+            <Form.Item
+              name="password"
+              label="New password"
+              extra={
+                editing?.isSelf
+                  ? "At least 8 characters."
+                  : "They sign in with this from now on — tell them what it is."
+              }
+              rules={[
+                { required: true, message: "Enter the new password" },
+                { min: 8, message: "At least 8 characters" },
+              ]}
+            >
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+          ) : (
+            <Form.Item>
+              <Button onClick={() => setChangingPassword(true)}>Change password</Button>
+            </Form.Item>
+          )}
+          {editing?.isSelf &&
+            (changingPassword || (editedEmail ?? "").trim() !== editing.email) && (
             // Only on your own account: whoever manages an account resets it
             // without knowing the old password, which is the point of
             // managing it.
             <Form.Item
               name="currentPassword"
               label="Current password"
-              dependencies={["password", "email"]}
               extra="Needed to change your own email or password."
-              rules={[
-                ({ getFieldValue }) => ({
-                  validator(_, value) {
-                    const changingCredentials =
-                      Boolean(getFieldValue("password")?.trim()) ||
-                      getFieldValue("email")?.trim() !== editing.email;
-                    return changingCredentials && !value
-                      ? Promise.reject(new Error("Enter your current password"))
-                      : Promise.resolve();
-                  },
-                }),
-              ]}
+              rules={[{ required: true, message: "Enter your current password" }]}
             >
               <Input.Password autoComplete="current-password" />
             </Form.Item>

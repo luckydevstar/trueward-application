@@ -83,6 +83,7 @@ const DEFAULT_WIDTHS: Record<string, number> = {
   email: 220,
   phone: 150,
   location: 190,
+  team: 200,
   assignees: 260,
   updated_at: 130,
   actions: 90,
@@ -258,28 +259,62 @@ export function ProfilesList({
         return text ? <Marquee title={text}>{text}</Marquee> : <Muted />;
       },
     },
+    // The super admin's control comes first: which subadmin runs this
+    // candidate. It sits where a subadmin sees "Assigned to", because for the
+    // super admin that *is* the assignment — bidders are the subadmin's call.
+    ...(canHandOver
+      ? ([
+          {
+            key: "team",
+            title: "Subadmin",
+            render: (_: unknown, row: ProfileRow) => (
+              <Select
+                size="small"
+                variant="borderless"
+                style={{ width: "100%" }}
+                value={row.team_label ? row.team_id : undefined}
+                // A profile in no subadmin's team — still in the super
+                // admin's own pool — shows as a prompt to place it, not as a
+                // blank or a raw id.
+                placeholder="Choose a subadmin…"
+                options={subadmins.map((sa) => ({ value: sa.id, label: sa.label }))}
+                onChange={(teamId) => handOver(row, teamId)}
+              />
+            ),
+          },
+        ] satisfies ColumnsType<ProfileRow>)
+      : []),
     ...(canAssign || showAssignees
       ? ([
           {
             key: "assignees",
-            title: "Assigned to",
-            render: (_, row) => (
-              <Select
-                mode="multiple"
-                allowClear
-                size="small"
-                variant="borderless"
-                placeholder="Nobody"
-                style={{ width: "100%" }}
-                disabled={!canAssign}
-                value={row.assignee_ids}
-                onChange={(next) => setAssignees(row.id, next)}
-                options={teamMembers.map((m) => ({
-                  value: m.id,
-                  label: m.label,
-                }))}
-              />
-            ),
+            title: canAssign ? "Assigned to" : "Bidders",
+            render: (_, row) =>
+              canAssign ? (
+                <Select
+                  mode="multiple"
+                  allowClear
+                  size="small"
+                  variant="borderless"
+                  placeholder="Nobody"
+                  style={{ width: "100%" }}
+                  value={row.assignee_ids}
+                  onChange={(next) => setAssignees(row.id, next)}
+                  options={teamMembers.map((m) => ({
+                    value: m.id,
+                    label: m.label,
+                  }))}
+                />
+              ) : (
+                // Read-only for the super admin: names, not a greyed-out
+                // control that looks broken.
+                <Typography.Text type="secondary">
+                  {row.assignee_ids
+                    .map((id) => teamMembers.find((m) => m.id === id)?.label)
+                    .filter(Boolean)
+                    .join(", ") || "—"}
+                </Typography.Text>
+              ),
           },
         ] satisfies ColumnsType<ProfileRow>)
       : []),
@@ -290,33 +325,6 @@ export function ProfilesList({
       sorter: (a, b) => a.updated_at.localeCompare(b.updated_at),
       render: (value: string) => formatDate(value),
     },
-    ...(canHandOver
-      ? ([
-          {
-            key: "team",
-            title: "Owner",
-            render: (_: unknown, row: ProfileRow) => (
-              <Select
-                size="small"
-                variant="borderless"
-                style={{ width: "100%" }}
-                value={row.team_id}
-                // The value is a team id, but a team with no subadmin has no
-                // label — show the raw state rather than an empty cell, so
-                // "nobody owns this" is visible rather than inferred.
-                placeholder="Unassigned"
-                options={[
-                  ...(row.team_label
-                    ? []
-                    : [{ value: row.team_id, label: "Unassigned", disabled: true }]),
-                  ...subadmins.map((sa) => ({ value: sa.id, label: sa.label })),
-                ]}
-                onChange={(teamId) => handOver(row, teamId)}
-              />
-            ),
-          },
-        ] satisfies ColumnsType<ProfileRow>)
-      : []),
     {
       key: "actions",
       title: "",
