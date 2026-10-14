@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  CodeOutlined,
   DownloadOutlined,
   RobotOutlined,
   SaveOutlined,
@@ -13,10 +14,12 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Divider,
   Empty,
   Input,
   Row,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -105,6 +108,15 @@ const STYLE_STORAGE_KEY = "tw.resume.style";
 /** The additional prompt is usually reused across resumes, so it's remembered. */
 const EXTRA_PROMPT_KEY = "tw.resume.additionalPrompt";
 
+/**
+ * Where the content comes from: generated here, or pasted from elsewhere.
+ * Generating is the main path; pasting is the fallback for when a model run
+ * elsewhere is preferred, or generation isn't set up. Remembered, since a
+ * person tends to work one way.
+ */
+type Source = "ai" | "paste";
+const SOURCE_KEY = "tw.resume.source";
+
 const DEFAULT_PRESET: Preset = { template: "classic", style: DEFAULT_STYLE };
 
 /** Strips the ```json fence a model wraps its output in. */
@@ -155,6 +167,7 @@ export function ResumeBuilder({
     EXTRA_PROMPT_KEY,
     "",
   );
+  const [source, setSource] = usePersistentState<Source>(SOURCE_KEY, "ai");
   const [generating, setGenerating] = useState(false);
   const [lastRun, setLastRun] = useState<Run | null>(null);
   /** What the editor held before the last generation replaced it — for Undo. */
@@ -719,144 +732,207 @@ export function ResumeBuilder({
                 </>
               )}
 
-              <Step number={2} title="Job" />
-              <div>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Job description
-                </Typography.Text>
-                <Input.TextArea
-                  value={jobDescription}
-                  onChange={(e) => setJobDescription(e.target.value)}
-                  autoSize={{ minRows: 5, maxRows: 14 }}
-                  placeholder="Paste the job posting — title, responsibilities, requirements."
-                  disabled={isExample}
-                />
-              </div>
-              <div>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Additional prompt <span style={{ opacity: 0.7 }}>— optional, remembered</span>
-                </Typography.Text>
-                <Input.TextArea
-                  value={additionalPrompt}
-                  onChange={(e) => setAdditionalPrompt(e.target.value)}
-                  autoSize={{ minRows: 2, maxRows: 6 }}
-                  placeholder="Anything extra for this resume, e.g. “Keep it to one page. Lead with the payments work.”"
-                  disabled={isExample}
-                />
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  flexWrap: "wrap",
-                }}
-              >
-                <Tooltip
-                  title={
-                    !generation.enabled
-                      ? "Generation is off — the super admin needs to set the OpenRouter key."
-                      : isExample
-                        ? "Pick a real candidate to generate for."
-                        : !jobDescription.trim()
-                          ? "Paste the job description first."
-                          : json.trim()
-                            ? "Replaces the content below. Undo puts it back."
-                            : undefined
-                  }
-                >
-                  <Button
-                    type="primary"
-                    icon={<RobotOutlined />}
-                    loading={generating}
-                    disabled={!canGenerate}
-                    onClick={generate}
-                  >
-                    {generating ? "Generating…" : "Generate"}
-                  </Button>
-                </Tooltip>
-                <Space size={6}>
-                  {beforeGeneration !== null && !generating && (
-                    <Button size="small" type="text" icon={<UndoOutlined />} onClick={undoGeneration}>
-                      Undo
-                    </Button>
-                  )}
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {lastRun
-                      ? [
-                          lastRun.model,
-                          lastRun.tokens ? `${lastRun.tokens.toLocaleString()} tokens` : null,
-                          lastRun.costUsd !== null ? `$${lastRun.costUsd.toFixed(4)}` : null,
-                          `${(lastRun.latencyMs / 1000).toFixed(1)}s`,
-                          lastRun.attempts > 1 ? "1 repair" : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")
-                      : generation.model
-                        ? `Model: ${generation.model}`
-                        : null}
-                  </Typography.Text>
-                </Space>
-              </div>
-
-              <Step number={3} title="Content" />
-              {employmentIds.length > 0 && (
-                <Alert
-                  type="info"
-                  title={
-                    <Space size={4} wrap>
-                      <Typography.Text style={{ fontSize: 12 }}>
-                        Pasted content must use these employment ids:
-                      </Typography.Text>
-                      {employmentIds.map((id) => (
-                        <Tag key={id} style={{ margin: 0 }}>
-                          {id}
-                        </Tag>
-                      ))}
-                    </Space>
-                  }
-                />
-              )}
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Tailored content (JSON)
-                </Typography.Text>
-                <Space size={4}>
-                  <Tooltip title="Fill in the skeleton — employment ids in the right order, ready to edit or paste over">
-                    <Button
-                      size="small"
-                      type="text"
-                      icon={<ThunderboltOutlined />}
-                      disabled={!selectedProfile?.profile}
-                      onClick={startFromProfile}
-                    >
-                      Start from profile
-                    </Button>
-                  </Tooltip>
-                  {json && (
-                    <Button size="small" type="text" onClick={() => setJson("")}>
-                      Clear
-                    </Button>
-                  )}
-                </Space>
-              </div>
-
-              <Input.TextArea
-                rows={14}
-                value={json}
-                onChange={(e) => setJson(e.target.value)}
-                placeholder='{ "targetTitle": "…", "summary": "…", "skills": [], "experiences": [] }'
-                style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+              <Step number={2} title="Content" />
+              <Segmented<Source>
+                block
+                value={source}
+                onChange={setSource}
+                options={[
+                  {
+                    value: "ai",
+                    label: (
+                      <span>
+                        <RobotOutlined /> Generate with AI
+                      </span>
+                    ),
+                  },
+                  {
+                    value: "paste",
+                    label: (
+                      <span>
+                        <CodeOutlined /> Paste JSON
+                      </span>
+                    ),
+                  },
+                ]}
               />
 
+              {source === "ai" ? (
+                <>
+                  {!generation.enabled && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      title="AI generation isn't set up yet"
+                      description="The super admin needs to add the OpenRouter key. Until then, use Paste JSON."
+                    />
+                  )}
+                  <div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Job description
+                    </Typography.Text>
+                    <Input.TextArea
+                      value={jobDescription}
+                      onChange={(e) => setJobDescription(e.target.value)}
+                      autoSize={{ minRows: 6, maxRows: 16 }}
+                      placeholder="Paste the job posting — title, responsibilities, requirements."
+                      disabled={isExample}
+                    />
+                  </div>
+                  <div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Additional prompt{" "}
+                      <span style={{ opacity: 0.7 }}>— optional, remembered</span>
+                    </Typography.Text>
+                    <Input.TextArea
+                      value={additionalPrompt}
+                      onChange={(e) => setAdditionalPrompt(e.target.value)}
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                      placeholder="Anything extra for this resume, e.g. “Keep it to one page. Lead with the payments work.”"
+                      disabled={isExample}
+                    />
+                  </div>
+                  <Tooltip
+                    title={
+                      !generation.enabled
+                        ? "Generation is off — the super admin needs to set the OpenRouter key."
+                        : isExample
+                          ? "Pick a real candidate to generate for."
+                          : !jobDescription.trim()
+                            ? "Paste the job description first."
+                            : json.trim()
+                              ? "Replaces the current content. Undo puts it back."
+                              : undefined
+                    }
+                  >
+                    <Button
+                      type="primary"
+                      size="large"
+                      block
+                      icon={<RobotOutlined />}
+                      loading={generating}
+                      disabled={!canGenerate}
+                      onClick={generate}
+                    >
+                      {generating ? "Generating…" : json.trim() ? "Generate again" : "Generate resume"}
+                    </Button>
+                  </Tooltip>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      minHeight: 24,
+                    }}
+                  >
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {lastRun
+                        ? [
+                            lastRun.model,
+                            lastRun.tokens ? `${lastRun.tokens.toLocaleString()} tokens` : null,
+                            lastRun.costUsd !== null ? `$${lastRun.costUsd.toFixed(4)}` : null,
+                            `${(lastRun.latencyMs / 1000).toFixed(1)}s`,
+                            lastRun.attempts > 1 ? "1 repair" : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")
+                        : generation.model
+                          ? `Model: ${generation.model}`
+                          : null}
+                    </Typography.Text>
+                    {beforeGeneration !== null && !generating && (
+                      <Button size="small" type="text" icon={<UndoOutlined />} onClick={undoGeneration}>
+                        Undo
+                      </Button>
+                    )}
+                  </div>
+                  {/*
+                    The JSON is still there — it is what gets saved — but it is
+                    the output here, not the input, so it stays folded away
+                    unless someone wants to adjust a line by hand.
+                  */}
+                  {json.trim() && (
+                    <Collapse
+                      size="small"
+                      items={[
+                        {
+                          key: "json",
+                          label: "View or edit the generated JSON",
+                          children: (
+                            <Input.TextArea
+                              rows={14}
+                              value={json}
+                              onChange={(e) => setJson(e.target.value)}
+                              style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+                            />
+                          ),
+                        },
+                      ]}
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  {employmentIds.length > 0 && (
+                    <Alert
+                      type="info"
+                      title={
+                        <Space size={4} wrap>
+                          <Typography.Text style={{ fontSize: 12 }}>
+                            Pasted content must use these employment ids:
+                          </Typography.Text>
+                          {employmentIds.map((id) => (
+                            <Tag key={id} style={{ margin: 0 }}>
+                              {id}
+                            </Tag>
+                          ))}
+                        </Space>
+                      }
+                    />
+                  )}
+
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Tailored content (JSON)
+                    </Typography.Text>
+                    <Space size={4}>
+                      <Tooltip title="Fill in the skeleton — employment ids in the right order, ready to edit or paste over">
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<ThunderboltOutlined />}
+                          disabled={!selectedProfile?.profile}
+                          onClick={startFromProfile}
+                        >
+                          Start from profile
+                        </Button>
+                      </Tooltip>
+                      {json && (
+                        <Button size="small" type="text" onClick={() => setJson("")}>
+                          Clear
+                        </Button>
+                      )}
+                    </Space>
+                  </div>
+
+                  <Input.TextArea
+                    rows={14}
+                    value={json}
+                    onChange={(e) => setJson(e.target.value)}
+                    placeholder='{ "targetTitle": "…", "summary": "…", "skills": [], "experiences": [] }'
+                    style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+                  />
+                </>
+              )}
+
+              <Step number={3} title="Check" />
               {parsed.kind === "noprofile" && (
                 <Alert type="info" showIcon title="Choose a profile to begin." />
               )}
@@ -864,7 +940,11 @@ export function ResumeBuilder({
                 <Alert
                   type="info"
                   showIcon
-                  title="Generate from the job above, paste content JSON, or press “Start from profile”."
+                  title={
+                    source === "ai"
+                      ? "Paste the job description and press Generate resume."
+                      : "Paste content JSON, or press “Start from profile”."
+                  }
                   description="Until then the preview shows what the profile already knows — identity, employers and dates."
                 />
               )}
@@ -947,7 +1027,16 @@ export function ResumeBuilder({
                 />
               )}
               {parsed.kind === "ok" && (
-                <Alert type="success" showIcon title="Valid — ready to download." />
+                <Alert
+                  type="success"
+                  showIcon
+                  title={`Ready — ${parsed.document.content.targetTitle}`}
+                  description={(() => {
+                    const { experiences, skills } = parsed.document.content;
+                    const bullets = experiences.reduce((n, x) => n + x.bullets.length, 0);
+                    return `${experiences.length} role${experiences.length === 1 ? "" : "s"} · ${bullets} bullet${bullets === 1 ? "" : "s"} · ${skills.length} skill group${skills.length === 1 ? "" : "s"}. Check the preview, then save or download.`;
+                  })()}
+                />
               )}
             </Space>
           </Card>
