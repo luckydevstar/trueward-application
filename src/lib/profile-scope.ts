@@ -89,6 +89,24 @@ export async function profileReach(
 }
 
 /**
+ * The profiles assigned to this account — for a super admin, the ones they
+ * have taken on themselves and may work, rather than only review.
+ *
+ * Mirrors the assignment half of works_in_team(). The database decides every
+ * write; this is so pages can offer the work controls on the right profiles.
+ */
+export async function assignedProfileIds(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+): Promise<Set<string>> {
+  const { data } = await supabase
+    .from("profile_assignment")
+    .select("profile_id")
+    .eq("user_id", userId);
+  return new Set((data ?? []).map((row) => row.profile_id));
+}
+
+/**
  * Narrows a query to the profiles in `reach`.
  *
  * `column` is where the profile id lives: `id` on candidate_profile,

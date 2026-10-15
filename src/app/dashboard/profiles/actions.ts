@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireActor } from "@/lib/actor";
 import { canEditProfile } from "@/lib/profile-access";
 import type { ProfileRowValues } from "@/lib/profile-form";
-import { canAssignProfiles, canEditProfiles, teamIdFor } from "@/lib/scope";
+import { canAssignProfiles, canEditProfiles, canSelfAssign, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 type Result<T = undefined> =
@@ -168,7 +168,13 @@ export async function replaceProfileAssignees(
     return fail("Profiles can only be assigned to this team's bidders.");
   }
 
-  const current = new Set((assignments ?? []).map((assignment) => assignment.user_id));
+  // Only the bidders' assignments are the subadmin's to change. A super admin
+  // working this profile has a row here too, and it stays put.
+  const current = new Set(
+    (assignments ?? [])
+      .map((assignment) => assignment.user_id)
+      .filter((id) => memberIds.has(id)),
+  );
   const added = userIds.filter((id) => !current.has(id));
   const removed = [...current].filter((id) => !userIds.includes(id));
 
@@ -250,6 +256,59 @@ export async function deleteProfileAttachment(attachmentId: string): Promise<Res
     .eq("id", attachment.id)
     .eq("team_id", attachment.team_id);
   return error ? fail(error.message) : ok();
+}
+
+/**
+ * The super admin takes a profile on themselves, or gives it up.
+ *
+ * Taking it on is what lets them work it like a bidder — generate, save
+ * resumes, record applications — with everything filed in the profile's team.
+ * The policies check it all (works_in_team()); the assignment's team_id must be
+ * the profile's own, which is why it is read here rather than trusted from the
+ * browser.
+ */
+export async function setSelfAssignment(
+  profileId: string,
+  assigned: boolean,
+): Promise<Result> {
+  const actor = await requireActor();
+  if (!canSelfAssign(actor.role)) {
+    return fail("Only the super admin assigns profiles to themselves.");
+  }
+
+  const supabase = await createClient();
+  if (!assigned) {
+    const { error } = await supabase
+      .from("profile_assignment")
+      .delete()
+      .eq("profile_id", profileId)
+      .eq("user_id", actor.id);
+    if (error) return fail(error.message);
+  } else {
+    const { data: profile } = await supabase
+      .from("candidate_profile")
+      .select("id, team_id")
+      .eq("id", profileId)
+      .maybeSingle();
+    if (!profile) return fail("Profile not found.");
+
+    // upsert on the (profile, user) pair: assigning twice is a no-op.
+    const { error } = await supabase.from("profile_assignment").upsert(
+      {
+        profile_id: profile.id,
+        user_id: actor.id,
+        team_id: profile.team_id,
+        assigned_by: actor.id,
+      },
+      { onConflict: "profile_id,user_id", ignoreDuplicates: true },
+    );
+    if (error) return fail(error.message);
+  }
+
+  revalidatePath("/dashboard/profiles");
+  revalidatePath("/dashboard/resumes");
+  revalidatePath("/dashboard/applications");
+  return ok();
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   Alert,
   App,
   Button,
+  Card,
   Col,
   DatePicker,
   Divider,
@@ -66,7 +67,6 @@ export type ProfileFormValues = {
 };
 
 type Props = {
-  open: boolean;
   busy: boolean;
   /** Set when editing; drives the SSN reveal, which needs a saved row. */
   profileId?: string;
@@ -87,8 +87,15 @@ const urlValidator = (_rule: unknown, value: string) =>
     ? Promise.resolve()
     : Promise.reject(new Error("That doesn't look like a link"));
 
-export function ProfileEditor({
-  open,
+/**
+ * The profile form, as a page rather than a modal.
+ *
+ * A profile is long — identity, address, links, several employments with
+ * notes, education, company context — and a modal's fixed height made it a
+ * scroll inside a scroll. On its own page it gets the whole window, the
+ * browser's own scrolling, and a Save bar that stays in reach.
+ */
+export function ProfileForm({
   busy,
   profileId,
   canSeeSsn,
@@ -100,23 +107,14 @@ export function ProfileEditor({
   const [form] = Form.useForm<ProfileFormValues>();
 
   return (
-    <Modal
-      title={initialValues ? "Edit profile" : "New profile"}
-      open={open}
-      onCancel={onCancel}
-      onOk={() => form.submit()}
-      confirmLoading={busy}
-      okText="Save"
-      width={860}
-      destroyOnHidden
-    >
+    <Card variant="borderless" styles={{ body: { padding: "24px 28px 0" } }}>
       <Form<ProfileFormValues>
         form={form}
         layout="vertical"
         onFinish={onSubmit}
         requiredMark={false}
         initialValues={initialValues}
-        style={{ maxHeight: "68vh", overflowY: "auto", paddingRight: 12 }}
+        scrollToFirstError
       >
         <Row gutter={12}>
           <Col xs={24} sm={12}>
@@ -394,8 +392,29 @@ export function ProfileEditor({
             </>
           )}
         </Form.List>
+        {/* Sticky, so Save is in reach from anywhere in a long profile. */}
+        <div
+          style={{
+            position: "sticky",
+            bottom: 0,
+            zIndex: 5,
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+            margin: "8px -28px 0",
+            padding: "12px 28px",
+            background: "rgba(255, 255, 255, 0.92)",
+            backdropFilter: "blur(8px)",
+            borderTop: "1px solid #edf0f5",
+          }}
+        >
+          <Button onClick={onCancel}>Cancel</Button>
+          <Button type="primary" htmlType="submit" loading={busy}>
+            Save profile
+          </Button>
+        </div>
       </Form>
-    </Modal>
+    </Card>
   );
 }
 

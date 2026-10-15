@@ -87,7 +87,7 @@ begin
   -- applied — so without this, anyone could post another team's profile id
   -- and read that team's history out of the refusal. Stepping aside here
   -- leaves the row to the policies, which refuse it without saying why.
-  if not (in_own_team(new.team_id) and can_use_profile(new.profile_id)) then
+  if not (works_in_team(new.team_id, new.profile_id) and can_use_profile(new.profile_id)) then
     return new;
   end if;
 

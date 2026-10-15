@@ -12,12 +12,15 @@ import { Card, Col, Empty, Row, Statistic, Typography } from "antd";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { WorkflowGuide } from "@/components/workflow-guide";
+import type { UserRole } from "@/lib/roles";
 import { APPLICATION_STATUSES, STATUS_META, type ApplicationStatus } from "@/lib/status";
 
 type Props = {
   total: number;
   byStatus: Record<string, number>;
   unbilled: number;
+  role: UserRole;
 };
 
 /** An icon and a tint per card, so the row reads at a glance before the numbers. */
@@ -66,7 +69,7 @@ function Stat({
   );
 }
 
-export function OverviewCards({ total, byStatus, unbilled }: Props) {
+export function OverviewCards({ total, byStatus, unbilled, role }: Props) {
   return (
     <>
       <Typography.Title level={3} style={{ marginTop: 0, letterSpacing: "-0.02em" }}>
@@ -75,6 +78,8 @@ export function OverviewCards({ total, byStatus, unbilled }: Props) {
       <Typography.Paragraph type="secondary" style={{ marginTop: -4, marginBottom: 20 }}>
         Where every application stands right now.
       </Typography.Paragraph>
+
+      <WorkflowGuide role={role} />
 
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>

@@ -28,6 +28,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
+import type { DefaultOptionType } from "antd/es/select";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -75,6 +76,13 @@ type ProfileOption = {
   fullName: string;
   /** Whether the profile has company context on file for generation. */
   hasCompanyContext?: boolean;
+  /** The profile's team: where a resume or application for it is filed. */
+  teamId?: string;
+  /**
+   * For a super admin: whether they have assigned it to themselves, and so
+   * may generate, save and track for it rather than only review.
+   */
+  workable?: boolean;
   profile: ResumeProfile | null;
   error: string | null;
 };
@@ -99,7 +107,11 @@ type Props = {
   accents: string[];
   /** A subadmin may overwrite any resume on their team, not only their own. */
   canEditAny: boolean;
-  /** A super admin reviews: they may render and download, never save. */
+  /**
+   * A super admin reviews: they may render and download, never save — except
+   * on profiles they have assigned to themselves (`workable`), which they
+   * work like a bidder.
+   */
   readOnly: boolean;
   /** Whether Generate works. Prompt and model are the super admin's. */
   generation: { enabled: boolean };
@@ -199,10 +211,12 @@ export function ResumeBuilder({
 
   const options = useMemo(() => [...profiles, EXAMPLE_OPTION], [profiles]);
 
-  // A real profile wins when one exists; the demo is the fallback, not the
-  // default.
+  // A real profile wins when one exists — one you can work, for a super admin
+  // — and the demo is the fallback, not the default.
   const [profileId, setProfileId] = useState(
-    profiles[0]?.id ?? EXAMPLE_PROFILE_ID,
+    (readOnly ? profiles.find((p) => p.workable) : undefined)?.id ??
+      profiles[0]?.id ??
+      EXAMPLE_PROFILE_ID,
   );
   const [documentId, setDocumentId] = useState("");
   const [title, setTitle] = useState("");
@@ -265,6 +279,8 @@ export function ResumeBuilder({
 
   const selectedProfile = options.find((p) => p.id === profileId);
   const isExample = profileId === EXAMPLE_PROFILE_ID;
+  /** Viewing without being able to save or track: a super admin, on a profile not assigned to them. */
+  const reviewOnly = readOnly && !selectedProfile?.workable;
   const profileDocuments = documents.filter((d) => d.profile_id === profileId);
 
   /*
@@ -404,7 +420,8 @@ export function ResumeBuilder({
           .select("id")
       : await supabase
           .from("resume_document")
-          .insert({ ...payload, team_id: teamId, created_by: userId })
+          // A super admin has no team; theirs joins the profile's.
+          .insert({ ...payload, team_id: teamId || selectedProfile?.teamId || "", created_by: userId })
           .select("id");
     setSaving(false);
 
@@ -700,6 +717,7 @@ export function ResumeBuilder({
   const canGenerate =
     generation.enabled &&
     !isExample &&
+    !reviewOnly &&
     Boolean(selectedProfile?.profile) &&
     jobDescription.trim().length > 0;
 
@@ -724,8 +742,8 @@ export function ResumeBuilder({
         <Space>
           <Tooltip
             title={
-              readOnly
-                ? "Super admins review resumes; the team's subadmin and bidders save them."
+              reviewOnly && !isExample
+                ? "Review only. Assign this profile to yourself on the Profiles page to work it."
                 : isExample
                   ? "The demo profile has no database row to attach a resume to."
                   : openDocument && !overwrites
@@ -737,7 +755,7 @@ export function ResumeBuilder({
               icon={<SaveOutlined />}
               onClick={save}
               loading={saving}
-              disabled={readOnly || parsed.kind !== "ok" || isExample}
+              disabled={reviewOnly || parsed.kind !== "ok" || isExample}
             >
               {overwrites ? "Save" : "Save as new"}
             </Button>
@@ -782,11 +800,21 @@ export function ResumeBuilder({
                   value={profileId || undefined}
                   onChange={pickProfile}
                   placeholder="Choose a candidate"
-                  options={options.map((p) => ({
-                    value: p.id,
-                    label: p.error ? `${p.fullName} — unreadable` : p.fullName,
-                    disabled: Boolean(p.error),
-                  }))}
+                  options={((): DefaultOptionType[] => {
+                    const option = (p: ProfileOption) => ({
+                      value: p.id,
+                      label: p.error ? `${p.fullName} — unreadable` : p.fullName,
+                      disabled: Boolean(p.error),
+                    });
+                    if (!readOnly) return options.map(option);
+                    // A super admin sees every team's candidates; the ones
+                    // they work come first, the rest are for review.
+                    return [
+                      { label: "Assigned to you", options: profiles.filter((p) => p.workable).map(option) },
+                      { label: "Review only", options: profiles.filter((p) => !p.workable).map(option) },
+                      { label: "Demo", options: [option(EXAMPLE_OPTION)] },
+                    ].filter((group) => group.options.length);
+                  })()}
                 />
               </div>
 
@@ -899,7 +927,9 @@ export function ResumeBuilder({
                     title={
                       !generation.enabled
                         ? "Generation is off — the super admin needs to set the OpenRouter key."
-                        : isExample
+                        : reviewOnly && !isExample
+                          ? "Review only. Assign this profile to yourself on the Profiles page to generate for it."
+                          : isExample
                           ? "Pick a real candidate to generate for."
                           : !jobDescription.trim()
                             ? "Paste the job description first."
@@ -1140,24 +1170,24 @@ export function ResumeBuilder({
                     placeholder="Company"
                     value={company}
                     onChange={(e) => setCompany(e.target.value)}
-                    disabled={readOnly}
+                    disabled={reviewOnly}
                   />
                   <Input
                     placeholder={`Job title — ${parsed.document.content.targetTitle}`}
                     value={jobTitle}
                     onChange={(e) => setJobTitle(e.target.value)}
-                    disabled={readOnly}
+                    disabled={reviewOnly}
                   />
                   <Input
                     placeholder="Job URL — https://…"
                     value={jobUrl}
                     onChange={(e) => setJobUrl(e.target.value)}
-                    disabled={readOnly}
+                    disabled={reviewOnly}
                   />
                   <Tooltip
                     title={
-                      readOnly
-                        ? "Super admins review; tracking an application needs a team."
+                      reviewOnly
+                        ? "Review only. Assign this profile to yourself on the Profiles page to track for it."
                         : !company.trim() || !jobUrl.trim()
                           ? "Enter the company and job URL to track it."
                           : "Downloads the PDF and adds it to Applications, with the file attached."
@@ -1168,7 +1198,7 @@ export function ResumeBuilder({
                       block
                       icon={<DownloadOutlined />}
                       loading={tracking}
-                      disabled={readOnly || !company.trim() || !jobUrl.trim()}
+                      disabled={reviewOnly || !company.trim() || !jobUrl.trim()}
                       onClick={downloadAndTrack}
                     >
                       Download &amp; track
@@ -1181,12 +1211,12 @@ export function ResumeBuilder({
                     onChange={(e) => setQuestion(e.target.value)}
                     autoSize={{ minRows: 2, maxRows: 8 }}
                     placeholder="e.g. “Why do you want to work here?” or “Describe a hard production problem you solved.”"
-                    disabled={!generation.enabled}
+                    disabled={!generation.enabled || reviewOnly}
                   />
                   <Button
                     icon={<SendOutlined />}
                     loading={asking}
-                    disabled={!generation.enabled || !question.trim()}
+                    disabled={!generation.enabled || reviewOnly || !question.trim()}
                     onClick={ask}
                   >
                     Ask

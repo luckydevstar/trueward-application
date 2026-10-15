@@ -199,6 +199,9 @@ $$;
  *   subadmin, super_admin  every profile they can see (the team, or all teams)
  *   bidder                 only the ones assigned to them
  *
+ * This is about *reading* and using a profile. Whether a super admin may write
+ * work against one — a resume, an application — is works_in_team() below.
+ *
  * SECURITY DEFINER so candidate_profile's policy can consult
  * profile_assignment without that table's policy re-entering
  * candidate_profile — the two reference each other.
@@ -242,6 +245,48 @@ as $$
   select exists (
     select 1 from candidate_profile
     where id = target_profile and team_id = target_team
+  )
+$$;
+
+/**
+ * The team test for writing work against one profile: resumes and
+ * applications.
+ *
+ *   subadmin, bidder  in_own_team() — their team, as for every other write
+ *   super_admin       a profile they have assigned to themselves, and only in
+ *                     that profile's team
+ *
+ * A super admin has no team, so in_own_team() refuses them everywhere. Taking
+ * a profile on themselves (a profile_assignment naming them) is how they work
+ * it like a bidder, and the rows they write join the *profile's* team. That
+ * part matters: the team's subadmin sees the history, and the cooldown — which
+ * matches applications within one team — counts it.
+ *
+ * Only for the profile named. It is not a way into the team: a super admin
+ * still cannot touch a teammate's rows or anything for an unassigned profile.
+ *
+ * SECURITY DEFINER to read profile_assignment without its policy, as
+ * can_use_profile() does.
+ */
+create or replace function public.works_in_team(target_team uuid, target_profile uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    in_own_team(target_team)
+    or (
+      is_super_admin()
+      and exists (
+        select 1 from profile_assignment
+         where profile_id = target_profile
+           and user_id = auth.uid()
+           and team_id = target_team
+      )
+    ),
+    false
   )
 $$;
 
@@ -397,6 +442,10 @@ $$;
  * managed by them. The new owner re-assigns to their own bidders, which is the
  * point of handing it over.
  *
+ * A super admin's own assignment is the exception, and moves with the profile:
+ * they belong to no team, so it is as valid in the new one as it was in the
+ * old, and handing a profile over should not stop them working it.
+ *
  * SECURITY DEFINER, because the moving rows are in tables the caller is about
  * to stop being able to see — the update that takes a profile out of your team
  * is the update that makes it invisible to you. The guard is the explicit
@@ -456,8 +505,15 @@ begin
   update ssn_access_log     set team_id = target_team where profile_id = target_profile;
   update resume_generation  set team_id = target_team where profile_id = target_profile;
 
-  -- The old team's bidders lose it. See the note above.
-  delete from profile_assignment where profile_id = target_profile;
+  -- The old team's bidders lose it; a super admin working it keeps it. See
+  -- the note above.
+  delete from profile_assignment pa
+   where pa.profile_id = target_profile
+     and not exists (
+       select 1 from app_user u
+        where u.id = pa.user_id and u.role::text = 'super_admin'
+     );
+  update profile_assignment set team_id = target_team where profile_id = target_profile;
 end;
 $$;
 
@@ -600,8 +656,8 @@ create trigger candidate_profile_team_guard
   for each row execute function public.guard_profile_team();
 
 -- Reachable by a signed-in session, never by anon. The two moves decide inside
--- who may call them; profile_in_team() is needed by policies that run as the
--- signed-in caller.
+-- who may call them; profile_in_team() and works_in_team() are needed by
+-- policies that run as the signed-in caller.
 do $$
 declare
   fn text;
@@ -609,7 +665,8 @@ begin
   foreach fn in array array[
     'public.assign_profile_to_team(uuid, uuid)',
     'public.transfer_team(uuid, uuid)',
-    'public.profile_in_team(uuid, uuid)'
+    'public.profile_in_team(uuid, uuid)',
+    'public.works_in_team(uuid, uuid)'
   ] loop
     execute format('revoke all on function %s from public', fn);
     if exists (select 1 from pg_roles where rolname = 'anon') then

@@ -9,6 +9,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -19,25 +20,19 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import {
-  createProfile,
   deleteProfile,
   handProfileToTeam,
   replaceProfileAssignees,
+  setSelfAssignment,
 } from "@/app/dashboard/profiles/actions";
-import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
 import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
 import {
   EXACT_WIDTH_CLASS,
   EXACT_WIDTH_CSS,
   ResizableTitle,
 } from "@/components/grid/resizable-title";
-import {
-  ProfileEditor,
-  type ProfileFormValues,
-} from "@/components/profile-editor";
 import { useColumnWidths } from "@/lib/column-widths";
 import { usePersistentState } from "@/lib/persistent-state";
-import { toProfileRow } from "@/lib/profile-form";
 import { formatDate } from "@/lib/status";
 
 export type ProfileRow = {
@@ -50,7 +45,10 @@ export type ProfileRow = {
   country: string | null;
   updated_at: string;
   has_ssn: boolean;
+  /** The bidders working it. */
   assignee_ids: string[];
+  /** Whether the super admin has taken it on themselves. */
+  super_admin_works: boolean;
   team_id: string;
   /** The subadmin who owns this profile, or null if no subadmin owns its team. */
   team_label: string | null;
@@ -73,6 +71,8 @@ type Props = {
   canHandOver?: boolean;
   /** The teams it can be handed to. Empty unless canHandOver. */
   subadmins?: Array<{ id: string; label: string }>;
+  /** Super admin only: may assign profiles to themselves and work them. */
+  canSelfAssign?: boolean;
 };
 
 const WIDTH_STORAGE_KEY = "tw.profiles.columnWidths";
@@ -87,6 +87,7 @@ const DEFAULT_WIDTHS: Record<string, number> = {
   phone: 150,
   location: 190,
   team: 200,
+  mine: 150,
   assignees: 260,
   updated_at: 130,
   actions: 90,
@@ -101,11 +102,10 @@ export function ProfilesList({
   teamMembers,
   canHandOver = false,
   subadmins = [],
+  canSelfAssign = false,
 }: Props) {
   const router = useRouter();
   const { message, modal } = App.useApp();
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
   const [pageSize, setPageSize] = usePersistentState<number>(
@@ -113,6 +113,8 @@ export function ProfilesList({
     DEFAULT_PAGE_SIZE,
   );
   const [page, setPage] = useState(1);
+  /** The profile whose self-assignment is being saved, so its switch spins. */
+  const [assigning, setAssigning] = useState<string | null>(null);
 
   const data = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -123,39 +125,6 @@ export function ProfilesList({
         (r.email ?? "").toLowerCase().includes(q),
     );
   }, [rows, query]);
-
-  const create = async (values: ProfileFormValues) => {
-    let row;
-    try {
-      // Throws when the derived document is invalid — a bad employment date,
-      // say — which is worth surfacing before anything is written.
-      row = toProfileRow(values);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "Invalid profile");
-      return;
-    }
-
-    setBusy(true);
-    const created = await createProfile(row);
-
-    if (!created.ok) {
-      setBusy(false);
-      message.error(created.error);
-      return;
-    }
-
-    // Separate call: the plaintext has exactly one entry point into the system,
-    // and it is never part of an ordinary row write.
-    if (values.ssn?.trim()) {
-      const result = await setSsn(created.data.id, values.ssn);
-      if (!result.ok) message.warning(`Profile saved, but: ${result.error}`);
-    }
-
-    setBusy(false);
-    message.success("Profile created.");
-    setOpen(false);
-    router.refresh();
-  };
 
   const remove = async (id: string) => {
     const result = await deleteProfile(id);
@@ -205,6 +174,22 @@ export function ProfilesList({
         router.refresh();
       },
     });
+  };
+
+  const setMine = async (row: ProfileRow, next: boolean) => {
+    setAssigning(row.id);
+    const result = await setSelfAssignment(row.id, next);
+    setAssigning(null);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success(
+      next
+        ? `${row.full_name} is assigned to you — it's in your resume builder now.`
+        : `${row.full_name} is no longer assigned to you.`,
+    );
+    router.refresh();
   };
 
   const setAssignees = async (profileId: string, next: string[]) => {
@@ -288,6 +273,26 @@ export function ProfilesList({
           },
         ] satisfies ColumnsType<ProfileRow>)
       : []),
+    // The super admin working a profile themselves, like a bidder: what they
+    // generate and track is filed in the profile's team.
+    ...(canSelfAssign
+      ? ([
+          {
+            key: "mine",
+            title: "Assigned to me",
+            sorter: (a: ProfileRow, b: ProfileRow) =>
+              Number(b.super_admin_works) - Number(a.super_admin_works),
+            render: (_: unknown, row: ProfileRow) => (
+              <Switch
+                size="small"
+                checked={row.super_admin_works}
+                loading={assigning === row.id}
+                onChange={(next) => setMine(row, next)}
+              />
+            ),
+          },
+        ] satisfies ColumnsType<ProfileRow>)
+      : []),
     ...(canAssign || showAssignees
       ? ([
           {
@@ -295,20 +300,25 @@ export function ProfilesList({
             title: canAssign ? "Assigned to" : "Bidders",
             render: (_, row) =>
               canAssign ? (
-                <Select
-                  mode="multiple"
-                  allowClear
-                  size="small"
-                  variant="borderless"
-                  placeholder="Nobody"
-                  style={{ width: "100%" }}
-                  value={row.assignee_ids}
-                  onChange={(next) => setAssignees(row.id, next)}
-                  options={teamMembers.map((m) => ({
-                    value: m.id,
-                    label: m.label,
-                  }))}
-                />
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    size="small"
+                    variant="borderless"
+                    placeholder="Nobody"
+                    style={{ flex: "1 1 auto", minWidth: 0 }}
+                    value={row.assignee_ids}
+                    onChange={(next) => setAssignees(row.id, next)}
+                    options={teamMembers.map((m) => ({
+                      value: m.id,
+                      label: m.label,
+                    }))}
+                  />
+                  {/* Not in the Select: the super admin's assignment is
+                      theirs to give up, not the subadmin's to remove. */}
+                  {row.super_admin_works && <Tag color="purple">Super admin</Tag>}
+                </span>
               ) : (
                 // Read-only for the super admin: names, not a greyed-out
                 // control that looks broken.
@@ -402,13 +412,11 @@ export function ProfilesList({
             }}
           />
           {canCreate && (
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => setOpen(true)}
-            >
-              New profile
-            </Button>
+            <Link href="/dashboard/profiles/new">
+              <Button type="primary" icon={<PlusOutlined />}>
+                New profile
+              </Button>
+            </Link>
           )}
         </Space>
       </Space>
@@ -455,13 +463,6 @@ export function ProfilesList({
 
       <style>{`${MARQUEE_CSS}${EXACT_WIDTH_CSS}`}</style>
 
-      <ProfileEditor
-        open={open}
-        busy={busy}
-        canSeeSsn={canCreate}
-        onCancel={() => setOpen(false)}
-        onSubmit={create}
-      />
     </>
   );
 }

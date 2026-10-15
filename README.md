@@ -245,7 +245,8 @@ same perceived speed without that.
 Three roles, one per layer:
 
 - the **super admin** runs the platform: adds and manages subadmins, reviews
-  every team's work, and corrects, removes or re-homes any team's profiles
+  every team's work, and corrects, removes or re-homes any team's profiles —
+  and can assign any profile to themselves and work it like a bidder
 - a **subadmin** runs one team: its candidate profiles, the bidders they add,
   and which bidder works which profile
 - a **bidder** works the profiles assigned to them — tracks applications and
@@ -259,7 +260,7 @@ Records belong to a *team*, identified by a subadmin's id:
 
 | Role | Reads | Writes | Manages accounts |
 | --- | --- | --- | --- |
-| `super_admin` | **every team's records** | any team's profiles and their attachments (edit, delete — not create); moves profiles and whole teams between subadmins | subadmins: add, edit, reset password, remove |
+| `super_admin` | **every team's records** | any team's profiles and their attachments (edit, delete — not create); moves profiles and whole teams between subadmins; applications and resumes **for profiles assigned to themselves**, filed in the profile's team | subadmins: add, edit, reset password, remove |
 | `subadmin` | everything in their own team | profiles, attachments, SSNs, assignments, blocklist, billing, any application or resume on the team | their own bidders |
 | `bidder` | profiles assigned to them, their applications, applications and resumes on those profiles | applications and resumes, **for assigned profiles only** | — |
 
@@ -291,7 +292,16 @@ update and delete policies also admit `is_super_admin()`, and a trigger
 (`guard_profile_team()`) refuses any change of `team_id` outside the two move
 functions, so a profile can never travel without its applications. A written row must belong to exactly one team, and a super
 admin belongs to none; using `in_team()` in a `WITH CHECK` would let them stamp
-rows into any team. The two structural things a super admin does — handing a
+rows into any team.
+
+Resumes and applications use `works_in_team(team_id, profile_id)`, which is
+`in_own_team()` plus one case: a super admin, for a profile assigned to
+themselves, in that profile's team. That is how the super admin works a profile
+like a bidder without being given a team — what they record lands in the
+profile's team, so its subadmin sees it and the 14-day cooldown counts it. It
+opens only that profile, and only their own rows on it.
+
+The two structural things a super admin does — handing a
 profile to another subadmin (`assign_profile_to_team()`) and moving a whole
 team (`transfer_team()`) — are `SECURITY DEFINER` functions with their own
 `is_super_admin()` guard.
@@ -338,6 +348,13 @@ subadmin until deliberately routed. The subadmin assigns from the Profiles
 page, to their own bidders only — the policy checks both ends, the profile and
 the person, belong to the team. The super admin sees the assignments but
 leaves them to the subadmin.
+
+The super admin can also assign a profile **to themselves** (Profiles →
+“Assigned to me”), in any team. It then opens in their resume builder and
+Applications entry row like a bidder's. The subadmin sees a “Super admin” tag
+on it but cannot remove it — that assignment is the super admin's to give up.
+Handing the profile to another subadmin keeps it; the bidders' assignments are
+dropped as before.
 
 Unassigning takes the profile away entirely: the bidder no longer sees it or
 its resumes, and can no longer change applications they recorded for it,

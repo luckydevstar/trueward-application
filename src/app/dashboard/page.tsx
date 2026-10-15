@@ -6,9 +6,9 @@ import { createClient } from "@/lib/supabase/server";
 export const metadata = { title: "Overview · Application" };
 
 export default async function DashboardPage() {
-  // Called for the redirect alone: an anonymous or orphaned session never
-  // reaches the query below.
-  await requireActor();
+  // An anonymous or orphaned session is redirected here and never reaches the
+  // query below. The role picks which steps the guide shows.
+  const actor = await requireActor();
 
   const supabase = await createClient();
 
@@ -33,6 +33,7 @@ export default async function DashboardPage() {
       total={applications.length}
       byStatus={byStatus}
       unbilled={unbilled}
+      role={actor.role}
     />
   );
 }

@@ -22,21 +22,16 @@ import {
   Space,
   Typography,
 } from "antd";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
 import {
   addProfileAttachments,
   deleteProfileAttachment,
-  updateProfile,
 } from "@/app/dashboard/profiles/actions";
-import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
-import {
-  ProfileEditor,
-  type ProfileFormValues,
-} from "@/components/profile-editor";
 import { displayUrl } from "@/lib/profile";
-import { toFormValues, toProfileRow } from "@/lib/profile-form";
+import { toFormValues } from "@/lib/profile-form";
 import { formatDate } from "@/lib/status";
 import { useUploadThing } from "@/lib/uploadthing";
 
@@ -68,8 +63,6 @@ export function ProfileDetail({
 }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -125,37 +118,6 @@ export function ProfileDetail({
     }
   };
 
-  const save = async (values: ProfileFormValues) => {
-    let next;
-    try {
-      next = toProfileRow(values);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "Invalid profile");
-      return;
-    }
-
-    setBusy(true);
-    const result = await updateProfile(profileId, next);
-
-    if (!result.ok) {
-      setBusy(false);
-      message.error(result.error);
-      return;
-    }
-
-    // Blank means "leave the stored one alone", so only call through when the
-    // admin actually typed a replacement.
-    if (values.ssn?.trim()) {
-      const result = await setSsn(profileId, values.ssn);
-      if (!result.ok) message.warning(`Saved, but: ${result.error}`);
-    }
-
-    setBusy(false);
-    message.success("Saved.");
-    setOpen(false);
-    router.refresh();
-  };
-
   const removeAttachment = async (id: string) => {
     const result = await deleteProfileAttachment(id);
     if (!result.ok) {
@@ -206,13 +168,11 @@ export function ProfileDetail({
             Download JSON
           </Button>
           {canEdit && (
-            <Button
-              type="primary"
-              icon={<EditOutlined />}
-              onClick={() => setOpen(true)}
-            >
-              Edit profile
-            </Button>
+            <Link href={`/dashboard/profiles/${profileId}/edit`}>
+              <Button type="primary" icon={<EditOutlined />}>
+                Edit profile
+              </Button>
+            </Link>
           )}
         </Space>
       </Space>
@@ -423,16 +383,6 @@ export function ProfileDetail({
         </Col>
       </Row>
 
-      <ProfileEditor
-        open={open}
-        busy={busy}
-        profileId={profileId}
-        canSeeSsn={canSeeSsn}
-        hasSsn={row.has_ssn}
-        initialValues={values}
-        onCancel={() => setOpen(false)}
-        onSubmit={save}
-      />
     </>
   );
 }

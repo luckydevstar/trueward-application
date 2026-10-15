@@ -30,7 +30,7 @@ import {
 import type { TableProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
 import { ROW_COLUMNS, type ApplicationRow } from "@/lib/application-row";
@@ -66,20 +66,33 @@ type ViewMode = "active" | "archived";
 
 type Option = { id: string; label: string };
 
+type ProfileOption = Option & {
+  /** The profile's team, where a row for it is filed when you have none. */
+  teamId?: string;
+  /**
+   * False for a profile a super admin only reviews; one assigned to them is
+   * theirs to record for. Absent means workable.
+   */
+  workable?: boolean;
+};
+
 type Props = {
   teamId: string;
   userId: string;
   isAdmin: boolean;
+  /** The subadmin: may change any row in the team, not only their own. */
+  canChangeAny: boolean;
   rows: Row[];
-  profiles: Option[];
+  profiles: ProfileOption[];
   appliers: Option[];
   blockedNames: string[];
   /**
-   * Browsing without a team of your own — a super admin.
+   * Browsing without a team of your own and no profile assigned to you — a
+   * super admin reviewing.
    *
-   * Reading and fixing every team's rows is coherent; creating one is not,
-   * because a new row has to belong to exactly one team and theirs is "all of
-   * them". So the entry row goes, and the rest of the grid stays.
+   * A new row has to belong to exactly one team. A super admin with profiles
+   * assigned to themselves records into each profile's team, so they keep the
+   * entry row; without any, there is nothing they could record for.
    */
   readOnly?: boolean;
 };
@@ -155,6 +168,7 @@ export function ApplicationsGrid({
   teamId,
   userId,
   isAdmin,
+  canChangeAny,
   rows,
   profiles,
   appliers,
@@ -279,8 +293,27 @@ export function ApplicationsGrid({
     [appliers],
   );
 
-  /** You may change your own rows; admins may change any in their team. */
-  const owns = (row: Row) => isAdmin || row.created_by === userId;
+  /**
+   * The profiles you may record for — all of them, except for a super admin,
+   * who records only for the ones assigned to themselves.
+   */
+  const workProfiles = useMemo(() => profiles.filter((p) => p.workable !== false), [profiles]);
+  const unworkable = useMemo(
+    () => new Set(profiles.filter((p) => p.workable === false).map((p) => p.id)),
+    [profiles],
+  );
+
+  /**
+   * You may change your own rows; a subadmin may change any in their team. A
+   * super admin's own rows stay theirs only while the profile is assigned to
+   * them — the policy (works_in_team) refuses them afterwards.
+   */
+  const owns = useCallback(
+    (row: Row) =>
+      canChangeAny ||
+      (row.created_by === userId && !(row.profile_id && unworkable.has(row.profile_id))),
+    [canChangeAny, userId, unworkable],
+  );
 
   /**
    * Editing is for live rows. An archived row is deliberately read-only —
@@ -299,11 +332,9 @@ export function ApplicationsGrid({
    * Narrowing the view narrows the action, which is the safe direction.
    */
   const targets = useMemo(() => {
-    const actionable = new Set(
-      data.filter((r) => isAdmin || r.created_by === userId).map((r) => r.id),
-    );
+    const actionable = new Set(data.filter(owns).map((r) => r.id));
     return selected.filter((id) => actionable.has(id));
-  }, [selected, data, isAdmin, userId]);
+  }, [selected, data, owns]);
 
   /**
    * The most recent application for a (profile, company) still inside the
@@ -388,8 +419,9 @@ export function ApplicationsGrid({
       .insert({
         ...payloadOf(draft),
         resume_document_id: null,
-        // RLS asserts both of these in its WITH CHECK clause.
-        team_id: teamId,
+        // RLS asserts both of these in its WITH CHECK clause. Without a team
+        // of your own (a super admin), the row joins the profile's.
+        team_id: teamId || profiles.find((p) => p.id === draft.profile_id)?.teamId || "",
         created_by: userId,
       })
       .select(ROW_COLUMNS)
@@ -580,7 +612,7 @@ export function ApplicationsGrid({
             placeholder="Choose"
             style={{ width: "100%" }}
             onChange={(next) => patchEdit({ profile_id: next })}
-            options={profiles.map((p) => ({ value: p.id, label: p.label }))}
+            options={workProfiles.map((p) => ({ value: p.id, label: p.label }))}
           />
         ) : value ? (
           <Marquee title={profileName.get(value)}>
@@ -904,7 +936,7 @@ export function ApplicationsGrid({
         style={{ width: "100%" }}
         value={draft.profile_id ?? undefined}
         onChange={(profile_id) => patchDraft({ profile_id })}
-        options={profiles.map((p) => ({ value: p.id, label: p.label }))}
+        options={workProfiles.map((p) => ({ value: p.id, label: p.label }))}
         status={draftClash ? "error" : undefined}
       />
     ),
@@ -993,7 +1025,7 @@ export function ApplicationsGrid({
           </Typography.Title>
           <Typography.Text type="secondary">
             {readOnly
-              ? "Every team's applications. You have no team of your own, so there is no row to add into."
+              ? "Every team's applications. Assign a profile to yourself on the Profiles page to record your own."
               : view === "active"
                 ? "Type into the top row to add a record. Drag any column edge to resize; double-click a row to edit it."
                 : "Archived records are read-only. Restore one to edit it again."}

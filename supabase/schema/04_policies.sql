@@ -34,8 +34,10 @@
 --   bidder    applications and resumes, for profiles assigned to them only
 --   super     profiles and their attachments in any team (update and delete,
 --             not create — a new profile needs a team, and they have none);
---             account management goes through server actions, and moves
---             through SECURITY DEFINER functions
+--             applications and resumes like a bidder, for profiles they have
+--             assigned to themselves, filed in the profile's team
+--             (works_in_team); account management goes through server
+--             actions, and moves through SECURITY DEFINER functions
 -- ===========================================================================
 
 alter table app_user           enable row level security;
@@ -58,12 +60,19 @@ drop policy if exists app_user_self_select on app_user;
 create policy app_user_self_select on app_user
   for select using (id = auth.uid());
 
+-- The super admin's own row is readable by every team member: they may work
+-- a profile in any team, and the team reading that history should see who
+-- recorded it rather than an unknown author. Their row holds a name, an email
+-- and a role, nothing a teammate shouldn't know about the platform's owner.
 drop policy if exists app_user_team_select on app_user;
 create policy app_user_team_select on app_user
   for select using (
     app_role()::text = 'super_admin'
     or created_by_id = auth.uid()
     or id = app_team_id()
+    -- Team members only: not anon, and not a teamless account that signed
+    -- itself up.
+    or (role::text = 'super_admin' and app_team_id() is not null)
   );
 
 -- No update policy, so nobody can update app_user through the API at all.
@@ -111,7 +120,8 @@ create policy candidate_profile_delete on candidate_profile
 -- --- profile_assignment ---------------------------------------------------
 
 -- A bidder may read their own assignments — that is how the UI knows what to
--- offer — but only their subadmin may create or remove one.
+-- offer — but only their subadmin may create or remove one. The super admin
+-- assigns profiles to themselves, in any team, and removes only their own.
 drop policy if exists profile_assignment_select on profile_assignment;
 create policy profile_assignment_select on profile_assignment
   for select using (
@@ -125,21 +135,45 @@ create policy profile_assignment_select on profile_assignment
 drop policy if exists profile_assignment_insert on profile_assignment;
 create policy profile_assignment_insert on profile_assignment
   for insert with check (
-    in_own_team(team_id)
-    and is_subadmin()
-    and assigned_by = auth.uid()
-    and profile_in_team(profile_id, team_id)
-    and exists (
-      select 1 from app_user u
-       where u.id = user_id
-         and u.created_by_id = team_id
-         and u.role::text = 'bidder'
+    (
+      in_own_team(team_id)
+      and is_subadmin()
+      and assigned_by = auth.uid()
+      and profile_in_team(profile_id, team_id)
+      and exists (
+        select 1 from app_user u
+         where u.id = user_id
+           and u.created_by_id = team_id
+           and u.role::text = 'bidder'
+      )
+    )
+    or (
+      -- Themselves only: the super admin does not route a team's work to its
+      -- bidders, which stays the subadmin's call.
+      is_super_admin()
+      and user_id = auth.uid()
+      and assigned_by = auth.uid()
+      and profile_in_team(profile_id, team_id)
     )
   );
 
+-- A subadmin removes their bidders' assignments, not the super admin's: that
+-- one is the super admin's to give up.
 drop policy if exists profile_assignment_delete on profile_assignment;
 create policy profile_assignment_delete on profile_assignment
-  for delete using (in_own_team(team_id) and is_subadmin());
+  for delete using (
+    (
+      in_own_team(team_id)
+      and is_subadmin()
+      and exists (
+        select 1 from app_user u
+         where u.id = user_id
+           and u.created_by_id = team_id
+           and u.role::text = 'bidder'
+      )
+    )
+    or (is_super_admin() and user_id = auth.uid())
+  );
 
 -- --- profile_attachment ---------------------------------------------------
 -- Part of the profile, so it follows the profile: readable by whoever may use
@@ -166,6 +200,9 @@ create policy profile_attachment_delete on profile_attachment
 -- Follows the profile: you may write a resume for a candidate you may work
 -- with, and change one you wrote. A bidder whose assignment is removed keeps
 -- sight of nothing, including their own resumes for that candidate.
+--
+-- works_in_team() rather than in_own_team() in the writes, so a super admin
+-- working a profile assigned to them writes into its team like a bidder.
 
 drop policy if exists resume_document_select on resume_document;
 create policy resume_document_select on resume_document
@@ -174,7 +211,7 @@ create policy resume_document_select on resume_document
 drop policy if exists resume_document_insert on resume_document;
 create policy resume_document_insert on resume_document
   for insert with check (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and created_by = auth.uid()
     and can_use_profile(profile_id)
     and profile_in_team(profile_id, team_id)
@@ -185,11 +222,11 @@ create policy resume_document_insert on resume_document
 drop policy if exists resume_document_update on resume_document;
 create policy resume_document_update on resume_document
   for update using (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and (is_subadmin() or created_by = auth.uid())
     and can_use_profile(profile_id)
   ) with check (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and can_use_profile(profile_id)
     and profile_in_team(profile_id, team_id)
   );
@@ -197,7 +234,7 @@ create policy resume_document_update on resume_document
 drop policy if exists resume_document_delete on resume_document;
 create policy resume_document_delete on resume_document
   for delete using (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and (is_subadmin() or created_by = auth.uid())
     and can_use_profile(profile_id)
   );
@@ -229,7 +266,9 @@ create policy blocked_company_delete on blocked_company
 -- A bidder records applications only for a profile assigned to them —
 -- can_use_profile() is false for them on a null profile, so "no profile" is not
 -- a way around it. A subadmin may still record one with no profile, as the
--- older rows have none.
+-- older rows have none. A super admin records, and changes their own, only for
+-- a profile assigned to them, in that profile's team (works_in_team(), which
+-- is false for them on a null profile).
 
 drop policy if exists application_select on application;
 create policy application_select on application
@@ -245,7 +284,7 @@ create policy application_select on application
 drop policy if exists application_insert on application;
 create policy application_insert on application
   for insert with check (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and created_by = auth.uid()
     and can_use_profile(profile_id)
     and (profile_id is null or profile_in_team(profile_id, team_id))
@@ -257,10 +296,10 @@ create policy application_insert on application
 drop policy if exists application_update on application;
 create policy application_update on application
   for update using (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and (is_subadmin() or created_by = auth.uid())
   ) with check (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and can_use_profile(profile_id)
     and (profile_id is null or profile_in_team(profile_id, team_id))
   );
@@ -268,7 +307,7 @@ create policy application_update on application
 drop policy if exists application_delete on application;
 create policy application_delete on application
   for delete using (
-    in_own_team(team_id)
+    works_in_team(team_id, profile_id)
     and (is_subadmin() or created_by = auth.uid())
   );
 

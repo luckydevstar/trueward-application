@@ -2,7 +2,7 @@ import { ResumeBuilder } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { openRouterConfigured } from "@/lib/ai/openrouter";
 import { profileSchema } from "@/lib/document/schema";
-import { profileReach, scopeToReach } from "@/lib/profile-scope";
+import { assignedProfileIds, profileReach, scopeToReach } from "@/lib/profile-scope";
 import { managesTeam } from "@/lib/roles";
 import { seesAllTeams, teamIdFor } from "@/lib/scope";
 import { allowedAccents, allowedTemplates } from "@/lib/style-access";
@@ -68,12 +68,12 @@ export default async function ResumesPage() {
    */
   const reach = await profileReach(supabase, actor, teamId);
 
-  const [profiles, documents] = await Promise.all([
+  const [profiles, documents, mine] = await Promise.all([
     scopeToReach(
       (() => {
         const query = supabase
           .from("candidate_profile")
-          .select("id, full_name, profile, company_context")
+          .select("id, full_name, team_id, profile, company_context")
           .order("full_name");
         return everyTeam ? query : query.eq("team_id", teamId);
       })(),
@@ -93,6 +93,9 @@ export default async function ResumesPage() {
       reach,
       "profile_id",
     ),
+    // The profiles a super admin has taken on, which they work rather than
+    // only review. Everyone else works whatever they can see.
+    everyTeam ? assignedProfileIds(supabase, actor.id) : Promise.resolve(null),
   ]);
   const ai = generation();
 
@@ -104,6 +107,8 @@ export default async function ResumesPage() {
     return {
       id: p.id,
       fullName: p.full_name,
+      teamId: p.team_id,
+      workable: mine ? mine.has(p.id) : true,
       // Whether one is on file, shown beside the profile picker; the text
       // itself is read by the server when generating.
       hasCompanyContext: Boolean(p.company_context?.trim()),
@@ -123,8 +128,8 @@ export default async function ResumesPage() {
       templates={allowedTemplates(actor.allowedTemplates)}
       accents={allowedAccents(actor.allowedAccents)}
       canEditAny={managesTeam(actor.role)}
-      // A super admin reviews every team's resumes and saves none — they have
-      // no team for a new one to belong to.
+      // A super admin reviews every team's resumes, and works — saves,
+      // generates, tracks — only the profiles assigned to themselves.
       readOnly={everyTeam}
       generation={ai}
     />

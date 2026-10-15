@@ -4,7 +4,8 @@ import { ApplicationsGrid } from "@/components/applications-grid";
 import { requireActor } from "@/lib/actor";
 import { ROW_COLUMNS, type ApplicationRow as Row } from "@/lib/application-row";
 import { fetchAll } from "@/lib/fetch-all";
-import { isAdminRole } from "@/lib/roles";
+import { assignedProfileIds } from "@/lib/profile-scope";
+import { isAdminRole, managesTeam } from "@/lib/roles";
 import { canBrowseRecords, seesAllTeams, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
@@ -36,7 +37,8 @@ export default async function ApplicationsPage() {
    * exactly the assigned ones the entry row may offer. A filter here would be
    * a second copy of those rules, free to drift from them.
    */
-  const [applications, profiles, members, blocked] = await Promise.all([
+  const everyTeam = seesAllTeams(actor);
+  const [applications, profiles, members, blocked, mine] = await Promise.all([
     /*
      * Paged, because PostgREST caps a response at 1,000 rows and says nothing
      * about it. Without this the grid showed the newest 1,000 applications
@@ -55,9 +57,11 @@ export default async function ApplicationsPage() {
         .order("id", { ascending: false })
         .range(from, to),
     ),
-    supabase.from("candidate_profile").select("id, full_name").order("full_name"),
+    supabase.from("candidate_profile").select("id, full_name, team_id").order("full_name"),
     supabase.from("app_user").select("id, name, email"),
     supabase.from("blocked_company").select("normalized_name"),
+    // A super admin records only for the profiles assigned to themselves.
+    everyTeam ? assignedProfileIds(supabase, actor.id) : Promise.resolve(null),
   ]);
 
   const rows = applications.rows;
@@ -65,16 +69,19 @@ export default async function ApplicationsPage() {
   return (
     <ApplicationsGrid
       // Empty for a super admin, who browses every team and belongs to none.
-      // The grid hides its entry row rather than offering a create that has
-      // no team to create into — see `readOnly` below.
+      // What they record joins the profile's team instead, and only for a
+      // profile assigned to them; with none, the grid hides its entry row.
       teamId={teamIdFor(actor) ?? ""}
-      readOnly={seesAllTeams(actor)}
+      readOnly={everyTeam && !mine?.size}
       userId={actor.id}
       isAdmin={isAdminRole(actor.role)}
+      canChangeAny={managesTeam(actor.role)}
       rows={rows}
       profiles={(profiles.data ?? []).map((p) => ({
         id: p.id,
         label: p.full_name,
+        teamId: p.team_id,
+        workable: mine ? mine.has(p.id) : true,
       }))}
       // Only people who actually appear in the visible rows: a filter listing
       // the whole team would offer options that select nothing.

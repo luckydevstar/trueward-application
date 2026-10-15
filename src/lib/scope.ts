@@ -80,6 +80,17 @@ export function canAssignProfiles(role: UserRole): boolean {
 }
 
 /**
+ * Whether this actor may take a profile on themselves and work it like a
+ * bidder: generate, save resumes, record applications.
+ *
+ * The super admin only. They have no team, so what they write joins the
+ * profile's team — see works_in_team() in supabase/schema/02_functions.sql.
+ */
+export function canSelfAssign(role: UserRole): boolean {
+  return role === "super_admin";
+}
+
+/**
  * Whether this actor may create and edit candidate profiles.
  *
  * A bidder is deliberately absent: they write resume *content* against a

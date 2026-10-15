@@ -1419,3 +1419,176 @@ delete from generation_prompt where id = '00000000-0000-0000-0000-0000000000a7';
 select 'deleting the active prompt falls back to the built-in' as check,
        active_prompt_id is null as expect_true
   from generation_setting;
+
+\echo ''
+\echo '=== 20. the super admin works a profile they assign to themselves ==='
+-- Team C's subadmin adds a candidate and records one application for it.
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000000c';
+insert into candidate_profile (id, full_name, profile, team_id, created_by)
+values ('00000000-0000-0000-0000-000000000f20', 'Worked By Super', '{}'::jsonb,
+        app_team_id(), auth.uid());
+insert into application (id, title, company, job_url, profile_id, team_id, created_by)
+values ('00000000-0000-0000-0000-000000000a20', 'Backend', 'Initech', 'https://example.com/i',
+        '00000000-0000-0000-0000-000000000f20', app_team_id(), auth.uid());
+
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select 'works_in_team() is false before assignment' as check,
+       works_in_team('00000000-0000-0000-0000-00000000000c',
+                     '00000000-0000-0000-0000-000000000f20') = false as expect_true;
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('Early', 'Hooli', 'https://example.com/h0',
+          '00000000-0000-0000-0000-000000000f20',
+          '00000000-0000-0000-0000-00000000000c', auth.uid());
+  raise exception 'FAIL: super admin recorded for a profile not assigned to them';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: super admin records only for profiles assigned to them';
+end $$;
+
+do $$
+begin
+  insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+  values ('00000000-0000-0000-0000-000000000f20', '00000000-0000-0000-0000-0000000000b3',
+          '00000000-0000-0000-0000-00000000000c', auth.uid());
+  raise exception 'FAIL: super admin routed a profile to a team''s bidder';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: super admin assigns to themselves only';
+end $$;
+
+do $$
+begin
+  insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+  values ('00000000-0000-0000-0000-000000000f20', auth.uid(),
+          '00000000-0000-0000-0000-00000000000a', auth.uid());
+  raise exception 'FAIL: super admin self-assignment named the wrong team';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: a self-assignment carries the profile''s own team';
+end $$;
+
+insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+values ('00000000-0000-0000-0000-000000000f20', auth.uid(),
+        '00000000-0000-0000-0000-00000000000c', auth.uid());
+select 'super admin assigned the profile to themselves' as check, count(*) = 1 as expect_true
+  from profile_assignment
+ where profile_id = '00000000-0000-0000-0000-000000000f20' and user_id = auth.uid();
+
+insert into application (id, title, company, job_url, profile_id, team_id, created_by)
+values ('00000000-0000-0000-0000-000000000a21', 'Platform', 'Hooli', 'https://example.com/h1',
+        '00000000-0000-0000-0000-000000000f20',
+        '00000000-0000-0000-0000-00000000000c', auth.uid());
+select 'super admin recorded into the profile''s team' as check, count(*) = 1 as expect_true
+  from application where id = '00000000-0000-0000-0000-000000000a21';
+
+insert into resume_document (title, profile_id, content, team_id, created_by)
+values ('Super''s resume', '00000000-0000-0000-0000-000000000f20', '{}'::jsonb,
+        '00000000-0000-0000-0000-00000000000c', auth.uid());
+select 'super admin saved a resume for it' as check, count(*) = 1 as expect_true
+  from resume_document where created_by = auth.uid();
+
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('Again', 'Hooli Inc', 'https://example.com/h2',
+          '00000000-0000-0000-0000-000000000f20',
+          '00000000-0000-0000-0000-00000000000c', auth.uid());
+  raise exception 'FAIL: the cooldown let the super admin re-apply';
+exception
+  when check_violation then
+    raise notice 'PASS: the cooldown applies to the super admin too';
+end $$;
+
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('Elsewhere', 'Pied Piper', 'https://example.com/pp',
+          '00000000-0000-0000-0000-000000000f20',
+          '00000000-0000-0000-0000-00000000000a', auth.uid());
+  raise exception 'FAIL: super admin filed work in a team the profile is not in';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: the row must join the profile''s team';
+end $$;
+
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('Unassigned', 'Pied Piper', 'https://example.com/pp2',
+          '00000000-0000-0000-0000-0000000000f0',
+          '00000000-0000-0000-0000-00000000000a', auth.uid());
+  raise exception 'FAIL: one assignment opened another profile';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: an assignment opens only its own profile';
+end $$;
+
+with changed as (
+  update application set status = 'interviewing'
+   where id = '00000000-0000-0000-0000-000000000a21' returning 1
+)
+select 'super admin updates their own application' as check, count(*) = 1 as expect_true from changed;
+with changed as (
+  update application set notes = 'super was here'
+   where id = '00000000-0000-0000-0000-000000000a20' returning 1
+)
+select 'but not the subadmin''s row on the same profile' as check, count(*) = 0 as expect_true from changed;
+
+set test.uid = '00000000-0000-0000-0000-00000000000c';
+select 'the subadmin sees the super admin''s application' as check, count(*) = 1 as expect_true
+  from application where created_by = '00000000-0000-0000-0000-00000000005a';
+select 'the subadmin can name the super admin' as check, count(*) = 1 as expect_true
+  from app_user where id = '00000000-0000-0000-0000-00000000005a';
+with gone as (
+  delete from profile_assignment
+   where user_id = '00000000-0000-0000-0000-00000000005a' returning 1
+)
+select 'the subadmin cannot remove the super admin''s assignment' as check, count(*) = 0 as expect_true from gone;
+
+set test.uid = '00000000-0000-0000-0000-0000000000b3';
+select 'a bidder can name the super admin' as check, count(*) = 1 as expect_true
+  from app_user where role = 'super_admin';
+
+set test.uid = '00000000-0000-0000-0000-0000000000aa';
+select 'a teamless account still cannot' as check, count(*) = 0 as expect_true
+  from app_user where role = 'super_admin';
+
+-- Handing the profile over keeps the super admin on it, in the new team.
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+select assign_profile_to_team('00000000-0000-0000-0000-000000000f20',
+                              '00000000-0000-0000-0000-00000000000a');
+select 'the super admin''s assignment moved with the profile' as check,
+       count(*) = 1 as expect_true
+  from profile_assignment
+ where profile_id = '00000000-0000-0000-0000-000000000f20'
+   and user_id = auth.uid()
+   and team_id = '00000000-0000-0000-0000-00000000000a';
+insert into application (title, company, job_url, profile_id, team_id, created_by)
+values ('After the move', 'Raviga', 'https://example.com/r',
+        '00000000-0000-0000-0000-000000000f20',
+        '00000000-0000-0000-0000-00000000000a', auth.uid());
+select 'and they keep working it there' as check, count(*) = 1 as expect_true
+  from application where company = 'Raviga';
+
+delete from profile_assignment
+ where profile_id = '00000000-0000-0000-0000-000000000f20' and user_id = auth.uid();
+do $$
+begin
+  insert into application (title, company, job_url, profile_id, team_id, created_by)
+  values ('After unassign', 'Bachmanity', 'https://example.com/b',
+          '00000000-0000-0000-0000-000000000f20',
+          '00000000-0000-0000-0000-00000000000a', auth.uid());
+  raise exception 'FAIL: super admin kept writing after giving the profile up';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: giving up the assignment ends the writes';
+end $$;
+with changed as (
+  update application set notes = 'late edit'
+   where company = 'Raviga' returning 1
+)
+select 'nor change what they recorded' as check, count(*) = 0 as expect_true from changed;
+reset role;

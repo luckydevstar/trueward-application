@@ -7,6 +7,7 @@ import {
   canAssignProfiles,
   canBrowseRecords,
   canEditProfiles,
+  canSelfAssign,
   seesAllTeams,
   teamIdFor,
 } from "@/lib/scope";
@@ -94,9 +95,23 @@ export default async function ProfilesPage() {
       : Promise.resolve({ data: [] as never[] }),
   ]);
 
+  /*
+   * An assignment names a bidder or the super admin (working the profile
+   * themselves) — the policy admits nobody else. Split here, because the two
+   * are shown and changed differently: bidders are the subadmin's to route,
+   * the super admin's is theirs alone.
+   */
+  const bidderIds = new Set((members.data ?? []).map((m) => m.id));
   const byProfile = new Map<string, string[]>();
+  const superAdminWorks = new Set<string>();
   for (const a of assignments.data ?? []) {
-    byProfile.set(a.profile_id, [...(byProfile.get(a.profile_id) ?? []), a.user_id]);
+    if (bidderIds.has(a.user_id)) {
+      byProfile.set(a.profile_id, [...(byProfile.get(a.profile_id) ?? []), a.user_id]);
+    } else if (!everyTeam || a.user_id === actor.id) {
+      // In the super admin's own view, "assigned to me" means them, not any
+      // super admin.
+      superAdminWorks.add(a.profile_id);
+    }
   }
 
   /*
@@ -130,6 +145,7 @@ export default async function ProfilesPage() {
     // Only whether one exists — the ciphertext never leaves the server.
     has_ssn: p.ssn_encrypted !== null,
     assignee_ids: byProfile.get(p.id) ?? [],
+    super_admin_works: superAdminWorks.has(p.id),
     team_id: p.team_id,
     // Null for a team with no subadmin — the old owner's team, say, after
     // they were promoted. Shown as "unassigned" rather than as a blank.
@@ -144,6 +160,7 @@ export default async function ProfilesPage() {
       showAssignees={showsAssignments}
       rows={rows}
       canHandOver={everyTeam}
+      canSelfAssign={canSelfAssign(actor.role)}
       subadmins={subadmins.map((sa) => ({
         id: sa.id,
         label: sa.name ?? sa.email,

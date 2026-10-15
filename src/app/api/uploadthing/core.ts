@@ -2,7 +2,7 @@ import { createUploadthing, type FileRouter } from "uploadthing/next";
 import { UploadThingError } from "uploadthing/server";
 
 import { requireActor } from "@/lib/actor";
-import { canEditProfiles, seesAllTeams, teamIdFor } from "@/lib/scope";
+import { canEditProfiles, canSelfAssign, seesAllTeams, teamIdFor } from "@/lib/scope";
 
 const f = createUploadthing();
 
@@ -22,6 +22,11 @@ const f = createUploadthing();
 const authorize = async () => {
   const actor = await requireActor();
   const teamId = teamIdFor(actor);
+
+  // A super admin has no team but records applications for the profiles
+  // assigned to them; the application row's policy (works_in_team) decides
+  // which row the file may be attached to.
+  if (canSelfAssign(actor.role)) return { teamId: null, userId: actor.id };
 
   // Throwing here rejects the upload before a byte is sent.
   if (!teamId) {

@@ -11,7 +11,8 @@
  * Three roles, one per layer:
  *
  *   super_admin  runs the platform: adds and manages subadmins, reviews every
- *                team's work, changes none of it
+ *                team's work, changes none of it — except profiles they
+ *                assign to themselves, which they work like a bidder
  *   subadmin     runs one team: its profiles, its bidders, and who works which
  *                candidate
  *   bidder       works the profiles their subadmin assigns them — records
@@ -32,7 +33,7 @@ export const ROLE_META: Record<
   super_admin: {
     label: "Super admin",
     description:
-      "Runs the platform. Adds and manages subadmins, and reviews every team's work.",
+      "Runs the platform. Adds and manages subadmins, reviews every team's work, and can work any profile they assign to themselves.",
     color: "purple",
   },
   subadmin: {

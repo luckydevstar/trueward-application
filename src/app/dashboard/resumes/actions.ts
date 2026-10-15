@@ -5,11 +5,30 @@ import { generateContent, logRow } from "@/lib/ai/generate";
 import { modelCatalog, reasoningParam } from "@/lib/ai/models";
 import { completeText, openRouterConfigured } from "@/lib/ai/openrouter";
 import { loadGenerationConfig } from "@/lib/ai/settings";
-import { teamIdFor } from "@/lib/scope";
+import { assignedProfileIds } from "@/lib/profile-scope";
+import type { Actor } from "@/lib/roles";
+import { canSelfAssign } from "@/lib/scope";
 import { normalizeCompany } from "@/lib/status";
 import { profileSchema } from "@/lib/document/schema";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+
+type Client = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * Whether the actor may work this profile, as opposed to only read it.
+ *
+ * RLS has already said whether they may read it. That is the whole answer for
+ * a subadmin or a bidder; a super admin reads every profile but works only the
+ * ones assigned to themselves — the same rule works_in_team() applies to the
+ * rows they write.
+ */
+async function worksProfile(supabase: Client, actor: Actor, profileId: string) {
+  if (!canSelfAssign(actor.role)) return true;
+  return (await assignedProfileIds(supabase, actor.id)).has(profileId);
+}
+
+const NOT_ASSIGNED = "Assign this profile to yourself on the Profiles page to work it.";
 
 export type GenerateResult =
   | {
@@ -74,6 +93,7 @@ export async function generateResumeContent(input: {
     .eq("id", input.profileId)
     .maybeSingle();
   if (!row) return { ok: false, error: "Profile not found." };
+  if (!(await worksProfile(supabase, actor, row.id))) return { ok: false, error: NOT_ASSIGNED };
 
   const profile = profileSchema.safeParse(row.profile);
   if (!profile.success) {
@@ -144,7 +164,9 @@ export type RecordResult =
  * Applications grid records.
  *
  * Through the caller's own client, so the policies decide: a bidder may record
- * only for an assigned profile, and only into their own team. The duplicate
+ * only for an assigned profile, and only into their own team; a super admin
+ * only for a profile assigned to themselves. The row is filed in the profile's
+ * team, which for a subadmin or bidder is their own. The duplicate
  * cooldown is the database's trigger, and its refusal is returned as a reason
  * so the page can say why and offer the download alone. The blocklist is
  * checked here because the grid only warns about it.
@@ -156,10 +178,6 @@ export async function recordApplication(input: {
   jobUrl: string;
 }): Promise<RecordResult> {
   const actor = await requireActor();
-  const teamId = teamIdFor(actor);
-  if (!teamId) {
-    return { ok: false, reason: "other", error: "Your account can't record applications." };
-  }
 
   const title = input.title.trim();
   const company = input.company.trim();
@@ -172,9 +190,23 @@ export async function recordApplication(input: {
   }
 
   const supabase = await createClient();
+  const { data: profile } = await supabase
+    .from("candidate_profile")
+    .select("id, team_id")
+    .eq("id", input.profileId)
+    .maybeSingle();
+  if (!profile) return { ok: false, reason: "other", error: "Profile not found." };
+  if (!(await worksProfile(supabase, actor, profile.id))) {
+    return { ok: false, reason: "other", error: NOT_ASSIGNED };
+  }
+  const teamId = profile.team_id;
+
+  // The profile's team's list. A super admin reads every team's, so without
+  // the filter one company blocked by two teams would be two rows here.
   const { data: blocked } = await supabase
     .from("blocked_company")
     .select("name")
+    .eq("team_id", teamId)
     .eq("normalized_name", normalizeCompany(company))
     .maybeSingle();
   if (blocked) {
@@ -276,6 +308,7 @@ export async function askFollowUp(input: {
     .eq("id", input.profileId)
     .maybeSingle();
   if (!row) return { ok: false, error: "Profile not found." };
+  if (!(await worksProfile(supabase, actor, row.id))) return { ok: false, error: NOT_ASSIGNED };
 
   const admin = createAdminClient();
   const since = new Date(Date.now() - 3_600_000).toISOString();
