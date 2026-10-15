@@ -105,7 +105,14 @@ export function DashboardShell({ name, email, role, children }: Props) {
         breakpoint="lg"
         theme="dark"
         width={232}
-        style={{ background: BRAND.sider }}
+        // Pinned, so the navigation stays put while a long page scrolls.
+        style={{
+          background: BRAND.sider,
+          position: "sticky",
+          top: 0,
+          height: "100dvh",
+          overflowY: "auto",
+        }}
       >
         <Link
           href="/dashboard"

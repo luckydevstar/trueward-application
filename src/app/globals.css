@@ -7,10 +7,13 @@
  * repaint the page chrome while every antd surface stayed light.
  */
 
+/* `clip`, not `hidden`: `hidden` on body makes it a scroll container that
+   never scrolls, and every `position: sticky` inside it — the dashboard
+   header, the sidebar, the resume preview — then sticks to nothing. */
 html,
 body {
   max-width: 100vw;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {

@@ -56,10 +56,10 @@ type Props = {
 /**
  * A single horizontal control strip rather than a panel.
  *
- * These controls are adjusted while watching the preview, so they belong on one
- * line next to it — a stacked card pushed the preview down and made every
- * adjustment a scroll. `flexWrap` keeps it honest on narrow screens instead of
- * overflowing.
+ * These controls are adjusted while watching the preview, so the builder sets
+ * it directly above the preview, in the column that stays pinned — a stacked
+ * card pushed the preview down and made every adjustment a scroll. `flexWrap`
+ * keeps it honest on narrow screens instead of overflowing.
  */
 export function ResumeStyleToolbar({
   template,
@@ -77,16 +77,12 @@ export function ResumeStyleToolbar({
   return (
     <div
       style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 5,
         display: "flex",
         alignItems: "center",
         flexWrap: "wrap",
         gap: 4,
         rowGap: 8,
         padding: "8px 12px",
-        marginBottom: 12,
         background: "#fff",
         border: "1px solid #e5e7eb",
         borderRadius: 8,

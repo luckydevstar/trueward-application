@@ -121,13 +121,12 @@ type Props = {
 type Run = Extract<GenerateResult, { ok: true }>;
 
 /**
- * Both panels are pinned to the viewport rather than growing with content.
- *
- * The editor and the preview are read against each other, so a page that grows
- * downwards means scrolling to compare the two. Fixed height, scroll inside.
- * The offset covers the dashboard's padding, the page header and the toolbar.
+ * The steps grow to their full height and scroll with the page — nothing sits
+ * hidden inside a fixed box — while the preview column stays pinned beside
+ * them at the viewport's height, so whatever step you are on, the resume is in
+ * view. The offset is the dashboard's sticky header (64px) plus a gap.
  */
-const PANEL_HEIGHT = "calc(100dvh - 236px)";
+const STICKY_TOP = 80;
 
 /** Template and styling, remembered together so they can't fall out of step. */
 type Preset = { template: string; style: ResumeStyle };
@@ -772,25 +771,10 @@ export function ResumeBuilder({
         </Space>
       </Space>
 
-      <ResumeStyleToolbar
-        template={template}
-        style={style}
-        templates={templates}
-        accents={accents}
-        onTemplateChange={setTemplate}
-        onStyleChange={setStyle}
-      />
-
-      <Row gutter={16}>
+      <Row gutter={[16, 16]} align="top">
         <Col xs={24} lg={10}>
-          <Card
-            variant="borderless"
-            styles={{
-              body: { height: PANEL_HEIGHT, overflowY: "auto", padding: 20 },
-            }}
-          >
-            <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-              <Step number={1} title="Candidate" />
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <StepCard number={1} title="Candidate">
               <div>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   Profile
@@ -849,8 +833,8 @@ export function ResumeBuilder({
               )}
 
               {!isExample && (
-                <>
-                  <div>
+                <Row gutter={[8, 8]}>
+                  <Col xs={24} sm={12}>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       Saved resumes
                     </Typography.Text>
@@ -866,17 +850,22 @@ export function ResumeBuilder({
                         label: `${d.title} · ${formatDate(d.updated_at)}`,
                       }))}
                     />
-                  </div>
-
-                  <Input
-                    placeholder="Title — e.g. “Acme, Staff Engineer”"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                  />
-                </>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Title, for saving
+                    </Typography.Text>
+                    <Input
+                      placeholder="e.g. “Acme, Staff Engineer”"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                    />
+                  </Col>
+                </Row>
               )}
+            </StepCard>
 
-              <Step number={2} title="Content" />
+            <StepCard number={2} title="Content">
               <Segmented<Source>
                 block
                 value={source}
@@ -918,7 +907,7 @@ export function ResumeBuilder({
                     <Input.TextArea
                       value={jobDescription}
                       onChange={(e) => setJobDescription(e.target.value)}
-                      autoSize={{ minRows: 8, maxRows: 20 }}
+                      autoSize={{ minRows: 10, maxRows: 30 }}
                       placeholder="Paste the job posting — title, responsibilities, requirements."
                       disabled={isExample}
                     />
@@ -988,7 +977,7 @@ export function ResumeBuilder({
                         Output <span style={{ opacity: 0.7 }}>— the generated JSON, editable</span>
                       </Typography.Text>
                       <Input.TextArea
-                        rows={14}
+                        autoSize={{ minRows: 12, maxRows: 48 }}
                         value={json}
                         onChange={(e) => setJson(e.target.value)}
                         style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
@@ -1047,7 +1036,7 @@ export function ResumeBuilder({
                   </div>
 
                   <Input.TextArea
-                    rows={14}
+                    autoSize={{ minRows: 12, maxRows: 48 }}
                     value={json}
                     onChange={(e) => setJson(e.target.value)}
                     placeholder='{ "targetTitle": "…", "summary": "…", "skills": [], "experiences": [] }'
@@ -1056,7 +1045,9 @@ export function ResumeBuilder({
                 </>
               )}
 
-              <Step number={3} title="Check" />
+            </StepCard>
+
+            <StepCard number={3} title="Check">
               {parsed.kind === "noprofile" && (
                 <Alert type="info" showIcon title="Choose a profile to begin." />
               )}
@@ -1163,21 +1154,29 @@ export function ResumeBuilder({
                 />
               )}
 
-              {parsed.kind === "ok" && !isExample && (
-                <>
-                  <Step number={4} title="Apply" />
-                  <Input
-                    placeholder="Company"
-                    value={company}
-                    onChange={(e) => setCompany(e.target.value)}
-                    disabled={reviewOnly}
-                  />
-                  <Input
-                    placeholder={`Job title — ${parsed.document.content.targetTitle}`}
-                    value={jobTitle}
-                    onChange={(e) => setJobTitle(e.target.value)}
-                    disabled={reviewOnly}
-                  />
+            </StepCard>
+
+            {parsed.kind === "ok" && !isExample && (
+              <>
+                <StepCard number={4} title="Apply">
+                  <Row gutter={[8, 8]}>
+                    <Col xs={24} sm={12}>
+                      <Input
+                        placeholder="Company"
+                        value={company}
+                        onChange={(e) => setCompany(e.target.value)}
+                        disabled={reviewOnly}
+                      />
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Input
+                        placeholder={`Job title — ${parsed.document.content.targetTitle}`}
+                        value={jobTitle}
+                        onChange={(e) => setJobTitle(e.target.value)}
+                        disabled={reviewOnly}
+                      />
+                    </Col>
+                  </Row>
                   <Input
                     placeholder="Job URL — https://…"
                     value={jobUrl}
@@ -1205,7 +1204,9 @@ export function ResumeBuilder({
                     </Button>
                   </Tooltip>
 
-                  <Step number={5} title="Follow-up questions" />
+                </StepCard>
+
+                <StepCard number={5} title="Follow-up questions">
                   <Input.TextArea
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
@@ -1213,14 +1214,16 @@ export function ResumeBuilder({
                     placeholder="e.g. “Why do you want to work here?” or “Describe a hard production problem you solved.”"
                     disabled={!generation.enabled || reviewOnly}
                   />
-                  <Button
-                    icon={<SendOutlined />}
-                    loading={asking}
-                    disabled={!generation.enabled || reviewOnly || !question.trim()}
-                    onClick={ask}
-                  >
-                    Ask
-                  </Button>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <Button
+                      icon={<SendOutlined />}
+                      loading={asking}
+                      disabled={!generation.enabled || reviewOnly || !question.trim()}
+                      onClick={ask}
+                    >
+                      Ask
+                    </Button>
+                  </div>
                   {answers.map((a, i) => (
                     <Card
                       key={i}
@@ -1249,70 +1252,94 @@ export function ResumeBuilder({
                       </Typography.Text>
                     </Card>
                   ))}
-                </>
-              )}
-            </Space>
-          </Card>
+                </StepCard>
+              </>
+            )}
+          </div>
         </Col>
 
-        <Col xs={24} lg={14}>
-          <Card
-            title="Preview"
-            variant="borderless"
-            extra={
-              parsed.kind === "ok" && (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {template} · {style.accent ?? "slate"} ·{" "}
-                  {style.fontScale ?? 100}%
-                </Typography.Text>
-              )
-            }
-            styles={{
-              body: {
-                height: PANEL_HEIGHT,
-                overflowY: "auto",
-                // The sheet reads as paper against the dashboard's grey.
-                background: "#f1f4f9",
-                padding: 16,
-              },
+        <Col xs={24} lg={14} style={{ position: "sticky", top: STICKY_TOP }}>
+          {/*
+            Pinned beside the steps at the viewport's height: the style controls
+            on top, the PDF filling the rest. The PDF viewer scrolls itself.
+          */}
+          <div
+            style={{
+              height: `calc(100dvh - ${STICKY_TOP + 16}px)`,
+              minHeight: 520,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
             }}
           >
-            {parsed.kind === "ok" ? (
-              previewUrl ? (
-                <iframe
-                  // Keyed on the URL so the viewer reloads rather than caching
-                  // the previous document.
-                  key={previewUrl}
-                  src={`${previewUrl}#toolbar=0&navpanes=0&view=FitH`}
-                  title="Resume preview"
-                  style={{ width: "100%", height: "100%", border: 0 }}
+            <ResumeStyleToolbar
+              template={template}
+              style={style}
+              templates={templates}
+              accents={accents}
+              onTemplateChange={setTemplate}
+              onStyleChange={setStyle}
+            />
+            <Card
+              title="Preview"
+              variant="borderless"
+              style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+              extra={
+                parsed.kind === "ok" && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {template} · {style.accent ?? "slate"} ·{" "}
+                    {style.fontScale ?? 100}%
+                  </Typography.Text>
+                )
+              }
+              styles={{
+                body: {
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: "auto",
+                  // The sheet reads as paper against the dashboard's grey.
+                  background: "#f1f4f9",
+                  padding: 16,
+                },
+              }}
+            >
+              {parsed.kind === "ok" ? (
+                previewUrl ? (
+                  <iframe
+                    // Keyed on the URL so the viewer reloads rather than caching
+                    // the previous document.
+                    key={previewUrl}
+                    src={`${previewUrl}#toolbar=0&navpanes=0&view=FitH`}
+                    title="Resume preview"
+                    style={{ width: "100%", height: "100%", border: 0 }}
+                  />
+                ) : (
+                  <div
+                    style={{ height: "100%", display: "grid", placeItems: "center" }}
+                  >
+                    <Spin description="Rendering…" />
+                  </div>
+                )
+              ) : selectedProfile?.profile ? (
+                /*
+                 * Identity and employment history come from the profile, so they
+                 * can be shown the moment one is picked. Waiting for valid
+                 * content to render anything at all made a correctly-working page
+                 * look broken — you pick a candidate and stare at an empty box.
+                 */
+                <ProfileOnlyPreview
+                  profile={selectedProfile.profile}
+                  style={style}
                 />
               ) : (
                 <div
                   style={{ height: "100%", display: "grid", placeItems: "center" }}
                 >
-                  <Spin description="Rendering…" />
+                  <Empty description="Choose a profile to see it here." />
                 </div>
-              )
-            ) : selectedProfile?.profile ? (
-              /*
-               * Identity and employment history come from the profile, so they
-               * can be shown the moment one is picked. Waiting for valid
-               * content to render anything at all made a correctly-working page
-               * look broken — you pick a candidate and stare at an empty box.
-               */
-              <ProfileOnlyPreview
-                profile={selectedProfile.profile}
-                style={style}
-              />
-            ) : (
-              <div
-                style={{ height: "100%", display: "grid", placeItems: "center" }}
-              >
-                <Empty description="Choose a profile to see it here." />
-              </div>
-            )}
-          </Card>
+              )}
+            </Card>
+          </div>
         </Col>
       </Row>
     </>
@@ -1413,29 +1440,46 @@ function ProfileOnlyPreview({
  * A numbered section heading in the left panel: the page reads as three steps
  * — who, for what job, with what content — which is the order they are done in.
  */
-function Step({ number, title }: { number: number; title: string }): ReactNode {
+/**
+ * One step of the flow, as its own card. Cards rather than dividers in one
+ * long panel: each step reads as a unit, and the page — not a box inside it —
+ * is what scrolls.
+ */
+function StepCard({
+  number,
+  title,
+  children,
+}: {
+  number: number;
+  title: string;
+  children: ReactNode;
+}): ReactNode {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: number > 1 ? 8 : 0 }}>
-      <span
-        aria-hidden
-        style={{
-          width: 22,
-          height: 22,
-          borderRadius: 999,
-          display: "grid",
-          placeItems: "center",
-          fontSize: 12,
-          fontWeight: 600,
-          color: "#4f46e5",
-          background: "#eef0ff",
-        }}
-      >
-        {number}
-      </span>
-      <Typography.Text strong style={{ fontSize: 14 }}>
-        {title}
-      </Typography.Text>
-      <div style={{ flex: 1, height: 1, background: "#edf0f5" }} />
-    </div>
+    <Card variant="borderless" styles={{ body: { padding: 20 } }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <span
+          aria-hidden
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 999,
+            display: "grid",
+            placeItems: "center",
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#4f46e5",
+            background: "#eef0ff",
+          }}
+        >
+          {number}
+        </span>
+        <Typography.Text strong style={{ fontSize: 14 }}>
+          {title}
+        </Typography.Text>
+      </div>
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+        {children}
+      </Space>
+    </Card>
   );
 }
