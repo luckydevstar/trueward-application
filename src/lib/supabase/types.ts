@@ -187,6 +187,29 @@ export type GenerationPromptRow = {
   updated_at: string;
 };
 
+/** A background generation, and the draft application it becomes. */
+export type ResumeJobRow = {
+  id: string;
+  profile_id: string;
+  team_id: string;
+  created_by: string;
+  status: "running" | "ready" | "failed";
+  job_description: string;
+  company: string | null;
+  job_title: string | null;
+  job_url: string | null;
+  content: unknown;
+  valid: boolean | null;
+  error: string | null;
+  model: string | null;
+  cost_usd: number | null;
+  latency_ms: number | null;
+  application_id: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
 /** One generation, written by the server for the per-model averages. */
 export type ResumeGenerationRow = {
   id: string;
@@ -270,6 +293,11 @@ export type Database = {
       generation_setting: Table<GenerationSettingRow>;
       generation_prompt: Table<GenerationPromptRow>;
       resume_generation: Table<ResumeGenerationRow>;
+      resume_job: Table<
+        ResumeJobRow,
+        Pick<ResumeJobRow, "profile_id" | "team_id" | "created_by" | "job_description"> &
+          Partial<Omit<ResumeJobRow, "profile_id" | "team_id" | "created_by" | "job_description">>
+      >;
     };
     Views: {
       /**

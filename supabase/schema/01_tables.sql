@@ -483,6 +483,55 @@ create index if not exists resume_generation_run_idx
 create index if not exists resume_generation_team_idx
   on resume_generation (team_id, created_at desc);
 
+-- --------------------------------------------------------------------------
+-- Resume jobs — generations that run in the background
+--
+-- Generate creates a row and returns at once; the server finishes the model
+-- call after responding and fills in the result. So several can run at the
+-- same time, and they survive leaving the page: the builder lists its
+-- person's rows and opens one into the editor when it's ready.
+--
+-- Each row is a draft application, not only a result: the job description,
+-- and optionally the company, title and URL, are captured when it starts, so
+-- Download & track needs nothing retyped. Edits to the content are saved back
+-- here, so switching between rows loses nothing. Saving to the resume library
+-- (resume_document) stays a separate, deliberate step.
+--
+-- A person's own working space: only its creator reads or changes a row.
+-- team_id is the profile's team, as everywhere else, so the writes are held
+-- to works_in_team() like resumes and applications.
+-- --------------------------------------------------------------------------
+
+create table if not exists resume_job (
+  id              uuid primary key default gen_random_uuid(),
+  profile_id      uuid not null references candidate_profile (id) on delete cascade,
+  team_id         uuid not null references app_user (id) on delete cascade,
+  created_by      uuid not null references app_user (id) on delete cascade,
+  -- running → ready (content written, valid or not) or failed (no content).
+  -- A row left running past the function's time limit is shown as timed out.
+  status          text not null default 'running'
+                  check (status in ('running', 'ready', 'failed')),
+  job_description text not null,
+  company         text,
+  job_title       text,
+  job_url         text,
+  content         jsonb,
+  -- Whether the content passed validation, after the one repair attempt.
+  valid           boolean,
+  error           text,
+  model           text,
+  cost_usd        numeric(12, 6),
+  latency_ms      integer,
+  -- Set by Download & track.
+  application_id  uuid references application (id) on delete set null,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  finished_at     timestamptz
+);
+
+create index if not exists resume_job_owner_idx on resume_job (created_by, created_at desc);
+create index if not exists resume_job_profile_idx on resume_job (profile_id);
+
 -- ===========================================================================
 -- Retiring resume_builder
 --

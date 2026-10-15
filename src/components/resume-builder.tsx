@@ -1,14 +1,20 @@
 "use client";
 
 import {
+  CheckCircleFilled,
+  CloseCircleFilled,
+  CloseOutlined,
   CodeOutlined,
   CopyOutlined,
+  DeleteOutlined,
   DownloadOutlined,
+  ExclamationCircleFilled,
+  LoadingOutlined,
+  RedoOutlined,
   SendOutlined,
   RobotOutlined,
   SaveOutlined,
   ThunderboltOutlined,
-  UndoOutlined,
 } from "@ant-design/icons";
 import {
   Alert,
@@ -30,19 +36,21 @@ import {
 } from "antd";
 import type { DefaultOptionType } from "antd/es/select";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   askFollowUp,
   attachApplicationResume,
   generateResumeContent,
   recordApplication,
+  startResumeJob,
   type GenerateResult,
 } from "@/app/dashboard/resumes/actions";
 import {
   DEFAULT_STYLE,
   ResumeStyleToolbar,
 } from "@/components/resume-style-toolbar";
+import { JOB_STALE_MS, MAX_RUNNING_JOBS } from "@/lib/ai/defaults";
 import {
   EXAMPLE_DOCUMENT,
   EXAMPLE_PROFILE_ID,
@@ -69,7 +77,7 @@ import { coerceChoice } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/client";
 import { useUploadThing } from "@/lib/uploadthing";
 import { formatDate } from "@/lib/status";
-import type { ResumeStyle } from "@/lib/supabase/types";
+import type { ResumeJobRow, ResumeStyle } from "@/lib/supabase/types";
 
 type ProfileOption = {
   id: string;
@@ -115,7 +123,14 @@ type Props = {
   readOnly: boolean;
   /** Whether Generate works. Prompt and model are the super admin's. */
   generation: { enabled: boolean };
+  /**
+   * Your background generations, newest first. Null when the database has no
+   * resume_job table yet — Generate then runs in the request, as it used to.
+   */
+  jobs?: ResumeJobRow[] | null;
 };
+
+type Answer = { question: string; answer: string; costUsd: number | null; latencyMs: number };
 
 /** The last generation's receipt, shown under the button. */
 type Run = Extract<GenerateResult, { ok: true }>;
@@ -178,16 +193,33 @@ export function ResumeBuilder({
   canEditAny,
   readOnly,
   generation,
+  jobs: initialJobs = null,
 }: Props) {
   const router = useRouter();
   const { message, modal } = App.useApp();
 
   /*
-   * The one generation input besides the profile. The base prompt, model and
-   * reasoning are the super admin's and stay on the server; the job belongs to
-   * one resume, so it isn't remembered.
+   * The job a new generation is for. The base prompt, model and reasoning are
+   * the super admin's and stay on the server. Company, title and URL are
+   * optional here: they travel with the generation and pre-fill Apply.
    */
   const [jobDescription, setJobDescription] = useState("");
+  const [draftCompany, setDraftCompany] = useState("");
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftUrl, setDraftUrl] = useState("");
+
+  /*
+   * Background generations. Each runs on the server after Generate returns,
+   * so several can be in flight; the list is polled while any is running and
+   * re-read when the tab regains focus, which is what picks up one started in
+   * another tab. `openJobId` is the one loaded into the editor, whose edits
+   * are saved back to its row.
+   */
+  const jobsEnabled = initialJobs !== null;
+  const [jobs, setJobs] = useState<ResumeJobRow[]>(initialJobs ?? []);
+  const [openJobId, setOpenJobId] = useState<string | null>(null);
+  /** Ticks while something runs: elapsed times, and when a row has timed out. */
+  const [now, setNow] = useState(0);
 
   // Step 4: where this resume is going, so downloading it also tracks it.
   const [company, setCompany] = useState("");
@@ -199,14 +231,11 @@ export function ResumeBuilder({
   // Step 5: questions about this resume and job, answered by the same model.
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const [answers, setAnswers] = useState<
-    Array<{ question: string; answer: string; costUsd: number | null; latencyMs: number }>
-  >([]);
+  /** Answers per open generation ("scratch" for anything else), kept while you switch. */
+  const [answersByKey, setAnswersByKey] = useState<Record<string, Answer[]>>({});
   const [source, setSource] = usePersistentState<Source>(SOURCE_KEY, "ai");
   const [generating, setGenerating] = useState(false);
   const [lastRun, setLastRun] = useState<Run | null>(null);
-  /** What the editor held before the last generation replaced it — for Undo. */
-  const [beforeGeneration, setBeforeGeneration] = useState<string | null>(null);
 
   const options = useMemo(() => [...profiles, EXAMPLE_OPTION], [profiles]);
 
@@ -297,8 +326,12 @@ export function ResumeBuilder({
   const pickProfile = (id: string) => {
     setProfileId(id);
     setLastRun(null);
-    setBeforeGeneration(null);
-    setAnswers([]);
+    setOpenJobId(null);
+    setAnswersByKey((all) => {
+      const next = { ...all };
+      delete next.scratch;
+      return next;
+    });
     // Documents belong to one profile; keeping a selection across a switch
     // would show content whose employmentIds can't resolve.
     setDocumentId("");
@@ -311,6 +344,7 @@ export function ResumeBuilder({
 
   const pickDocument = (id: string) => {
     const doc = profileDocuments.find((d) => d.id === id);
+    setOpenJobId(null);
     setDocumentId(id);
     setTitle(doc?.title ?? "");
     setJson(doc ? JSON.stringify(doc.content, null, 2) : "");
@@ -584,17 +618,204 @@ export function ResumeBuilder({
     );
   };
 
+  const openJob = jobs.find((j) => j.id === openJobId) ?? null;
+  const answerKey = openJobId ?? "scratch";
+  const answers = answersByKey[answerKey] ?? [];
+
+  /** A row still "running" after the function's limit was cut off. */
+  const timedOut = (job: ResumeJobRow) =>
+    job.status === "running" && now > 0 && now - Date.parse(job.created_at) > JOB_STALE_MS;
+  const runningCount = jobs.filter((j) => j.status === "running" && !timedOut(j)).length;
+  const anyRunning = runningCount > 0;
+
+  /** Loads a finished generation into the editor, the preview and Apply. */
+  const showJob = (job: ResumeJobRow) => {
+    if (job.status !== "ready") return;
+    const option = options.find((p) => p.id === job.profile_id);
+    if (!option?.profile) {
+      message.warning("That profile isn't available to you any more.");
+      return;
+    }
+    setProfileId(job.profile_id);
+    setOpenJobId(job.id);
+    setDocumentId("");
+    setTitle(jobLabel(job, false));
+    setJson(JSON.stringify(job.content, null, 2));
+    setCompany(job.company ?? "");
+    setJobTitle(job.job_title ?? "");
+    setJobUrl(job.job_url ?? "");
+    setLastRun(null);
+  };
+
+  /** Back to a blank editor: nothing open. */
+  const closeDocument = () => {
+    setOpenJobId(null);
+    setDocumentId("");
+    setTitle("");
+    setJson("");
+    setCompany("");
+    setJobTitle("");
+    setJobUrl("");
+    setLastRun(null);
+  };
+
   /**
-   * Asks the model for this profile's content, for this job.
+   * Re-reads your recent generations, and says when one finishes.
    *
-   * The answer replaces the editor's JSON — kept for Undo — and then goes
-   * through exactly the same validation, preview and Save as pasted JSON. A
-   * reply that still fails validation after the server's one repair attempt
-   * is put in the editor anyway, where the errors are shown and can be fixed
-   * by hand, rather than thrown away along with what it cost.
+   * Called by the poll and on focus. Kept in a ref so those long-lived
+   * listeners always run the current render's version — with today's
+   * `openJobId` and editor — rather than the one they were set up with.
+   */
+  const refreshJobs = async () => {
+    const { data, error } = await createClient()
+      .from("resume_job")
+      .select("*")
+      .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (error || !data) return;
+
+    const before = new Map(jobs.map((j) => [j.id, j.status]));
+    const finished = data.filter((j) => before.get(j.id) === "running" && j.status !== "running");
+    setJobs(data);
+    setNow(Date.now());
+
+    for (const job of finished) {
+      const label = jobLabel(job);
+      if (job.status === "failed") message.error(`Generation failed: ${label}`);
+      else if (job.valid) message.success(`Ready: ${label}`);
+      else message.warning(`Ready, but needs a fix: ${label}`);
+    }
+    // Nothing open and nothing typed: open the first one that finished, so a
+    // single generation still feels like pressing a button and getting a
+    // resume.
+    const first = finished.find((j) => j.status === "ready");
+    if (first && !openJobId && !json.trim()) showJob(first);
+  };
+  const refreshRef = useRef(refreshJobs);
+  useEffect(() => {
+    refreshRef.current = refreshJobs;
+  });
+
+  // Poll while anything runs; the clock ticks with it for the elapsed times.
+  useEffect(() => {
+    if (!jobsEnabled || !anyRunning) return;
+    const poll = setInterval(() => void refreshRef.current(), 3000);
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      clearInterval(poll);
+      clearInterval(tick);
+    };
+  }, [jobsEnabled, anyRunning]);
+
+  // Coming back to the tab picks up anything started or finished elsewhere.
+  useEffect(() => {
+    if (!jobsEnabled) return;
+    const onFocus = () => void refreshRef.current();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [jobsEnabled]);
+
+  /*
+   * Edits to an open generation are saved back to its row, a moment after
+   * typing stops, so switching to another row and back loses nothing. Only
+   * JSON that parses is saved; Apply's fields go with it.
+   */
+  useEffect(() => {
+    if (!openJob) return;
+    const timer = setTimeout(async () => {
+      let content: unknown = openJob.content;
+      try {
+        content = JSON.parse(unfence(json));
+      } catch {
+        // Mid-edit; the last good version stays saved.
+      }
+      const next = {
+        content,
+        valid: parsed.kind === "ok",
+        company: company.trim() || null,
+        job_title: jobTitle.trim() || null,
+        job_url: jobUrl.trim() || null,
+      };
+      const changed =
+        JSON.stringify(next.content) !== JSON.stringify(openJob.content) ||
+        next.valid !== openJob.valid ||
+        next.company !== openJob.company ||
+        next.job_title !== openJob.job_title ||
+        next.job_url !== openJob.job_url;
+      if (!changed) return;
+      const { error } = await createClient()
+        .from("resume_job")
+        .update({ ...next, updated_at: new Date().toISOString() })
+        .eq("id", openJob.id);
+      if (!error) setJobs((all) => all.map((j) => (j.id === openJob.id ? { ...j, ...next } : j)));
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [openJob, json, parsed.kind, company, jobTitle, jobUrl]);
+
+  /**
+   * Starts a generation in the background. The form clears at once so the
+   * next job can be pasted while this one runs; the row appears under
+   * Generations and opens itself if nothing else is open when it finishes.
    */
   const generate = async () => {
     if (!selectedProfile?.profile || isExample) return;
+    if (!jobsEnabled) {
+      await generateNow();
+      return;
+    }
+    setGenerating(true);
+    const result = await startResumeJob({
+      profileId,
+      jobDescription,
+      company: draftCompany,
+      jobTitle: draftTitle,
+      jobUrl: draftUrl,
+    });
+    setGenerating(false);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    setJobs((all) => [result.job, ...all]);
+    setJobDescription("");
+    setDraftCompany("");
+    setDraftTitle("");
+    setDraftUrl("");
+    message.success("Generating in the background — paste the next job whenever you like.");
+  };
+
+  const retryJob = async (job: ResumeJobRow) => {
+    const result = await startResumeJob({
+      profileId: job.profile_id,
+      jobDescription: job.job_description,
+      company: job.company ?? undefined,
+      jobTitle: job.job_title ?? undefined,
+      jobUrl: job.job_url ?? undefined,
+    });
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    await createClient().from("resume_job").delete().eq("id", job.id);
+    setJobs((all) => [result.job, ...all.filter((j) => j.id !== job.id)]);
+  };
+
+  const deleteJob = async (job: ResumeJobRow) => {
+    const { error } = await createClient().from("resume_job").delete().eq("id", job.id);
+    if (error) {
+      message.error(error.message);
+      return;
+    }
+    setJobs((all) => all.filter((j) => j.id !== job.id));
+    if (job.id === openJobId) closeDocument();
+  };
+
+  /**
+   * The fallback before the database has resume_job: generate in the request
+   * and put the answer straight into the editor, as the builder used to.
+   */
+  const generateNow = async () => {
     setGenerating(true);
     const result = await generateResumeContent({ profileId, jobDescription });
     setGenerating(false);
@@ -604,9 +825,13 @@ export function ResumeBuilder({
       return;
     }
 
-    setBeforeGeneration(json);
+    setOpenJobId(null);
+    setDocumentId("");
     setJson(result.content);
     setLastRun(result);
+    setCompany(draftCompany);
+    setJobTitle(draftTitle);
+    setJobUrl(draftUrl);
     if (!title.trim()) {
       try {
         const target = JSON.parse(result.content)?.targetTitle;
@@ -674,9 +899,18 @@ export function ResumeBuilder({
       } catch {
         message.warning("Downloaded and tracked in Applications, but the PDF couldn't be attached to it.");
       }
-      setCompany("");
-      setJobTitle("");
-      setJobUrl("");
+      if (openJob) {
+        // The generation keeps its fields, now marked as sent.
+        await createClient()
+          .from("resume_job")
+          .update({ application_id: recorded.id, updated_at: new Date().toISOString() })
+          .eq("id", openJob.id);
+        setJobs((all) => all.map((j) => (j.id === openJob.id ? { ...j, application_id: recorded.id } : j)));
+      } else {
+        setCompany("");
+        setJobTitle("");
+        setJobUrl("");
+      }
     } catch (error) {
       message.error(error instanceof Error ? error.message : "Couldn't download the resume.");
     } finally {
@@ -687,9 +921,11 @@ export function ResumeBuilder({
   const ask = async () => {
     if (!question.trim()) return;
     setAsking(true);
+    const key = answerKey;
     const result = await askFollowUp({
       profileId,
-      jobDescription,
+      // The open generation's own job; otherwise whatever is in the job box.
+      jobDescription: openJob?.job_description ?? jobDescription,
       resume: json,
       question,
       history: answers.map(({ question, answer }) => ({ question, answer })),
@@ -699,18 +935,14 @@ export function ResumeBuilder({
       message.error(result.error);
       return;
     }
-    setAnswers((all) => [
+    setAnswersByKey((all) => ({
       ...all,
-      { question: question.trim(), answer: result.answer, costUsd: result.costUsd, latencyMs: result.latencyMs },
-    ]);
+      [key]: [
+        ...(all[key] ?? []),
+        { question: question.trim(), answer: result.answer, costUsd: result.costUsd, latencyMs: result.latencyMs },
+      ],
+    }));
     setQuestion("");
-  };
-
-  const undoGeneration = () => {
-    if (beforeGeneration === null) return;
-    setJson(beforeGeneration);
-    setBeforeGeneration(null);
-    setLastRun(null);
   };
 
   const canGenerate =
@@ -865,7 +1097,7 @@ export function ResumeBuilder({
               )}
             </StepCard>
 
-            <StepCard number={2} title="Content">
+            <StepCard number={2} title="Job">
               <Segmented<Source>
                 block
                 value={source}
@@ -907,11 +1139,37 @@ export function ResumeBuilder({
                     <Input.TextArea
                       value={jobDescription}
                       onChange={(e) => setJobDescription(e.target.value)}
-                      autoSize={{ minRows: 10, maxRows: 30 }}
+                      autoSize={{ minRows: 8, maxRows: 24 }}
                       placeholder="Paste the job posting — title, responsibilities, requirements."
                       disabled={isExample}
                     />
                   </div>
+                  <Row gutter={[8, 8]}>
+                    <Col xs={24} sm={12}>
+                      <Input
+                        placeholder="Company (optional)"
+                        value={draftCompany}
+                        onChange={(e) => setDraftCompany(e.target.value)}
+                        disabled={isExample}
+                      />
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Input
+                        placeholder="Job title (optional)"
+                        value={draftTitle}
+                        onChange={(e) => setDraftTitle(e.target.value)}
+                        disabled={isExample}
+                      />
+                    </Col>
+                    <Col span={24}>
+                      <Input
+                        placeholder="Job URL (optional) — https://…"
+                        value={draftUrl}
+                        onChange={(e) => setDraftUrl(e.target.value)}
+                        disabled={isExample}
+                      />
+                    </Col>
+                  </Row>
                   <Tooltip
                     title={
                       !generation.enabled
@@ -919,12 +1177,16 @@ export function ResumeBuilder({
                         : reviewOnly && !isExample
                           ? "Review only. Assign this profile to yourself on the Profiles page to generate for it."
                           : isExample
-                          ? "Pick a real candidate to generate for."
-                          : !jobDescription.trim()
-                            ? "Paste the job description first."
-                            : json.trim()
-                              ? "Replaces the current content. Undo puts it back."
-                              : undefined
+                            ? "Pick a real candidate to generate for."
+                            : !jobDescription.trim()
+                              ? "Paste the job description first."
+                              : jobsEnabled && runningCount >= MAX_RUNNING_JOBS
+                                ? `${MAX_RUNNING_JOBS} are generating — start the next when one finishes.`
+                                : jobsEnabled
+                                  ? "Runs in the background. Company, title and URL go with it to Apply."
+                                  : json.trim()
+                                    ? "Replaces the current content."
+                                    : undefined
                     }
                   >
                     <Button
@@ -933,56 +1195,23 @@ export function ResumeBuilder({
                       block
                       icon={<RobotOutlined />}
                       loading={generating}
-                      disabled={!canGenerate}
+                      disabled={!canGenerate || (jobsEnabled && runningCount >= MAX_RUNNING_JOBS)}
                       onClick={generate}
                     >
-                      {generating ? "Generating…" : json.trim() ? "Generate again" : "Generate resume"}
+                      {jobsEnabled
+                        ? generating
+                          ? "Starting…"
+                          : "Generate"
+                        : generating
+                          ? "Generating…"
+                          : "Generate resume"}
                     </Button>
                   </Tooltip>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      minHeight: 24,
-                    }}
-                  >
+                  {!jobsEnabled && generation.enabled && (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {lastRun
-                        ? [
-                            lastRun.model,
-                            lastRun.tokens ? `${lastRun.tokens.toLocaleString()} tokens` : null,
-                            lastRun.costUsd !== null ? `$${lastRun.costUsd.toFixed(4)}` : null,
-                            `${(lastRun.latencyMs / 1000).toFixed(1)}s`,
-                            lastRun.attempts > 1 ? "1 repair" : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")
-                        : null}
+                      Background generation turns on once the database update (schema
+                      part 1) has been run; until then Generate waits for the answer.
                     </Typography.Text>
-                    {beforeGeneration !== null && !generating && (
-                      <Button size="small" type="text" icon={<UndoOutlined />} onClick={undoGeneration}>
-                        Undo
-                      </Button>
-                    )}
-                  </div>
-                  {/*
-                    The model's answer, editable: the preview, Save and Download
-                    all read what is here, so a hand fix is picked up at once.
-                  */}
-                  {json.trim() && (
-                    <div>
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        Output <span style={{ opacity: 0.7 }}>— the generated JSON, editable</span>
-                      </Typography.Text>
-                      <Input.TextArea
-                        autoSize={{ minRows: 12, maxRows: 48 }}
-                        value={json}
-                        onChange={(e) => setJson(e.target.value)}
-                        style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
-                      />
-                    </div>
                   )}
                 </>
               ) : (
@@ -1004,50 +1233,106 @@ export function ResumeBuilder({
                       }
                     />
                   )}
-
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Tailored content (JSON)
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1, minWidth: 180 }}>
+                      Paste or write the content JSON in step 3.
                     </Typography.Text>
-                    <Space size={4}>
-                      <Tooltip title="Fill in the skeleton — employment ids in the right order, ready to edit or paste over">
-                        <Button
-                          size="small"
-                          type="text"
-                          icon={<ThunderboltOutlined />}
-                          disabled={!selectedProfile?.profile}
-                          onClick={startFromProfile}
-                        >
-                          Start from profile
-                        </Button>
-                      </Tooltip>
-                      {json && (
-                        <Button size="small" type="text" onClick={() => setJson("")}>
-                          Clear
-                        </Button>
-                      )}
-                    </Space>
+                    <Tooltip title="Fill in the skeleton — employment ids in the right order, ready to edit or paste over">
+                      <Button
+                        size="small"
+                        icon={<ThunderboltOutlined />}
+                        disabled={!selectedProfile?.profile}
+                        onClick={() => {
+                          setOpenJobId(null);
+                          startFromProfile();
+                        }}
+                      >
+                        Start from profile
+                      </Button>
+                    </Tooltip>
                   </div>
-
-                  <Input.TextArea
-                    autoSize={{ minRows: 12, maxRows: 48 }}
-                    value={json}
-                    onChange={(e) => setJson(e.target.value)}
-                    placeholder='{ "targetTitle": "…", "summary": "…", "skills": [], "experiences": [] }'
-                    style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
-                  />
                 </>
               )}
-
             </StepCard>
 
-            <StepCard number={3} title="Check">
+            {jobsEnabled && jobs.length > 0 && (
+              <Card
+                variant="borderless"
+                styles={{ body: { padding: "16px 12px 12px" } }}
+                title={
+                  <span style={{ fontSize: 14 }}>
+                    Generations
+                    <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
+                      {runningCount
+                        ? `${runningCount} running · up to ${MAX_RUNNING_JOBS} at once`
+                        : "click a ready one to open it"}
+                    </Typography.Text>
+                  </span>
+                }
+              >
+                <GenerationsList
+                  jobs={jobs}
+                  openJobId={openJobId}
+                  now={now}
+                  timedOut={timedOut}
+                  profileName={(id) => options.find((p) => p.id === id)?.fullName ?? "Profile"}
+                  onOpen={showJob}
+                  onRetry={retryJob}
+                  onDelete={deleteJob}
+                />
+              </Card>
+            )}
+
+            <StepCard
+              number={3}
+              title="Content"
+              extra={
+                openJob || documentId || json.trim() ? (
+                  <Button size="small" type="text" icon={<CloseOutlined />} onClick={closeDocument}>
+                    Close
+                  </Button>
+                ) : undefined
+              }
+            >
+              {(openJob || documentId) && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {openJob
+                    ? `Generation: ${jobLabel(openJob)} — edits are saved to it as you type.`
+                    : "Saved resume — Save writes your changes back to it."}
+                  {openJob?.application_id ? " Tracked in Applications." : ""}
+                </Typography.Text>
+              )}
+              {lastRun && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {[
+                    lastRun.model,
+                    lastRun.tokens ? `${lastRun.tokens.toLocaleString()} tokens` : null,
+                    lastRun.costUsd !== null ? `$${lastRun.costUsd.toFixed(4)}` : null,
+                    `${(lastRun.latencyMs / 1000).toFixed(1)}s`,
+                    lastRun.attempts > 1 ? "1 repair" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Typography.Text>
+              )}
+              {json.trim() || source === "paste" ? (
+                <Input.TextArea
+                  autoSize={{ minRows: 12, maxRows: 48 }}
+                  value={json}
+                  onChange={(e) => setJson(e.target.value)}
+                  placeholder='{ "targetTitle": "…", "summary": "…", "skills": [], "experiences": [] }'
+                  style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+                />
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                  {jobsEnabled
+                    ? "Generate above, then open a ready generation — its JSON appears here, editable."
+                    : "Generate above, or switch to Paste JSON."}
+                </Typography.Text>
+              )}
+            </StepCard>
+
+            <StepCard number={4} title="Check">
               {parsed.kind === "noprofile" && (
                 <Alert type="info" showIcon title="Choose a profile to begin." />
               )}
@@ -1158,7 +1443,7 @@ export function ResumeBuilder({
 
             {parsed.kind === "ok" && !isExample && (
               <>
-                <StepCard number={4} title="Apply">
+                <StepCard number={5} title="Apply">
                   <Row gutter={[8, 8]}>
                     <Col xs={24} sm={12}>
                       <Input
@@ -1206,7 +1491,7 @@ export function ResumeBuilder({
 
                 </StepCard>
 
-                <StepCard number={5} title="Follow-up questions">
+                <StepCard number={6} title="Follow-up questions">
                   <Input.TextArea
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
@@ -1448,10 +1733,12 @@ function ProfileOnlyPreview({
 function StepCard({
   number,
   title,
+  extra,
   children,
 }: {
   number: number;
   title: string;
+  extra?: ReactNode;
   children: ReactNode;
 }): ReactNode {
   return (
@@ -1473,13 +1760,165 @@ function StepCard({
         >
           {number}
         </span>
-        <Typography.Text strong style={{ fontSize: 14 }}>
+        <Typography.Text strong style={{ fontSize: 14, flex: 1 }}>
           {title}
         </Typography.Text>
+        {extra}
       </div>
       <Space orientation="vertical" style={{ width: "100%" }} size="middle">
         {children}
       </Space>
     </Card>
+  );
+}
+
+/** A generation's name: its title — given, or the model's — and company. */
+function jobLabel(job: ResumeJobRow, withCompany = true): string {
+  const target =
+    job.content && typeof job.content === "object" && "targetTitle" in job.content
+      ? String((job.content as { targetTitle: unknown }).targetTitle ?? "")
+      : "";
+  const firstLine = job.job_description.split("\n").find((l) => l.trim())?.trim().slice(0, 60) ?? "Job";
+  const title = job.job_title?.trim() || target.trim() || firstLine;
+  return withCompany && job.company ? `${title} · ${job.company}` : title;
+}
+
+/**
+ * Your recent generations, one row each: running with a clock, ready to
+ * open, or failed with the reason and a retry. The open one is highlighted.
+ */
+function GenerationsList({
+  jobs,
+  openJobId,
+  now,
+  timedOut,
+  profileName,
+  onOpen,
+  onRetry,
+  onDelete,
+}: {
+  jobs: ResumeJobRow[];
+  openJobId: string | null;
+  now: number;
+  timedOut: (job: ResumeJobRow) => boolean;
+  profileName: (id: string) => string;
+  onOpen: (job: ResumeJobRow) => void;
+  onRetry: (job: ResumeJobRow) => void;
+  onDelete: (job: ResumeJobRow) => void;
+}) {
+  return (
+    <div role="list" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {jobs.map((job) => {
+        const stale = timedOut(job);
+        const running = job.status === "running" && !stale;
+        const failed = job.status === "failed" || stale;
+        const ready = job.status === "ready";
+        const open = job.id === openJobId;
+        const elapsed = now ? Math.max(0, Math.round((now - Date.parse(job.created_at)) / 1000)) : null;
+
+        const icon = running ? (
+          <LoadingOutlined style={{ color: "#4f46e5" }} />
+        ) : failed ? (
+          <CloseCircleFilled style={{ color: "#dc2626" }} />
+        ) : job.valid ? (
+          <CheckCircleFilled style={{ color: "#16a34a" }} />
+        ) : (
+          <ExclamationCircleFilled style={{ color: "#d97706" }} />
+        );
+
+        const detail = running
+          ? `Generating…${elapsed !== null ? ` ${elapsed}s` : ""}`
+          : stale
+            ? "Timed out — retry it"
+            : failed
+              ? (job.error ?? "Failed")
+              : [
+                  job.valid ? null : "Needs a fix",
+                  job.cost_usd !== null ? `$${Number(job.cost_usd).toFixed(4)}` : null,
+                  job.latency_ms ? `${Math.round(job.latency_ms / 1000)}s` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+
+        return (
+          <div
+            key={job.id}
+            role="listitem"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: open ? "#eef0ff" : "transparent",
+              boxShadow: open ? "inset 3px 0 0 #4f46e5" : undefined,
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>
+              {icon}
+            </span>
+            <div
+              role={ready ? "button" : undefined}
+              tabIndex={ready ? 0 : undefined}
+              aria-label={ready ? `Open ${jobLabel(job)}` : undefined}
+              onClick={() => ready && onOpen(job)}
+              onKeyDown={(e) => {
+                if (ready && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  onOpen(job);
+                }
+              }}
+              style={{ flex: 1, minWidth: 0, cursor: ready ? "pointer" : "default" }}
+            >
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 500,
+                  color: "#0f172a",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {jobLabel(job)}
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: failed ? "#b91c1c" : "#64748b",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+                title={failed ? (job.error ?? undefined) : undefined}
+              >
+                {profileName(job.profile_id)} · {detail}
+              </div>
+            </div>
+            {job.application_id && (
+              <Tag color="green" bordered={false} style={{ margin: 0 }}>
+                Tracked
+              </Tag>
+            )}
+            {failed && (
+              <Tooltip title="Run it again with the same job">
+                <Button size="small" type="text" icon={<RedoOutlined />} aria-label="Retry" onClick={() => onRetry(job)} />
+              </Tooltip>
+            )}
+            {!running && (
+              <Tooltip title="Remove from the list">
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<DeleteOutlined />}
+                  aria-label="Remove"
+                  onClick={() => onDelete(job)}
+                />
+              </Tooltip>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

@@ -11,11 +11,21 @@ import { createClient } from "@/lib/supabase/server";
 export const metadata = { title: "Resume builder" };
 
 /**
- * Seconds this page's server actions may run — the generation call to the
- * model takes tens of seconds. The OpenRouter client gives up at 55, so a
- * slow model fails with a sentence rather than a platform timeout.
+ * Seconds this page's server actions may run, including what they leave to
+ * `after()`: a background generation runs here once Generate has returned,
+ * and two model calls at most take up to 260s (src/lib/ai/jobs.ts). The
+ * synchronous follow-up questions still give up at 55s.
  */
-export const maxDuration = 60;
+export const maxDuration = 300;
+
+/** How far back the builder lists your generations. */
+const JOB_DAYS = 7;
+const JOB_LIMIT = 30;
+
+/** Start of the job window. Out of the component: it reads the clock. */
+function jobWindowStart(): string {
+  return new Date(Date.now() - JOB_DAYS * 86_400_000).toISOString();
+}
 
 /**
  * Whether the Generate button works. The prompt and model are the super
@@ -68,7 +78,7 @@ export default async function ResumesPage() {
    */
   const reach = await profileReach(supabase, actor, teamId);
 
-  const [profiles, documents, mine] = await Promise.all([
+  const [profiles, documents, mine, jobs] = await Promise.all([
     scopeToReach(
       (() => {
         const query = supabase
@@ -96,6 +106,13 @@ export default async function ResumesPage() {
     // The profiles a super admin has taken on, which they work rather than
     // only review. Everyone else works whatever they can see.
     everyTeam ? assignedProfileIds(supabase, actor.id) : Promise.resolve(null),
+    // Your own background generations; RLS returns nobody else's.
+    supabase
+      .from("resume_job")
+      .select("*")
+      .gte("created_at", jobWindowStart())
+      .order("created_at", { ascending: false })
+      .limit(JOB_LIMIT),
   ]);
   const ai = generation();
 
@@ -132,6 +149,9 @@ export default async function ResumesPage() {
       // generates, tracks — only the profiles assigned to themselves.
       readOnly={everyTeam}
       generation={ai}
+      // Null when the table isn't there yet (schema part 1 not re-run): the
+      // builder then generates in the request, as it used to.
+      jobs={jobs.error ? null : (jobs.data ?? [])}
     />
   );
 }

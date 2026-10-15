@@ -127,9 +127,17 @@ styled was not what you downloaded.
 ## Generation goes through one function
 
 `generateContent()` in `src/lib/ai/generate.ts` is the only caller of
-OpenRouter, used by the builder's action and the model lab's route. Both read
-the profile through the caller's client (so RLS decides) and write the log
-with the service role (the log is not the caller's to write). The input is the
+OpenRouter, used by the builder (in the background, through
+`src/lib/ai/jobs.ts`) and the model lab's route. Every path authorizes through
+the caller's client first — the builder's `startResumeJob` inserts its
+`resume_job` row under the caller's policies — and writes the log with the
+service role (the log is not the caller's to write).
+
+**Background generation** runs in `after()` from the builder's server action,
+so it is bounded by the builder page's `maxDuration` (300s). The per-call
+timeout in `jobs.ts` (two calls at most) must stay inside it, and
+`JOB_STALE_MS` must stay above it — a row still `running` after that is shown
+as timed out and stops counting toward the 6-at-once limit. The input is the
 person's: their base prompt and additional prompt, plus the profile's
 employments and education — never contact details. `buildMessages()` appends
 only the response contract. Keep it that way: no client-side model calls, and

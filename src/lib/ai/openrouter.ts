@@ -31,7 +31,10 @@ export type Completion = {
 
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
-/** Under the page's maxDuration, so a slow model fails here with a sentence. */
+/**
+ * Under the page's maxDuration, so a slow model fails here with a sentence.
+ * Background jobs pass a longer one — see src/lib/ai/jobs.ts.
+ */
 const TIMEOUT_MS = 55_000;
 
 export function openRouterConfigured(): boolean {
@@ -63,7 +66,9 @@ export async function completeJson(options: {
   schema: Record<string, unknown>;
   /** The `reasoning` field, already fitted to this model — see models.ts. */
   reasoning?: Record<string, unknown>;
+  timeoutMs?: number;
 }): Promise<Completion> {
+  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set, so generation is off.");
 
@@ -99,11 +104,11 @@ export async function completeJson(options: {
         // reason, its thinking counts against this too.
         max_tokens: 16000,
       }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
-      throw new Error(`The model took longer than ${TIMEOUT_MS / 1000}s. Try again, or a faster model.`);
+      throw new Error(`The model took longer than ${timeoutMs / 1000}s. Try again, or a faster model.`);
     }
     throw new Error("Couldn't reach OpenRouter.");
   }

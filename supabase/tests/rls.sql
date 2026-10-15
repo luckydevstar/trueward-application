@@ -1635,3 +1635,78 @@ delete from generation_prompt where id = '00000000-0000-0000-0000-0000000000a8';
 select 'deleting the active research prompt falls back to the built-in' as check,
        active_research_prompt_id is null as expect_true
   from generation_setting;
+
+\echo ''
+\echo '=== 22. background generations are their creator''s own ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+insert into resume_job (id, profile_id, team_id, created_by, job_description, company)
+values ('00000000-0000-0000-0000-00000000ab01', '00000000-0000-0000-0000-0000000000f0',
+        app_team_id(), auth.uid(), 'Build APIs.', 'Acme');
+select 'a bidder starts a generation for an assigned profile' as check, count(*) = 1 as expect_true
+  from resume_job where id = '00000000-0000-0000-0000-00000000ab01' and status = 'running';
+with changed as (
+  update resume_job set content = '{"targetTitle":"Engineer"}', status = 'ready'
+   where id = '00000000-0000-0000-0000-00000000ab01' returning 1
+)
+select 'and edits it' as check, count(*) = 1 as expect_true from changed;
+
+do $$
+begin
+  insert into resume_job (profile_id, team_id, created_by, job_description)
+  values ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-00000000000c',
+          auth.uid(), 'Cross-team');
+  raise exception 'FAIL: a generation was filed in another team';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: a generation joins the profile''s team only';
+end $$;
+
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+select 'a teammate cannot see it' as check, count(*) = 0 as expect_true from resume_job;
+with changed as (
+  update resume_job set company = 'Hijacked' where id = '00000000-0000-0000-0000-00000000ab01' returning 1
+)
+select 'nor change it' as check, count(*) = 0 as expect_true from changed;
+do $$
+begin
+  insert into resume_job (profile_id, team_id, created_by, job_description)
+  values ('00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid(), 'Not mine');
+  raise exception 'FAIL: a bidder generated for a profile not assigned to them';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: generations need an assigned profile';
+end $$;
+
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'the subadmin does not see a bidder''s drafts' as check, count(*) = 0 as expect_true
+  from resume_job where created_by = '00000000-0000-0000-0000-0000000000b1';
+
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+do $$
+begin
+  insert into resume_job (profile_id, team_id, created_by, job_description)
+  values ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-00000000000a',
+          auth.uid(), 'Review only');
+  raise exception 'FAIL: the super admin generated for an unassigned profile';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: the super admin generates only for profiles assigned to them';
+end $$;
+insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
+values ('00000000-0000-0000-0000-0000000000f0', auth.uid(),
+        '00000000-0000-0000-0000-00000000000a', auth.uid());
+insert into resume_job (profile_id, team_id, created_by, job_description)
+values ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-00000000000a',
+        auth.uid(), 'Assigned now');
+select 'once assigned, they can' as check, count(*) = 1 as expect_true
+  from resume_job where created_by = auth.uid();
+delete from profile_assignment
+ where profile_id = '00000000-0000-0000-0000-0000000000f0' and user_id = auth.uid();
+
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+with gone as (
+  delete from resume_job where id = '00000000-0000-0000-0000-00000000ab01' returning 1
+)
+select 'its creator removes it' as check, count(*) = 1 as expect_true from gone;
+reset role;

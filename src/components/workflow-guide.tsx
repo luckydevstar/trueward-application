@@ -112,11 +112,11 @@ const STEPS: Record<UserRole, Step[]> = {
     },
     {
       title: "Paste the job and generate",
-      body: "Paste the whole posting and press Generate resume.",
+      body: "Paste the posting (company, title and URL if you have them) and press Generate. It runs in the background — paste the next one straight away, up to 6 at once.",
     },
     {
-      title: "Check the output",
-      body: "Edit the JSON if something needs fixing; the preview is the real PDF.",
+      title: "Open and check",
+      body: "Click a ready one under Generations. Edit the JSON if something needs fixing; the preview is the real PDF.",
     },
     {
       title: "Download & track",

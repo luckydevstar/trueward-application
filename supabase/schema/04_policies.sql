@@ -51,6 +51,7 @@ alter table ssn_access_log     enable row level security;
 alter table generation_setting enable row level security;
 alter table resume_generation  enable row level security;
 alter table generation_prompt  enable row level security;
+alter table resume_job         enable row level security;
 
 -- --- app_user -------------------------------------------------------------
 
@@ -368,6 +369,39 @@ create policy generation_prompt_delete on generation_prompt
 drop policy if exists resume_generation_select on resume_generation;
 create policy resume_generation_select on resume_generation
   for select using (in_team(team_id) and is_admin());
+
+-- --- resume_job -----------------------------------------------------------
+-- A person's own drafts. Started through the builder's action (the caller's
+-- client, so these checks apply) and finished by the server with the service
+-- role. Read, edited and removed by their creator only, and only while they
+-- may still work the profile — the same test resumes and applications use.
+
+drop policy if exists resume_job_select on resume_job;
+create policy resume_job_select on resume_job
+  for select using (created_by = auth.uid() and can_use_profile(profile_id));
+
+drop policy if exists resume_job_insert on resume_job;
+create policy resume_job_insert on resume_job
+  for insert with check (
+    created_by = auth.uid()
+    and works_in_team(team_id, profile_id)
+    and can_use_profile(profile_id)
+    and profile_in_team(profile_id, team_id)
+  );
+
+drop policy if exists resume_job_update on resume_job;
+create policy resume_job_update on resume_job
+  for update using (created_by = auth.uid() and works_in_team(team_id, profile_id))
+  with check (
+    created_by = auth.uid()
+    and works_in_team(team_id, profile_id)
+    and can_use_profile(profile_id)
+    and profile_in_team(profile_id, team_id)
+  );
+
+drop policy if exists resume_job_delete on resume_job;
+create policy resume_job_delete on resume_job
+  for delete using (created_by = auth.uid());
 
 -- ===========================================================================
 -- Retired with the resume_builder role. Dropped here rather than in part 2

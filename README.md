@@ -519,8 +519,12 @@ setting. The flow end to end:
    page exports the profile document.
 2. In the builder, a bidder picks an assigned profile (its employments,
    education and company context go to the model, never contact details),
-   pastes the job description and presses **Generate**. The JSON appears in an
-   editable output box; the styled preview follows it.
+   pastes the job description — with the company, title and URL if known —
+   and presses **Generate**. It runs in the background (`resume_job`), so the
+   next job can be pasted straight away; up to 6 run at once per person, and
+   they keep running if the page is left. Each appears under **Generations**;
+   opening a ready one loads its JSON into the editor and the preview, and
+   edits are saved back to it.
 3. **Download & track** takes the company, job title and job URL, records the
    application (the duplicate cooldown and the blocklist can refuse it, with
    the reason, and the download is then offered on its own), downloads the

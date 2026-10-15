@@ -504,6 +504,7 @@ begin
   update profile_attachment set team_id = target_team where profile_id = target_profile;
   update ssn_access_log     set team_id = target_team where profile_id = target_profile;
   update resume_generation  set team_id = target_team where profile_id = target_profile;
+  update resume_job         set team_id = target_team where profile_id = target_profile;
 
   -- The old team's bidders lose it; a super admin working it keeps it. See
   -- the note above.
@@ -595,6 +596,7 @@ begin
   update ssn_access_log     set team_id = to_team where team_id = from_team;
   update profile_assignment set team_id = to_team where team_id = from_team;
   update resume_generation  set team_id = to_team where team_id = from_team;
+  update resume_job         set team_id = to_team where team_id = from_team;
 
   update app_user set created_by_id = to_team
    where created_by_id = from_team and role::text = 'bidder';

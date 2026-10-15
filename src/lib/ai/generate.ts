@@ -48,6 +48,8 @@ export async function generateContent(input: {
   jobDescription: string;
   /** "default" | "lowest" | an effort name — see reasoningParam(). */
   reasoning: string;
+  /** Per model call; the default suits a request someone is waiting on. */
+  timeoutMs?: number;
 }): Promise<GenerationOutcome> {
   const started = Date.now();
   const outcome: GenerationOutcome = {
@@ -85,6 +87,7 @@ export async function generateContent(input: {
         schemaName: "resume_content",
         schema,
         reasoning,
+        timeoutMs: input.timeoutMs,
       });
       outcome.servedModel = completion.model;
       outcome.promptTokens += completion.promptTokens ?? 0;
