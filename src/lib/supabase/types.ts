@@ -57,6 +57,11 @@ export type CandidateProfileRow = Owned &
     github_url: string | null;
     linkedin_url: string | null;
     /**
+     * What each employer does — business model, products, customers — as the
+     * profile adder recorded it. Sent with generation; never rendered.
+     */
+    company_context: string | null;
+    /**
      * pgp_sym_encrypt ciphertext, surfaced by PostgREST as a hex string.
      *
      * Only ever selected to test it against null — "is an SSN on file?" — and
@@ -158,7 +163,19 @@ export type GenerationSettingRow = {
   model: string;
   /** "lowest" | "default" | an effort name — see src/lib/ai/models.ts. */
   reasoning: string;
+  /** The library prompt every Generate uses; null means the built-in one. */
+  active_prompt_id: string | null;
   updated_by: string | null;
+  updated_at: string;
+};
+
+/** A base prompt in the super admin's library. */
+export type GenerationPromptRow = {
+  id: string;
+  name: string;
+  body: string;
+  created_by: string | null;
+  created_at: string;
   updated_at: string;
 };
 
@@ -205,7 +222,19 @@ type Defaulted =
   // Nothing is created archived, so an insert never carries it.
   | "archived_at"
   // Written only by store_ssn, never as part of a profile insert.
-  | "ssn_encrypted";
+  | "ssn_encrypted"
+  // Optional on insert; the profile form sends it when filled.
+  | "company_context"
+  // Columns the database defaults on the generation tables.
+  | "active_prompt_id"
+  | "source"
+  | "run_id"
+  | "reasoning"
+  | "prompt_label"
+  | "cached_tokens"
+  | "reasoning_tokens"
+  | "output"
+  | "attempts";
 
 type Insert<T> = Omit<T, Defaulted & keyof T> &
   Partial<Pick<T, Defaulted & keyof T>>;
@@ -229,6 +258,7 @@ export type Database = {
       blocked_company: Table<BlockedCompanyRow>;
       application: Table<ApplicationRow>;
       generation_setting: Table<GenerationSettingRow>;
+      generation_prompt: Table<GenerationPromptRow>;
       resume_generation: Table<ResumeGenerationRow>;
     };
     Views: {

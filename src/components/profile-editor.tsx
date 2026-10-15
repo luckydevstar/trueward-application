@@ -27,6 +27,7 @@ import dayjs from "dayjs";
 import { useState } from "react";
 
 import { revealSsn } from "@/app/dashboard/profiles/ssn-actions";
+import { COMPANY_RESEARCH_PROMPT } from "@/lib/ai/resume-prompt";
 import { normalizeUrl } from "@/lib/profile";
 
 export type EmploymentValues = {
@@ -59,6 +60,7 @@ export type ProfileFormValues = {
   githubUrl?: string;
   linkedinUrl?: string;
   ssn?: string;
+  companyContext?: string;
   employments?: EmploymentValues[];
   education?: EducationValues[];
 };
@@ -310,6 +312,18 @@ export function ProfileEditor({
           )}
         </Form.List>
 
+        <Divider titlePlacement="start">Company context</Divider>
+        <CompanyContextHelp form={form} />
+        <Form.Item
+          name="companyContext"
+          extra="What each employer actually does — business model, products or services, customers. Sent with resume generation so bullets speak the employer's real domain; never printed."
+        >
+          <Input.TextArea
+            autoSize={{ minRows: 4, maxRows: 16 }}
+            placeholder="Paste the researched company context here."
+          />
+        </Form.Item>
+
         <Divider titlePlacement="start">Education</Divider>
         <Form.List name="education">
           {(fields, { add, remove }) => (
@@ -475,5 +489,70 @@ function SsnField({
         </Space>
       )}
     </>
+  );
+}
+
+/**
+ * The research helper beside the company context field: a prompt for any AI
+ * assistant with web access, copied together with the employments as they
+ * stand in the form, so the adder pastes one block and gets back text for
+ * the field below.
+ */
+function CompanyContextHelp({ form }: { form: ReturnType<typeof Form.useForm<ProfileFormValues>>[0] }) {
+  const { message } = App.useApp();
+
+  const copy = async () => {
+    const employments = (form.getFieldValue("employments") ?? []) as EmploymentValues[];
+    const list = employments
+      .filter((e) => e?.company)
+      .map((e) => ({
+        employmentId: e.id,
+        company: e.company,
+        location: e.location ?? null,
+        start: e.startDate ? e.startDate.format("YYYY-MM") : null,
+        end: e.endDate ? e.endDate.format("YYYY-MM") : "present",
+      }));
+    if (!list.length) {
+      message.warning("Add the employments first — the prompt is copied with them.");
+      return;
+    }
+    await navigator.clipboard.writeText(`${COMPANY_RESEARCH_PROMPT}\n${JSON.stringify(list, null, 2)}`);
+    message.success("Copied. Paste it into ChatGPT or another assistant with web search, then paste the answer below.");
+  };
+
+  return (
+    <Alert
+      type="info"
+      showIcon
+      style={{ marginBottom: 12 }}
+      title="Research each employer, then paste the result below"
+      description={
+        <>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            Copy the research prompt — it comes with this profile&apos;s
+            employments — into any AI assistant that can search the web. It asks
+            for verified facts about each company only.
+          </Typography.Paragraph>
+          <Space wrap>
+            <Button size="small" onClick={copy}>
+              Copy prompt + employments
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              onClick={() =>
+                Modal.info({
+                  title: "Company research prompt",
+                  width: 720,
+                  content: <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{COMPANY_RESEARCH_PROMPT}</pre>,
+                })
+              }
+            >
+              View the prompt
+            </Button>
+          </Space>
+        </>
+      }
+    />
   );
 }

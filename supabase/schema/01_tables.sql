@@ -340,6 +340,12 @@ create table if not exists ssn_access_log (
 create index if not exists ssn_access_log_profile_idx
   on ssn_access_log (profile_id, revealed_at desc);
 
+-- What each of the candidate's employers does — business model, products or
+-- services, customers — in the profile adder's words. Sent with generation so
+-- bullets can speak the employer's real domain. Free text, kept off the
+-- render payload: it is source material, never printed on the resume.
+alter table candidate_profile add column if not exists company_context text;
+
 -- --------------------------------------------------------------------------
 -- Resume generation — settings and the log
 --
@@ -353,9 +359,10 @@ create table if not exists generation_setting (
   -- Always true, so the table holds exactly one row.
   id            boolean primary key default true check (id),
   system_prompt text not null default '',
-  -- An OpenRouter model id, e.g. "anthropic/claude-sonnet-5.5". A starting
-  -- point to benchmark from, not a recommendation.
-  model         text not null default 'anthropic/claude-sonnet-5.5',
+  -- An OpenRouter model id. The default is the cheap, fast one the smoke
+  -- tests settled on; the super admin changes it on the Generation page or
+  -- from the model lab.
+  model         text not null default 'openai/gpt-6-luna',
   updated_by    uuid references app_user (id) on delete set null,
   updated_at    timestamptz not null default now()
 );
@@ -388,12 +395,54 @@ create table if not exists resume_generation (
   created_at        timestamptz not null default now()
 );
 
--- How hard the model should reason. Reasoning tokens are billed as output
--- and can triple a resume's cost, so the default is the least each model
--- allows ("lowest"); "default" leaves it to the model, or an effort name
--- ("low", "medium", "high") asks for that where the model offers it.
+-- How hard the model should reason. "default" leaves it to the model;
+-- "lowest" turns it off where allowed and uses the cheapest effort where it
+-- is mandatory; an effort name ("low", "medium", "high") asks for that where
+-- the model offers it. Reasoning tokens are billed as output.
 alter table generation_setting
-  add column if not exists reasoning text not null default 'lowest';
+  add column if not exists reasoning text not null default 'default';
+
+alter table generation_setting alter column model set default 'openai/gpt-6-luna';
+alter table generation_setting alter column reasoning set default 'default';
+
+-- A settings row nobody has saved yet still carries the old defaults; move it
+-- to the new ones. A row someone saved (updated_by set) is theirs and stays.
+update generation_setting
+   set model = 'openai/gpt-6-luna', reasoning = 'default'
+ where updated_by is null;
+
+-- Base prompts the super admin keeps. One is active — what every Generate
+-- uses — and none active means the built-in default in
+-- src/lib/ai/resume-prompt.ts. Kept as a library rather than one text box so
+-- prompts can be compared in the model lab and switched without retyping.
+create table if not exists generation_prompt (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  body       text not null,
+  created_by uuid references app_user (id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table generation_setting
+  add column if not exists active_prompt_id uuid
+    references generation_prompt (id) on delete set null;
+
+-- The single system_prompt the settings row used to hold becomes the
+-- library's first entry, and the active one. Clearing it afterwards is what
+-- makes a second run of this file do nothing.
+do $$
+declare
+  carried uuid;
+begin
+  if exists (select 1 from generation_setting where btrim(system_prompt) <> '') then
+    insert into generation_prompt (name, body, created_by)
+    select 'Saved prompt', system_prompt, updated_by from generation_setting
+    returning id into carried;
+    update generation_setting set active_prompt_id = carried, system_prompt = '';
+  end if;
+end
+$$;
 
 -- Where a generation came from, and the detail benchmarking needs.
 --   source        'builder' for real resumes, 'lab' for the model lab's tests

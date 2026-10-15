@@ -6,7 +6,6 @@ import { profileReach, scopeToReach } from "@/lib/profile-scope";
 import { managesTeam } from "@/lib/roles";
 import { seesAllTeams, teamIdFor } from "@/lib/scope";
 import { allowedAccents, allowedTemplates } from "@/lib/style-access";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Resume builder" };
@@ -19,24 +18,12 @@ export const metadata = { title: "Resume builder" };
 export const maxDuration = 60;
 
 /**
- * Whether the Generate button works, with which model — shown beside it so
- * whoever generates knows what they're spending — and the saved resume base
- * prompt, which pre-fills the builder's base-prompt field. Read with the
- * service role: the settings row is the super admin's to change, but the
- * builder's users are meant to see and edit the prompt they generate with.
+ * Whether the Generate button works. The prompt and model are the super
+ * admin's and are deliberately not sent: the person generating picks a
+ * profile and pastes a job.
  */
-async function generation() {
-  if (!openRouterConfigured()) return { enabled: false, model: null, basePrompt: "" };
-  try {
-    const { data } = await createAdminClient()
-      .from("generation_setting")
-      .select("model, system_prompt")
-      .maybeSingle();
-    return { enabled: true, model: data?.model ?? null, basePrompt: data?.system_prompt ?? "" };
-  } catch {
-    // No service-role key: the action could not log or read settings either.
-    return { enabled: false, model: null, basePrompt: "" };
-  }
+function generation() {
+  return { enabled: openRouterConfigured() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY) };
 }
 
 export default async function ResumesPage() {
@@ -62,7 +49,7 @@ export default async function ResumesPage() {
         accents={allowedAccents(actor.allowedAccents)}
         canEditAny={false}
         readOnly
-        generation={{ enabled: false, model: null, basePrompt: "" }}
+        generation={{ enabled: false }}
       />
     );
   }
@@ -81,12 +68,12 @@ export default async function ResumesPage() {
    */
   const reach = await profileReach(supabase, actor, teamId);
 
-  const [profiles, documents, ai] = await Promise.all([
+  const [profiles, documents] = await Promise.all([
     scopeToReach(
       (() => {
         const query = supabase
           .from("candidate_profile")
-          .select("id, full_name, profile")
+          .select("id, full_name, profile, company_context")
           .order("full_name");
         return everyTeam ? query : query.eq("team_id", teamId);
       })(),
@@ -106,8 +93,8 @@ export default async function ResumesPage() {
       reach,
       "profile_id",
     ),
-    generation(),
   ]);
+  const ai = generation();
 
   // Parsed on the server so a profile that no longer satisfies the schema
   // surfaces as a disabled option with a reason, rather than crashing the
@@ -117,6 +104,9 @@ export default async function ResumesPage() {
     return {
       id: p.id,
       fullName: p.full_name,
+      // Whether one is on file, shown beside the profile picker; the text
+      // itself is read by the server when generating.
+      hasCompanyContext: Boolean(p.company_context?.trim()),
       profile: result.success ? result.data : null,
       error: result.success
         ? null

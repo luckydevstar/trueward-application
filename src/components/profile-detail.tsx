@@ -2,6 +2,7 @@
 
 import {
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   FileOutlined,
   UploadOutlined,
@@ -184,15 +185,36 @@ export function ProfileDetail({
           </Typography.Title>
           <Typography.Text type="secondary">{row.email}</Typography.Text>
         </div>
-        {canEdit && (
+        <Space>
+          {/*
+            The profile as the resume document stores it, for keeping or for
+            pasting into another tool. Built from the page's own row, so it
+            downloads exactly what generation reads.
+          */}
           <Button
-            type="primary"
-            icon={<EditOutlined />}
-            onClick={() => setOpen(true)}
+            icon={<DownloadOutlined />}
+            onClick={() => {
+              const blob = new Blob([JSON.stringify(row.profile, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${row.full_name.replace(/[^\w.-]+/g, "_")}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
           >
-            Edit profile
+            Download JSON
           </Button>
-        )}
+          {canEdit && (
+            <Button
+              type="primary"
+              icon={<EditOutlined />}
+              onClick={() => setOpen(true)}
+            >
+              Edit profile
+            </Button>
+          )}
+        </Space>
       </Space>
 
       <Row gutter={16}>
@@ -380,6 +402,22 @@ export function ProfileDetail({
               />
             ) : (
               <Empty description="No education recorded." />
+            )}
+          </Card>
+
+          <Card size="small" title="Company context" style={{ marginTop: 16 }}>
+            {row.company_context?.trim() ? (
+              <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0, fontSize: 13 }}>
+                {row.company_context}
+              </Typography.Paragraph>
+            ) : (
+              <Empty
+                description={
+                  canEdit
+                    ? "None yet. Add it in Edit profile — the research prompt is there."
+                    : "None recorded."
+                }
+              />
             )}
           </Card>
         </Col>

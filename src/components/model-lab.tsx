@@ -27,6 +27,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import {
+  saveGenerationSettings,
+  savePrompt,
+  setActivePrompt,
+} from "@/app/dashboard/generation/actions";
 import { loadLabRun } from "@/app/dashboard/generation/lab/actions";
 import { DEFAULT_STYLE } from "@/components/resume-style-toolbar";
 import { resumeDocumentSchema, type ResumeProfile } from "@/lib/document/schema";
@@ -81,7 +86,11 @@ type Props = {
   configured: boolean;
   profiles: Array<{ id: string; fullName: string; profile: ResumeProfile }>;
   models: ModelOption[];
-  savedPrompt: string;
+  /** The built-in prompt and the library, to pick a base prompt from. */
+  builtInPrompt: string;
+  prompts: Array<{ id: string; name: string; body: string }>;
+  /** Null means the built-in prompt is active. */
+  activePromptId: string | null;
   savedModel: string;
   savedReasoning: string;
   history: LabHistoryRow[];
@@ -99,17 +108,19 @@ const STARTER_MODELS = [
 ];
 const NO_MODELS: string[] = [];
 
+const BUILT_IN = "__built_in__";
+
 /** More than this at once is a mistake more often than a plan. */
 const MAX_MODELS = 8;
 
 const MONTHLY_VOLUME = 5000;
 
 const REASONING_OPTIONS = [
+  { value: "default", label: "Model default" },
   { value: "lowest", label: "Lowest each model allows" },
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
-  { value: "default", label: "Model default" },
 ];
 
 const usd = (v: number | null | undefined, digits = 4) =>
@@ -123,7 +134,9 @@ export function ModelLab({
   configured,
   profiles,
   models,
-  savedPrompt,
+  builtInPrompt,
+  prompts,
+  activePromptId,
   savedModel,
   savedReasoning,
   history,
@@ -136,10 +149,60 @@ export function ModelLab({
   // The three inputs, as in the builder: profile, base prompt, additional
   // prompt. The base prompt starts as the saved one and can be edited for a
   // test without changing what is saved.
-  const [basePrompt, setBasePrompt] = useState(savedPrompt);
-  const [additionalPrompt, setAdditionalPrompt] = useState("");
-  const basePromptEdited = basePrompt.trim() !== savedPrompt.trim();
+  /*
+   * The base prompt: one picked from the library (the active one to start),
+   * and editable for a test. An edit can be kept as a new library prompt; an
+   * unedited pick can be made the active one.
+   */
+  const library = useMemo(
+    () => [{ id: BUILT_IN, name: "Built-in default", body: builtInPrompt }, ...prompts],
+    [builtInPrompt, prompts],
+  );
+  const [promptId, setPromptId] = useState(activePromptId ?? BUILT_IN);
+  const picked = library.find((p) => p.id === promptId) ?? library[0];
+  const [basePrompt, setBasePrompt] = useState(picked.body);
+  const basePromptEdited = basePrompt.trim() !== picked.body.trim();
+  const [jobDescription, setJobDescription] = useState("");
   const [reasoning, setReasoning] = useState(savedReasoning);
+  const [newPromptName, setNewPromptName] = useState("");
+
+  const pickPrompt = (id: string) => {
+    const next = library.find((p) => p.id === id);
+    if (!next) return;
+    setPromptId(id);
+    setBasePrompt(next.body);
+  };
+
+  const keepAsPrompt = async () => {
+    const result = await savePrompt({ name: newPromptName.trim() || "Lab variant", body: basePrompt });
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success("Saved to the library.");
+    setNewPromptName("");
+    router.refresh();
+  };
+
+  const makeActive = async () => {
+    const result = await setActivePrompt(promptId === BUILT_IN ? null : promptId);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success(`${picked.name} is now the active prompt.`);
+    router.refresh();
+  };
+
+  const makeDefaultModel = async (model: string) => {
+    const result = await saveGenerationSettings({ model, reasoning });
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success(`${model} is now the default model, with reasoning "${reasoning}".`);
+    router.refresh();
+  };
   const [storedModels, setSelectedModels] = usePersistentState<string[]>(
     "tw.lab.models",
     NO_MODELS,
@@ -160,13 +223,13 @@ export function ModelLab({
   const estimate = (id: string) => {
     const m = byId.get(id);
     if (!m) return null;
-    const input = tokensOf(basePrompt) + 400 + tokensOf(additionalPrompt) + 300;
+    const input = tokensOf(basePrompt) + 400 + tokensOf(jobDescription) + 300;
     return (input * m.price.input + 1350 * m.price.output) / 1e6;
   };
   const totalEstimate = selectedModels.reduce((sum, id) => sum + (estimate(id) ?? 0), 0);
 
   const run = async () => {
-    if (!profileId || !basePrompt.trim() || !additionalPrompt.trim() || !selectedModels.length) return;
+    if (!profileId || !basePrompt.trim() || !jobDescription.trim() || !selectedModels.length) return;
     const runId = crypto.randomUUID();
     setRunning(true);
     setViewing(runId);
@@ -183,7 +246,8 @@ export function ModelLab({
               model,
               profileId,
               basePrompt,
-              additionalPrompt,
+              promptLabel: basePromptEdited ? `${picked.name} (edited)` : picked.name,
+              jobDescription,
               reasoning,
             }),
           });
@@ -357,36 +421,51 @@ export function ModelLab({
           </Col>
 
           <Col xs={24} lg={12}>
-            <Space style={{ width: "100%", justifyContent: "space-between" }}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Resume base prompt{" "}
-                <Tag style={{ marginInlineStart: 4 }}>{basePromptEdited ? "edited for this test" : "saved"}</Tag>
-              </Typography.Text>
-              {basePromptEdited && (
-                <Button size="small" type="link" onClick={() => setBasePrompt(savedPrompt)}>
-                  Reset to saved
-                </Button>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>Base prompt</Typography.Text>
+            <Space.Compact style={{ width: "100%", marginBottom: 6 }}>
+              <Select
+                style={{ width: "100%" }}
+                value={promptId}
+                onChange={pickPrompt}
+                options={library.map((p) => ({
+                  value: p.id,
+                  label: `${p.name}${(p.id === BUILT_IN ? null : p.id) === activePromptId ? " — active" : ""}`,
+                }))}
+              />
+              {!basePromptEdited && (promptId === BUILT_IN ? null : promptId) !== activePromptId && (
+                <Button onClick={makeActive}>Set as active</Button>
               )}
-            </Space>
+            </Space.Compact>
             <Input.TextArea
               value={basePrompt}
               onChange={(e) => setBasePrompt(e.target.value)}
               autoSize={{ minRows: 10, maxRows: 22 }}
-              placeholder="Paste the resume base prompt."
+              placeholder="The base prompt for this test."
               style={{ fontSize: 12 }}
             />
+            {basePromptEdited && (
+              <Space.Compact style={{ width: "100%", marginTop: 6 }}>
+                <Input
+                  placeholder="Name for this variant"
+                  value={newPromptName}
+                  onChange={(e) => setNewPromptName(e.target.value)}
+                />
+                <Button onClick={keepAsPrompt}>Save as new prompt</Button>
+                <Button onClick={() => setBasePrompt(picked.body)}>Discard edit</Button>
+              </Space.Compact>
+            )}
           </Col>
           <Col xs={24} lg={12}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Additional prompt{" "}
-              <span style={{ opacity: 0.7 }}>— the job description, and anything else</span>
-            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>Job description</Typography.Text>
             <Input.TextArea
-              value={additionalPrompt}
-              onChange={(e) => setAdditionalPrompt(e.target.value)}
+              value={jobDescription}
+              onChange={(e) => setJobDescription(e.target.value)}
               autoSize={{ minRows: 10, maxRows: 22 }}
-              placeholder="Paste the job posting, plus anything else for this resume."
+              placeholder="Paste the job posting."
             />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              The profile&apos;s company context, if it has one, is sent too — as in the builder.
+            </Typography.Text>
           </Col>
 
           <Col span={24}>
@@ -429,7 +508,7 @@ export function ModelLab({
                   !configured ||
                   !profileId ||
                   !basePrompt.trim() ||
-                  !additionalPrompt.trim() ||
+                  !jobDescription.trim() ||
                   !selectedModels.length
                 }
                 onClick={run}
@@ -500,6 +579,14 @@ export function ModelLab({
                   extra={
                     slot.status === "done" && slot.outcome.content !== null ? (
                       <Space size={0}>
+                        <Button
+                          size="small"
+                          type="text"
+                          disabled={model === savedModel && reasoning === savedReasoning}
+                          onClick={() => makeDefaultModel(model)}
+                        >
+                          {model === savedModel && reasoning === savedReasoning ? "Default" : "Make default"}
+                        </Button>
                         <Button
                           size="small"
                           type="text"

@@ -24,10 +24,11 @@ const body = z.object({
   runId: z.string().uuid(),
   model: z.string().regex(/^[a-z0-9][\w.-]*\/[\w.:-]+$/i),
   profileId: z.string().uuid(),
-  /** The resume base prompt, as entered for this test. */
-  basePrompt: z.string().trim().min(1, "Enter the resume base prompt.").max(50_000),
-  /** The job description and anything else, as entered. */
-  additionalPrompt: z.string().trim().min(1, "Enter the additional prompt.").max(30_000),
+  /** The base prompt for this test — a library prompt, or an edit of one. */
+  basePrompt: z.string().trim().min(1, "Choose a base prompt.").max(50_000),
+  /** Which prompt that was, for the run history: its name, or "… (edited)". */
+  promptLabel: z.string().trim().max(200),
+  jobDescription: z.string().trim().min(1, "Paste the job description.").max(30_000),
   reasoning: z.enum(["lowest", "low", "medium", "high", "default"]),
 });
 
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
 
   const { data: row } = await supabase
     .from("candidate_profile")
-    .select("id, team_id, profile")
+    .select("id, team_id, profile, company_context")
     .eq("id", input.profileId)
     .maybeSingle();
   if (!row) return NextResponse.json({ error: "Profile not found." }, { status: 404 });
@@ -65,17 +66,13 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminClient();
-  // Only to label the run: whether it used the saved prompt or an edit of it.
-  const { data: settings } = await admin
-    .from("generation_setting")
-    .select("system_prompt")
-    .maybeSingle();
 
   const outcome = await generateContent({
     profile: profile.data,
     model: input.model,
     systemPrompt: input.basePrompt,
-    additionalPrompt: input.additionalPrompt,
+    companyContext: row.company_context,
+    jobDescription: input.jobDescription,
     reasoning: input.reasoning,
   });
 
@@ -88,7 +85,7 @@ export async function POST(request: Request) {
     source: "lab",
     run_id: input.runId,
     reasoning: input.reasoning,
-    prompt_label: input.basePrompt === (settings?.system_prompt ?? "").trim() ? "saved" : "custom",
+    prompt_label: input.promptLabel || "custom",
     output: outcome.content ?? null,
   });
 

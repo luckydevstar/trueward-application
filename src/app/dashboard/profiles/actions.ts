@@ -53,6 +53,7 @@ export async function createProfile(
       birthday: row.birthday,
       github_url: row.github_url,
       linkedin_url: row.linkedin_url,
+      company_context: row.company_context,
       profile: row.profile,
       team_id: teamId,
       created_by: actor.id,
@@ -86,6 +87,7 @@ export async function updateProfile(
       birthday: row.birthday,
       github_url: row.github_url,
       linkedin_url: row.linkedin_url,
+      company_context: row.company_context,
       profile: row.profile,
     })
     .eq("id", access.profile.id)

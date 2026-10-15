@@ -2,7 +2,9 @@ import { Alert } from "antd";
 
 import { GenerationSettings, type ModelStats } from "@/components/generation-settings";
 import { requireActor } from "@/lib/actor";
+import { DEFAULT_MODEL, DEFAULT_REASONING } from "@/lib/ai/defaults";
 import { openRouterConfigured } from "@/lib/ai/openrouter";
+import { DEFAULT_SYSTEM_PROMPT } from "@/lib/ai/resume-prompt";
 import { fetchAll } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase/server";
 
@@ -72,11 +74,12 @@ export default async function GenerationPage() {
   const supabase = await createClient();
   const since = windowStart(DAYS);
 
-  const [{ data: settings }, log, models] = await Promise.all([
+  const [{ data: settings }, { data: prompts }, log, models] = await Promise.all([
     supabase
       .from("generation_setting")
-      .select("system_prompt, model, reasoning, updated_at")
+      .select("model, reasoning, active_prompt_id, updated_at")
       .maybeSingle(),
+    supabase.from("generation_prompt").select("id, name, body, updated_at").order("created_at"),
     fetchAll<{
       model: string;
       ok: boolean;
@@ -123,9 +126,11 @@ export default async function GenerationPage() {
 
   return (
     <GenerationSettings
-      systemPrompt={settings?.system_prompt ?? ""}
-      model={settings?.model ?? "anthropic/claude-sonnet-5.5"}
-      reasoning={settings?.reasoning ?? "lowest"}
+      builtInPrompt={DEFAULT_SYSTEM_PROMPT}
+      prompts={prompts ?? []}
+      activePromptId={settings?.active_prompt_id ?? null}
+      model={settings?.model ?? DEFAULT_MODEL}
+      reasoning={settings?.reasoning ?? DEFAULT_REASONING}
       updatedAt={settings?.updated_at ?? null}
       configured={openRouterConfigured()}
       models={models}

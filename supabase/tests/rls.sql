@@ -1359,9 +1359,12 @@ reset role;
 
 \echo ''
 \echo '=== 18. reasoning defaults to the cheapest; lab runs keep their output ==='
-select 'reasoning defaults to lowest' as check,
+select 'reasoning defaults to the model''s own' as check,
        (select column_default from information_schema.columns
-         where table_name = 'generation_setting' and column_name = 'reasoning') like '%lowest%' as expect_true;
+         where table_name = 'generation_setting' and column_name = 'reasoning') like '%default%' as expect_true;
+select 'the model defaults to gpt-6-luna' as check,
+       (select column_default from information_schema.columns
+         where table_name = 'generation_setting' and column_name = 'model') like '%openai/gpt-6-luna%' as expect_true;
 insert into resume_generation (team_id, created_by, model, ok, source, run_id, output)
 values ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000005a',
         'test/model', true, 'lab', '00000000-0000-0000-0000-00000000aaaa', '{"targetTitle":"X"}');
@@ -1373,3 +1376,46 @@ select 'the super admin reads a lab run with its output' as check,
        output->>'targetTitle' = 'X' as expect_true
   from resume_generation where run_id = '00000000-0000-0000-0000-00000000aaaa';
 reset role;
+
+\echo ''
+\echo '=== 19. the base prompt library is the super admin''s ==='
+-- Section 17 left a prompt in the old single-text column. Part 1 moves it into
+-- the library as the active prompt, once.
+set client_min_messages = warning;
+\o /dev/null
+\ir ../schema/01_tables.sql
+\ir ../schema/01_tables.sql
+\o
+reset client_min_messages;
+select 'the old prompt became the active library prompt' as check,
+       (select count(*) from generation_prompt where body = 'Write tight resumes.') = 1
+       and (select p.body from generation_setting s join generation_prompt p on p.id = s.active_prompt_id)
+           = 'Write tight resumes.'
+       and (select system_prompt from generation_setting) = '' as expect_true;
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+insert into generation_prompt (id, name, body, created_by)
+values ('00000000-0000-0000-0000-0000000000a7', 'Variant B', 'Be brief.', auth.uid());
+update generation_setting set active_prompt_id = '00000000-0000-0000-0000-0000000000a7', updated_by = auth.uid();
+select 'super admin adds a prompt and makes it active' as check,
+       active_prompt_id = '00000000-0000-0000-0000-0000000000a7' as expect_true
+  from generation_setting;
+
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'a subadmin cannot read the library' as check, count(*) = 0 as expect_true
+  from generation_prompt;
+do $$
+begin
+  insert into generation_prompt (name, body, created_by) values ('Mine', 'x', auth.uid());
+  raise exception 'FAIL: a subadmin added a base prompt';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: only the super admin adds base prompts';
+end $$;
+reset role;
+
+delete from generation_prompt where id = '00000000-0000-0000-0000-0000000000a7';
+select 'deleting the active prompt falls back to the built-in' as check,
+       active_prompt_id is null as expect_true
+  from generation_setting;

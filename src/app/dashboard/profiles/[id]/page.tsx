@@ -15,7 +15,7 @@ export default async function ProfileDetailPage({
   const { data: profile } = await supabase
     .from("candidate_profile")
     .select(
-      "id, team_id, created_by, full_name, email, phone, address, city, state, postal_code, country, birthday, github_url, linkedin_url, profile, ssn_encrypted",
+      "id, team_id, created_by, full_name, email, phone, address, city, state, postal_code, country, birthday, github_url, linkedin_url, company_context, profile, ssn_encrypted",
     )
     .eq("id", id)
     .maybeSingle();
@@ -58,6 +58,7 @@ export default async function ProfileDetailPage({
     birthday: profile.birthday,
     github_url: profile.github_url,
     linkedin_url: profile.linkedin_url,
+    company_context: profile.company_context,
     profile: profile.profile,
   };
 

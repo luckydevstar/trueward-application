@@ -36,6 +36,7 @@ export type ProfileRowValues = {
   birthday: string | null;
   github_url: string | null;
   linkedin_url: string | null;
+  company_context: string | null;
   profile: ResumeProfile;
 };
 
@@ -90,6 +91,7 @@ export function toProfileRow(values: ProfileFormValues): ProfileRowValues {
     birthday: values.birthday ? values.birthday.format("YYYY-MM-DD") : null,
     github_url: identity.githubUrl ?? null,
     linkedin_url: identity.linkedinUrl ?? null,
+    company_context: blank(values.companyContext),
     profile: buildProfileDocument(identity),
   };
 }
@@ -106,6 +108,7 @@ type StoredRow = {
   birthday: string | null;
   github_url: string | null;
   linkedin_url: string | null;
+  company_context?: string | null;
   profile: ResumeProfile;
 };
 
@@ -130,6 +133,7 @@ export function toFormValues(row: StoredRow): ProfileFormValues {
     birthday: row.birthday ? dayjs(row.birthday) : null,
     githubUrl: row.github_url ?? undefined,
     linkedinUrl: row.linkedin_url ?? undefined,
+    companyContext: row.company_context ?? undefined,
     employments: (row.profile?.employments ?? []).map((e) => ({
       id: e.id,
       company: e.company,

@@ -2,7 +2,9 @@
 
 import {
   CodeOutlined,
+  CopyOutlined,
   DownloadOutlined,
+  SendOutlined,
   RobotOutlined,
   SaveOutlined,
   ThunderboltOutlined,
@@ -14,7 +16,6 @@ import {
   Button,
   Card,
   Col,
-  Collapse,
   Divider,
   Empty,
   Input,
@@ -30,7 +31,13 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { generateResumeContent, type GenerateResult } from "@/app/dashboard/resumes/actions";
+import {
+  askFollowUp,
+  attachApplicationResume,
+  generateResumeContent,
+  recordApplication,
+  type GenerateResult,
+} from "@/app/dashboard/resumes/actions";
 import {
   DEFAULT_STYLE,
   ResumeStyleToolbar,
@@ -47,18 +54,27 @@ import {
   resumeDocumentSchema,
   type ResumeProfile,
 } from "@/lib/document/schema";
-import { downloadResumePdf, renderResumePdfUrl } from "@/lib/pdf/resume-pdf";
+import {
+  downloadResumePdf,
+  renderResumePdfBlob,
+  renderResumePdfUrl,
+  resumeFileName,
+  saveBlob,
+} from "@/lib/pdf/resume-pdf";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
 import type { TemplateSpec } from "@/lib/pdf/templates";
 import { usePersistentState } from "@/lib/persistent-state";
 import { coerceChoice } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/client";
+import { useUploadThing } from "@/lib/uploadthing";
 import { formatDate } from "@/lib/status";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
 type ProfileOption = {
   id: string;
   fullName: string;
+  /** Whether the profile has company context on file for generation. */
+  hasCompanyContext?: boolean;
   profile: ResumeProfile | null;
   error: string | null;
 };
@@ -85,11 +101,8 @@ type Props = {
   canEditAny: boolean;
   /** A super admin reviews: they may render and download, never save. */
   readOnly: boolean;
-  /**
-   * Whether Generate works, with which model, and the saved resume base
-   * prompt that pre-fills the base-prompt field — see the page.
-   */
-  generation: { enabled: boolean; model: string | null; basePrompt: string };
+  /** Whether Generate works. Prompt and model are the super admin's. */
+  generation: { enabled: boolean };
 };
 
 /** The last generation's receipt, shown under the button. */
@@ -108,12 +121,6 @@ const PANEL_HEIGHT = "calc(100dvh - 236px)";
 type Preset = { template: string; style: ResumeStyle };
 
 const STYLE_STORAGE_KEY = "tw.resume.style";
-/**
- * The resume base prompt as this person edited it. Empty means "the saved
- * default", so an edit survives navigation and Reset goes back to whatever
- * the super admin saved, including later changes to it.
- */
-const BASE_PROMPT_KEY = "tw.resume.basePrompt";
 
 /**
  * Where the content comes from: generated here, or pasted from elsewhere.
@@ -162,24 +169,28 @@ export function ResumeBuilder({
   generation,
 }: Props) {
   const router = useRouter();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
 
   /*
-   * Generation inputs: the selected profile, the resume base prompt, and the
-   * additional prompt. The base prompt is reused across resumes, so an edit
-   * to it is remembered; the additional prompt carries the job description,
-   * which belongs to one resume, so it is not.
+   * The one generation input besides the profile. The base prompt, model and
+   * reasoning are the super admin's and stay on the server; the job belongs to
+   * one resume, so it isn't remembered.
    */
-  const [storedBasePrompt, setStoredBasePrompt] = usePersistentState<string>(
-    BASE_PROMPT_KEY,
-    "",
-  );
-  const basePrompt = storedBasePrompt || generation.basePrompt;
-  const basePromptEdited = Boolean(storedBasePrompt) && storedBasePrompt !== generation.basePrompt;
-  const setBasePrompt = (value: string) =>
-    // Typing it back to the saved text returns to following the saved one.
-    setStoredBasePrompt(value === generation.basePrompt ? "" : value);
-  const [additionalPrompt, setAdditionalPrompt] = useState("");
+  const [jobDescription, setJobDescription] = useState("");
+
+  // Step 4: where this resume is going, so downloading it also tracks it.
+  const [company, setCompany] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
+  const [jobUrl, setJobUrl] = useState("");
+  const [tracking, setTracking] = useState(false);
+  const { startUpload } = useUploadThing("applicationResume");
+
+  // Step 5: questions about this resume and job, answered by the same model.
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [answers, setAnswers] = useState<
+    Array<{ question: string; answer: string; costUsd: number | null; latencyMs: number }>
+  >([]);
   const [source, setSource] = usePersistentState<Source>(SOURCE_KEY, "ai");
   const [generating, setGenerating] = useState(false);
   const [lastRun, setLastRun] = useState<Run | null>(null);
@@ -272,6 +283,7 @@ export function ResumeBuilder({
     setProfileId(id);
     setLastRun(null);
     setBeforeGeneration(null);
+    setAnswers([]);
     // Documents belong to one profile; keeping a selection across a switch
     // would show content whose employmentIds can't resolve.
     setDocumentId("");
@@ -568,11 +580,7 @@ export function ResumeBuilder({
   const generate = async () => {
     if (!selectedProfile?.profile || isExample) return;
     setGenerating(true);
-    const result = await generateResumeContent({
-      profileId,
-      basePrompt,
-      additionalPrompt,
-    });
+    const result = await generateResumeContent({ profileId, jobDescription });
     setGenerating(false);
 
     if (!result.ok) {
@@ -595,6 +603,93 @@ export function ResumeBuilder({
     else message.warning("Generated, but it needs a fix — see the errors under the content.");
   };
 
+  /**
+   * Records the application, then downloads the resume with the PDF attached
+   * to that row.
+   *
+   * Recording comes first: the duplicate cooldown and the blocklist are why it
+   * might be refused, and that should be known before a resume goes out. A
+   * refusal says why and offers the download on its own; tracking is the
+   * default, not a gate on getting the file.
+   */
+  const downloadAndTrack = async () => {
+    if (parsed.kind !== "ok") return;
+    const doc = parsed.document;
+    setTracking(true);
+    try {
+      const recorded = await recordApplication({
+        profileId,
+        title: jobTitle.trim() || doc.content.targetTitle,
+        company,
+        jobUrl,
+      });
+
+      const blob = await renderResumePdfBlob(doc, style, template);
+      const fileName = resumeFileName(doc);
+
+      if (!recorded.ok) {
+        if (recorded.reason === "other") {
+          message.error(recorded.error);
+          return;
+        }
+        modal.confirm({
+          title: recorded.reason === "cooldown" ? "Already applied recently" : "On the blocklist",
+          content: recorded.error,
+          okText: "Download without tracking",
+          cancelText: "Cancel",
+          onOk: () => saveBlob(blob, fileName),
+        });
+        return;
+      }
+
+      saveBlob(blob, fileName);
+
+      try {
+        const uploaded = (await startUpload([new File([blob], fileName, { type: "application/pdf" })]))?.[0];
+        if (!uploaded) throw new Error("upload refused");
+        const attached = await attachApplicationResume({
+          applicationId: recorded.id,
+          key: uploaded.key,
+          url: uploaded.ufsUrl,
+          name: uploaded.name,
+        });
+        if (!attached.ok) throw new Error(attached.error);
+        message.success("Downloaded, and tracked in Applications with the PDF attached.");
+      } catch {
+        message.warning("Downloaded and tracked in Applications, but the PDF couldn't be attached to it.");
+      }
+      setCompany("");
+      setJobTitle("");
+      setJobUrl("");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "Couldn't download the resume.");
+    } finally {
+      setTracking(false);
+    }
+  };
+
+  const ask = async () => {
+    if (!question.trim()) return;
+    setAsking(true);
+    const result = await askFollowUp({
+      profileId,
+      jobDescription,
+      resume: json,
+      question,
+      history: answers.map(({ question, answer }) => ({ question, answer })),
+    });
+    setAsking(false);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    setAnswers((all) => [
+      ...all,
+      { question: question.trim(), answer: result.answer, costUsd: result.costUsd, latencyMs: result.latencyMs },
+    ]);
+    setQuestion("");
+  };
+
   const undoGeneration = () => {
     if (beforeGeneration === null) return;
     setJson(beforeGeneration);
@@ -606,8 +701,7 @@ export function ResumeBuilder({
     generation.enabled &&
     !isExample &&
     Boolean(selectedProfile?.profile) &&
-    basePrompt.trim().length > 0 &&
-    additionalPrompt.trim().length > 0;
+    jobDescription.trim().length > 0;
 
   return (
     <>
@@ -696,6 +790,14 @@ export function ResumeBuilder({
                 />
               </div>
 
+              {!isExample && selectedProfile?.profile && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {selectedProfile.hasCompanyContext
+                    ? "Company context is on file and goes into generation."
+                    : "No company context on this profile yet — add one on the profile for better-targeted bullets."}
+                </Typography.Text>
+              )}
+
               {isExample && (
                 <Alert
                   type="info"
@@ -778,70 +880,18 @@ export function ResumeBuilder({
                       type="warning"
                       showIcon
                       title="AI generation isn't set up yet"
-                      description="The super admin needs to add the OpenRouter key. Until then, use Paste JSON."
+                      description="The super admin needs to finish setting up generation. Until then, use Paste JSON."
                     />
                   )}
-                  {/*
-                    The base prompt is long and reused, so it stays folded once
-                    set; the additional prompt is the one that changes per
-                    resume, so it is always open.
-                  */}
-                  <Collapse
-                    size="small"
-                    defaultActiveKey={basePrompt.trim() ? [] : ["base"]}
-                    items={[
-                      {
-                        key: "base",
-                        label: (
-                          <Space size={6} wrap>
-                            <span>Resume base prompt</span>
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {basePrompt.trim()
-                                ? `${basePrompt.trim().split(/\s+/).length.toLocaleString()} words`
-                                : "empty"}
-                            </Typography.Text>
-                            <Tag style={{ margin: 0 }}>
-                              {basePromptEdited ? "edited" : "saved default"}
-                            </Tag>
-                          </Space>
-                        ),
-                        extra: basePromptEdited ? (
-                          <Button
-                            size="small"
-                            type="link"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setStoredBasePrompt("");
-                            }}
-                          >
-                            Reset
-                          </Button>
-                        ) : null,
-                        children: (
-                          <Input.TextArea
-                            value={basePrompt}
-                            onChange={(e) => setBasePrompt(e.target.value)}
-                            autoSize={{ minRows: 8, maxRows: 20 }}
-                            placeholder="Paste your resume base prompt — the instructions the model writes every resume by."
-                            disabled={isExample}
-                            style={{ fontSize: 12 }}
-                          />
-                        ),
-                      },
-                    ]}
-                  />
                   <div>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Additional prompt{" "}
-                      <span style={{ opacity: 0.7 }}>
-                        — the job description, and anything else for this resume
-                      </span>
+                      Job description
                     </Typography.Text>
                     <Input.TextArea
-                      value={additionalPrompt}
-                      onChange={(e) => setAdditionalPrompt(e.target.value)}
-                      autoSize={{ minRows: 7, maxRows: 18 }}
-                      placeholder={"Paste the job posting here.\n\nAdd anything else for this resume, e.g. “Keep it to one page. Lead with the payments work.”"}
+                      value={jobDescription}
+                      onChange={(e) => setJobDescription(e.target.value)}
+                      autoSize={{ minRows: 8, maxRows: 20 }}
+                      placeholder="Paste the job posting — title, responsibilities, requirements."
                       disabled={isExample}
                     />
                   </div>
@@ -851,11 +901,9 @@ export function ResumeBuilder({
                         ? "Generation is off — the super admin needs to set the OpenRouter key."
                         : isExample
                           ? "Pick a real candidate to generate for."
-                          : !basePrompt.trim()
-                            ? "Enter the resume base prompt first."
-                            : !additionalPrompt.trim()
-                              ? "Enter the additional prompt — the job description and anything else."
-                              : json.trim()
+                          : !jobDescription.trim()
+                            ? "Paste the job description first."
+                            : json.trim()
                               ? "Replaces the current content. Undo puts it back."
                               : undefined
                     }
@@ -892,9 +940,7 @@ export function ResumeBuilder({
                           ]
                             .filter(Boolean)
                             .join(" · ")
-                        : generation.model
-                          ? `Model: ${generation.model}`
-                          : null}
+                        : null}
                     </Typography.Text>
                     {beforeGeneration !== null && !generating && (
                       <Button size="small" type="text" icon={<UndoOutlined />} onClick={undoGeneration}>
@@ -903,28 +949,21 @@ export function ResumeBuilder({
                     )}
                   </div>
                   {/*
-                    The JSON is still there — it is what gets saved — but it is
-                    the output here, not the input, so it stays folded away
-                    unless someone wants to adjust a line by hand.
+                    The model's answer, editable: the preview, Save and Download
+                    all read what is here, so a hand fix is picked up at once.
                   */}
                   {json.trim() && (
-                    <Collapse
-                      size="small"
-                      items={[
-                        {
-                          key: "json",
-                          label: "View or edit the generated JSON",
-                          children: (
-                            <Input.TextArea
-                              rows={14}
-                              value={json}
-                              onChange={(e) => setJson(e.target.value)}
-                              style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
-                            />
-                          ),
-                        },
-                      ]}
-                    />
+                    <div>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        Output <span style={{ opacity: 0.7 }}>— the generated JSON, editable</span>
+                      </Typography.Text>
+                      <Input.TextArea
+                        rows={14}
+                        value={json}
+                        onChange={(e) => setJson(e.target.value)}
+                        style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+                      />
+                    </div>
                   )}
                 </>
               ) : (
@@ -997,7 +1036,7 @@ export function ResumeBuilder({
                   showIcon
                   title={
                     source === "ai"
-                      ? "Enter the additional prompt and press Generate resume."
+                      ? "Paste the job description and press Generate resume."
                       : "Paste content JSON, or press “Start from profile”."
                   }
                   description="Until then the preview shows what the profile already knows — identity, employers and dates."
@@ -1092,6 +1131,95 @@ export function ResumeBuilder({
                     return `${experiences.length} role${experiences.length === 1 ? "" : "s"} · ${bullets} bullet${bullets === 1 ? "" : "s"} · ${skills.length} skill group${skills.length === 1 ? "" : "s"}. Check the preview, then save or download.`;
                   })()}
                 />
+              )}
+
+              {parsed.kind === "ok" && !isExample && (
+                <>
+                  <Step number={4} title="Apply" />
+                  <Input
+                    placeholder="Company"
+                    value={company}
+                    onChange={(e) => setCompany(e.target.value)}
+                    disabled={readOnly}
+                  />
+                  <Input
+                    placeholder={`Job title — ${parsed.document.content.targetTitle}`}
+                    value={jobTitle}
+                    onChange={(e) => setJobTitle(e.target.value)}
+                    disabled={readOnly}
+                  />
+                  <Input
+                    placeholder="Job URL — https://…"
+                    value={jobUrl}
+                    onChange={(e) => setJobUrl(e.target.value)}
+                    disabled={readOnly}
+                  />
+                  <Tooltip
+                    title={
+                      readOnly
+                        ? "Super admins review; tracking an application needs a team."
+                        : !company.trim() || !jobUrl.trim()
+                          ? "Enter the company and job URL to track it."
+                          : "Downloads the PDF and adds it to Applications, with the file attached."
+                    }
+                  >
+                    <Button
+                      type="primary"
+                      block
+                      icon={<DownloadOutlined />}
+                      loading={tracking}
+                      disabled={readOnly || !company.trim() || !jobUrl.trim()}
+                      onClick={downloadAndTrack}
+                    >
+                      Download &amp; track
+                    </Button>
+                  </Tooltip>
+
+                  <Step number={5} title="Follow-up questions" />
+                  <Input.TextArea
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    autoSize={{ minRows: 2, maxRows: 8 }}
+                    placeholder="e.g. “Why do you want to work here?” or “Describe a hard production problem you solved.”"
+                    disabled={!generation.enabled}
+                  />
+                  <Button
+                    icon={<SendOutlined />}
+                    loading={asking}
+                    disabled={!generation.enabled || !question.trim()}
+                    onClick={ask}
+                  >
+                    Ask
+                  </Button>
+                  {answers.map((a, i) => (
+                    <Card
+                      key={i}
+                      size="small"
+                      title={<span style={{ fontSize: 13, whiteSpace: "normal" }}>{a.question}</span>}
+                      extra={
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<CopyOutlined />}
+                          onClick={() => {
+                            navigator.clipboard.writeText(a.answer);
+                            message.success("Answer copied.");
+                          }}
+                        >
+                          Copy
+                        </Button>
+                      }
+                    >
+                      <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 4 }}>
+                        {a.answer}
+                      </Typography.Paragraph>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {a.costUsd !== null ? `$${a.costUsd.toFixed(4)} · ` : ""}
+                        {(a.latencyMs / 1000).toFixed(1)}s
+                      </Typography.Text>
+                    </Card>
+                  ))}
+                </>
               )}
             </Space>
           </Card>

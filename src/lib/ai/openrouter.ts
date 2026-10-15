@@ -146,3 +146,72 @@ export async function completeJson(options: {
     costUsd: typeof payload.usage?.cost === "number" ? payload.usage.cost : null,
   };
 }
+
+/**
+ * A plain-text completion, for answers rather than documents — the builder's
+ * follow-up questions. Same model, routing and reasoning handling as
+ * completeJson(), without a response schema.
+ */
+export async function completeText(options: {
+  model: string;
+  messages: ChatMessage[];
+  reasoning?: Record<string, unknown>;
+}): Promise<Completion> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set, so generation is off.");
+
+  let response: Response;
+  try {
+    response = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "X-Title": "Trueward Guru",
+      },
+      body: JSON.stringify({
+        model: options.model,
+        messages: wire(options.model, options.messages),
+        provider: { require_parameters: true },
+        usage: { include: true },
+        ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+        max_tokens: 4000,
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(`The model took longer than ${TIMEOUT_MS / 1000}s. Try again.`);
+    }
+    throw new Error("Couldn't reach OpenRouter.");
+  }
+
+  const payload = (await response.json().catch(() => null)) as {
+    model?: string;
+    choices?: Array<{ message?: { content?: string | null } }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      cost?: number;
+      prompt_tokens_details?: { cached_tokens?: number };
+      completion_tokens_details?: { reasoning_tokens?: number };
+    };
+    error?: { message?: string };
+  } | null;
+
+  if (!response.ok || !payload || payload.error) {
+    throw new Error(`OpenRouter refused the request: ${payload?.error?.message ?? `HTTP ${response.status}`}`);
+  }
+  const content = payload.choices?.[0]?.message?.content?.trim() ?? "";
+  if (!content) throw new Error("The model returned nothing.");
+
+  return {
+    content,
+    model: payload.model ?? options.model,
+    promptTokens: payload.usage?.prompt_tokens ?? null,
+    completionTokens: payload.usage?.completion_tokens ?? null,
+    cachedTokens: payload.usage?.prompt_tokens_details?.cached_tokens ?? null,
+    reasoningTokens: payload.usage?.completion_tokens_details?.reasoning_tokens ?? null,
+    costUsd: typeof payload.usage?.cost === "number" ? payload.usage.cost : null,
+  };
+}

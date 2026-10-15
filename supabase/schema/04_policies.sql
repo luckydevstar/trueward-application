@@ -48,6 +48,7 @@ alter table application        enable row level security;
 alter table ssn_access_log     enable row level security;
 alter table generation_setting enable row level security;
 alter table resume_generation  enable row level security;
+alter table generation_prompt  enable row level security;
 
 -- --- app_user -------------------------------------------------------------
 
@@ -300,6 +301,26 @@ drop policy if exists generation_setting_update on generation_setting;
 create policy generation_setting_update on generation_setting
   for update using (is_super_admin())
   with check (is_super_admin() and updated_by = auth.uid());
+
+-- --- generation_prompt ----------------------------------------------------
+-- The super admin's library. The builder's action reads the active prompt with
+-- the service role, so nobody else needs to read it.
+
+drop policy if exists generation_prompt_select on generation_prompt;
+create policy generation_prompt_select on generation_prompt
+  for select using (is_super_admin());
+
+drop policy if exists generation_prompt_insert on generation_prompt;
+create policy generation_prompt_insert on generation_prompt
+  for insert with check (is_super_admin() and created_by = auth.uid());
+
+drop policy if exists generation_prompt_update on generation_prompt;
+create policy generation_prompt_update on generation_prompt
+  for update using (is_super_admin()) with check (is_super_admin());
+
+drop policy if exists generation_prompt_delete on generation_prompt;
+create policy generation_prompt_delete on generation_prompt
+  for delete using (is_super_admin());
 
 -- --- resume_generation ----------------------------------------------------
 -- Read-only from the app: subadmins see their team's, the super admin every

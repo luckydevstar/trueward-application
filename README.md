@@ -489,11 +489,28 @@ prints the live grants.
 
 ## Generating resumes
 
-The resume builder writes a resume's content itself. The input is exactly
-three things: the selected profile, the **resume base prompt** (the system
-prompt — pre-filled from the saved default, editable, remembered per browser)
-and the **additional prompt** (the job description and anything else for this
-resume). The app adds only the response contract.
+The resume builder writes a resume's content itself. Whoever generates does
+two things — picks a profile and pastes the job description — and the rest is
+the super admin's: the active base prompt, the model and the reasoning
+setting. The flow end to end:
+
+1. A subadmin adds a profile, then its **company context** — what each
+   employer actually does. The profile form has a research prompt to copy,
+   with the profile's employments, into any assistant with web search; it
+   asks for verified company facts only. **Download JSON** on the profile
+   page exports the profile document.
+2. In the builder, a bidder picks an assigned profile (its employments,
+   education and company context go to the model, never contact details),
+   pastes the job description and presses **Generate**. The JSON appears in an
+   editable output box; the styled preview follows it.
+3. **Download & track** takes the company, job title and job URL, records the
+   application (the duplicate cooldown and the blocklist can refuse it, with
+   the reason, and the download is then offered on its own), downloads the
+   PDF and attaches it to the new row in Applications.
+4. **Follow-up questions** — screening questions, short essays — are answered
+   from the generated resume and the job by the same model, each in its own
+   box with a copy button. They are logged (`source = 'followup'`) and count
+   in Usage.
 The answer lands in the same JSON editor pasted content always used, so
 validation, the live preview, Save and Download are unchanged — and pasting
 your own still works.
@@ -501,10 +518,12 @@ your own still works.
 - **Through OpenRouter**, so the model is a setting, not a dependency. Set
   `OPENROUTER_API_KEY` (server-only) in the deployment; without it the button
   is off and nothing else changes.
-- **The model, reasoning and default base prompt** are the super admin's, on
-  the **Generation** page. Saving takes effect on the next generation; no
-  deploy. A starter prompt (`src/lib/ai/resume-prompt.ts`) can be inserted
-  there, but nothing falls back to it silently.
+- **The model, reasoning and base prompts** are the super admin's, on the
+  **Generation** page (or saved from the model lab). The default model is
+  `openai/gpt-6-luna` with reasoning left to the model. Base prompts are a
+  library (`generation_prompt`): add, edit, delete, and mark one **Active**;
+  the built-in prompt (`src/lib/ai/resume-prompt.ts`) is shown read-only and
+  is what runs when none is active.
 - **The response contract is the app's only addition.** After the base prompt, a fixed section
   describes the resume's shape, and the request uses strict structured output
   with the profile's employment ids as an enum — the model cannot answer with

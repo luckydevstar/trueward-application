@@ -48,7 +48,7 @@ const PERIOD_OPTIONS = [
   { value: "90d", label: "90 days" },
 ];
 const SOURCE_OPTIONS = [
-  { value: "builder", label: "Real resumes" },
+  { value: "builder", label: "Real usage" },
   { value: "lab", label: "Model lab" },
   { value: "all", label: "Both" },
 ];
@@ -81,7 +81,7 @@ export function UsageDashboard({
     return [
       { title, dataIndex: "label", key: "label", ellipsis: true },
       {
-        title: "Resumes",
+        title: "Requests",
         dataIndex: "runs",
         key: "runs",
         align: "right" as const,
@@ -124,7 +124,7 @@ export function UsageDashboard({
         ),
       },
       {
-        title: "Per resume",
+        title: "Per request",
         key: "avg",
         align: "right" as const,
         width: 110,
@@ -216,12 +216,12 @@ export function UsageDashboard({
         </Col>
         <Col xs={12} lg={everyTeam ? 5 : 6}>
           <Card variant="borderless">
-            <Statistic title="Resumes generated" value={totals.runs} />
+            <Statistic title="Requests" value={totals.runs} />
           </Card>
         </Col>
         <Col xs={12} lg={everyTeam ? 5 : 6}>
           <Card variant="borderless">
-            <Statistic title="Average per resume" value={avg === null ? "—" : money(avg)} />
+            <Statistic title="Average per request" value={avg === null ? "—" : money(avg)} />
           </Card>
         </Col>
         <Col xs={12} lg={everyTeam ? 4 : 6}>
@@ -292,7 +292,7 @@ function DailyColumns({ daily }: { daily: Array<{ day: string; spend: number; ru
           Peak {money(max)}
         </Typography.Text>
         <Typography.Text type="secondary" style={{ fontSize: 12, minHeight: 18 }}>
-          {h ? `${label(h.day)} · ${money(h.spend)} · ${h.runs} resume${h.runs === 1 ? "" : "s"}` : ""}
+          {h ? `${label(h.day)} · ${money(h.spend)} · ${h.runs} request${h.runs === 1 ? "" : "s"}` : ""}
         </Typography.Text>
       </div>
       <div

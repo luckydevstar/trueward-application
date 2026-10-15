@@ -841,6 +841,38 @@ export async function renderResumePdfUrl(
 }
 
 /**
+ * The PDF as a file, for attaching to an application as well as saving it.
+ * Same renderer as everything else here, so what is filed is what was shown.
+ */
+export async function renderResumePdfBlob(
+  doc: ResumeDocument,
+  style: ResumeStyle = {},
+  template = "classic",
+): Promise<Blob> {
+  const { jsPDF } = await import("jspdf");
+  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
+  renderResumePdf(pdf, doc, style, template);
+  return pdf.output("blob");
+}
+
+/** "Jane Doe — Senior Engineer.pdf", without characters a filesystem refuses. */
+export function resumeFileName(doc: ResumeDocument): string {
+  const safe = (value: string) => value.replace(/[\\/:*?"<>|]+/g, "").trim();
+  return `${safe(doc.profile.fullName) || "Resume"} — ${safe(doc.content.targetTitle)}.pdf`;
+}
+
+/** Hands a file to the browser's download. */
+export function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  // Revoked after the click has had a chance to start the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
  * Builds the PDF and hands it to the user.
  *
  * jsPDF is imported here rather than at module scope so it lands in its own

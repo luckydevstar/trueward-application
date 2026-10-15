@@ -2,8 +2,10 @@ import { Alert } from "antd";
 
 import { ModelLab, type LabHistoryRow } from "@/components/model-lab";
 import { requireActor } from "@/lib/actor";
+import { DEFAULT_MODEL, DEFAULT_REASONING } from "@/lib/ai/defaults";
 import { modelCatalog } from "@/lib/ai/models";
 import { openRouterConfigured } from "@/lib/ai/openrouter";
+import { DEFAULT_SYSTEM_PROMPT } from "@/lib/ai/resume-prompt";
 import { profileSchema } from "@/lib/document/schema";
 import { fetchAll } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase/server";
@@ -58,9 +60,10 @@ export default async function ModelLabPage() {
   }
 
   const supabase = await createClient();
-  const [profiles, settings, catalog, history, credit] = await Promise.all([
+  const [profiles, settings, prompts, catalog, history, credit] = await Promise.all([
     supabase.from("candidate_profile").select("id, full_name, profile").order("full_name"),
-    supabase.from("generation_setting").select("system_prompt, model, reasoning").maybeSingle(),
+    supabase.from("generation_setting").select("model, reasoning, active_prompt_id").maybeSingle(),
+    supabase.from("generation_prompt").select("id, name, body").order("created_at"),
     modelCatalog(),
     fetchAll<LabHistoryRow>((from, to) =>
       supabase
@@ -92,9 +95,11 @@ export default async function ModelLabPage() {
           efforts: m.efforts,
         }))
         .sort((a, b) => a.id.localeCompare(b.id))}
-      savedPrompt={settings.data?.system_prompt ?? ""}
-      savedModel={settings.data?.model ?? "anthropic/claude-sonnet-5.5"}
-      savedReasoning={settings.data?.reasoning ?? "lowest"}
+      builtInPrompt={DEFAULT_SYSTEM_PROMPT}
+      prompts={prompts.data ?? []}
+      activePromptId={settings.data?.active_prompt_id ?? null}
+      savedModel={settings.data?.model ?? DEFAULT_MODEL}
+      savedReasoning={settings.data?.reasoning ?? DEFAULT_REASONING}
       history={history.rows}
       credit={credit}
     />
