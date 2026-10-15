@@ -9,6 +9,7 @@ import {
   LogoutOutlined,
   ProfileOutlined,
   TeamOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
 import { Avatar, Dropdown, Layout, Menu, Tag, Typography } from "antd";
 import Link from "next/link";
@@ -200,6 +201,11 @@ export function DashboardShell({ name, email, role, children }: Props) {
                   disabled: true,
                 },
                 { type: "divider" },
+                {
+                  key: "account",
+                  icon: <UserOutlined />,
+                  label: <Link href="/dashboard/account">Account &amp; password</Link>,
+                },
                 {
                   key: "signout",
                   icon: <LogoutOutlined />,
