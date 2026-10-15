@@ -165,15 +165,23 @@ export type GenerationSettingRow = {
   reasoning: string;
   /** The library prompt every Generate uses; null means the built-in one. */
   active_prompt_id: string | null;
+  /** The research prompt profile adders copy; null means the built-in one. */
+  active_research_prompt_id: string | null;
   updated_by: string | null;
   updated_at: string;
 };
 
-/** A base prompt in the super admin's library. */
+export type PromptKind = "resume" | "research";
+
+/**
+ * A prompt in the super admin's library: a resume base prompt, or a company
+ * research prompt for profile adders.
+ */
 export type GenerationPromptRow = {
   id: string;
   name: string;
   body: string;
+  kind: PromptKind;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -227,6 +235,8 @@ type Defaulted =
   | "company_context"
   // Columns the database defaults on the generation tables.
   | "active_prompt_id"
+  | "active_research_prompt_id"
+  | "kind"
   | "source"
   | "run_id"
   | "reasoning"

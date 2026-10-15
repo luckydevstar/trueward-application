@@ -4,7 +4,7 @@ import { GenerationSettings, type ModelStats } from "@/components/generation-set
 import { requireActor } from "@/lib/actor";
 import { DEFAULT_MODEL, DEFAULT_REASONING } from "@/lib/ai/defaults";
 import { openRouterConfigured } from "@/lib/ai/openrouter";
-import { DEFAULT_SYSTEM_PROMPT } from "@/lib/ai/resume-prompt";
+import { COMPANY_RESEARCH_PROMPT, DEFAULT_SYSTEM_PROMPT } from "@/lib/ai/resume-prompt";
 import { fetchAll } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase/server";
 
@@ -77,9 +77,11 @@ export default async function GenerationPage() {
   const [{ data: settings }, { data: prompts }, log, models] = await Promise.all([
     supabase
       .from("generation_setting")
-      .select("model, reasoning, active_prompt_id, updated_at")
+      // `*`, so the page still reads on a database that hasn't run part 1
+      // since the research library arrived (no kind, no research setting).
+      .select("*")
       .maybeSingle(),
-    supabase.from("generation_prompt").select("id, name, body, updated_at").order("created_at"),
+    supabase.from("generation_prompt").select("*").order("created_at"),
     fetchAll<{
       model: string;
       ok: boolean;
@@ -127,8 +129,11 @@ export default async function GenerationPage() {
   return (
     <GenerationSettings
       builtInPrompt={DEFAULT_SYSTEM_PROMPT}
-      prompts={prompts ?? []}
+      prompts={(prompts ?? []).filter((p) => (p.kind ?? "resume") === "resume")}
       activePromptId={settings?.active_prompt_id ?? null}
+      builtInResearchPrompt={COMPANY_RESEARCH_PROMPT}
+      researchPrompts={(prompts ?? []).filter((p) => p.kind === "research")}
+      activeResearchPromptId={settings?.active_research_prompt_id ?? null}
       model={settings?.model ?? DEFAULT_MODEL}
       reasoning={settings?.reasoning ?? DEFAULT_REASONING}
       updatedAt={settings?.updated_at ?? null}

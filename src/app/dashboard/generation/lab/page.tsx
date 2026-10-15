@@ -63,7 +63,8 @@ export default async function ModelLabPage() {
   const [profiles, settings, prompts, catalog, history, credit] = await Promise.all([
     supabase.from("candidate_profile").select("id, full_name, profile").order("full_name"),
     supabase.from("generation_setting").select("model, reasoning, active_prompt_id").maybeSingle(),
-    supabase.from("generation_prompt").select("id, name, body").order("created_at"),
+    // Filtered here rather than in the query; see the Generation page.
+    supabase.from("generation_prompt").select("*").order("created_at"),
     modelCatalog(),
     fetchAll<LabHistoryRow>((from, to) =>
       supabase
@@ -96,7 +97,9 @@ export default async function ModelLabPage() {
         }))
         .sort((a, b) => a.id.localeCompare(b.id))}
       builtInPrompt={DEFAULT_SYSTEM_PROMPT}
-      prompts={prompts.data ?? []}
+      prompts={(prompts.data ?? [])
+        .filter((p) => (p.kind ?? "resume") === "resume")
+        .map((p) => ({ id: p.id, name: p.name, body: p.body }))}
       activePromptId={settings.data?.active_prompt_id ?? null}
       savedModel={settings.data?.model ?? DEFAULT_MODEL}
       savedReasoning={settings.data?.reasoning ?? DEFAULT_REASONING}

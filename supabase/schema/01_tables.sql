@@ -428,6 +428,24 @@ alter table generation_setting
   add column if not exists active_prompt_id uuid
     references generation_prompt (id) on delete set null;
 
+-- Two libraries in one table, told apart by `kind`:
+--   resume    the base prompt every Generate uses (active_prompt_id)
+--   research  what a profile adder copies, with the profile's employments,
+--             into an AI assistant to draft its company context
+--             (active_research_prompt_id)
+-- Null for either means the built-in one in src/lib/ai/resume-prompt.ts. The
+-- loaders match the kind as well as the id, so a setting pointed at the wrong
+-- library falls back to the built-in rather than sending the wrong prompt.
+alter table generation_prompt
+  add column if not exists kind text not null default 'resume';
+alter table generation_prompt drop constraint if exists generation_prompt_kind_check;
+alter table generation_prompt add constraint generation_prompt_kind_check
+  check (kind in ('resume', 'research'));
+
+alter table generation_setting
+  add column if not exists active_research_prompt_id uuid
+    references generation_prompt (id) on delete set null;
+
 -- The single system_prompt the settings row used to hold becomes the
 -- library's first entry, and the active one. Clearing it afterwards is what
 -- makes a second run of this file do nothing.

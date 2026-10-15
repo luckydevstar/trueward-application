@@ -2,6 +2,7 @@ import { Alert } from "antd";
 
 import { ProfileFormPage } from "@/components/profile-form-page";
 import { requireActor } from "@/lib/actor";
+import { loadResearchPrompt } from "@/lib/ai/settings";
 import { canEditProfiles, teamIdFor } from "@/lib/scope";
 
 export const metadata = { title: "New profile" };
@@ -19,5 +20,5 @@ export default async function NewProfilePage() {
       />
     );
   }
-  return <ProfileFormPage mode="create" canSeeSsn />;
+  return <ProfileFormPage mode="create" canSeeSsn researchPrompt={await loadResearchPrompt()} />;
 }

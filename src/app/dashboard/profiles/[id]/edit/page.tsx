@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { ProfileFormPage } from "@/components/profile-form-page";
 import { requireActor } from "@/lib/actor";
+import { loadResearchPrompt } from "@/lib/ai/settings";
 import { canEditProfile, canHandleSsn } from "@/lib/profile-access";
 import { createClient } from "@/lib/supabase/server";
 
@@ -23,9 +24,12 @@ export default async function EditProfilePage({ params }: PageProps<"/dashboard/
   // Absent and not-yours look the same, as on the profile page.
   if (!profile || !canEditProfile(actor, profile)) notFound();
 
+  const researchPrompt = await loadResearchPrompt();
+
   return (
     <ProfileFormPage
       mode="edit"
+      researchPrompt={researchPrompt}
       profileId={profile.id}
       canSeeSsn={canHandleSsn(actor, profile)}
       // Only whether one exists crosses to the browser, never the ciphertext.

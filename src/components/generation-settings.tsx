@@ -31,7 +31,7 @@ import {
 } from "antd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import {
   deletePrompt,
@@ -41,6 +41,7 @@ import {
 } from "@/app/dashboard/generation/actions";
 import { OUTPUT_CONTRACT } from "@/lib/ai/resume-prompt";
 import { formatDate } from "@/lib/status";
+import type { PromptKind } from "@/lib/supabase/types";
 
 export type ModelStats = {
   model: string;
@@ -61,6 +62,11 @@ type Props = {
   prompts: LibraryPrompt[];
   /** Null means the built-in prompt is the active one. */
   activePromptId: string | null;
+  /** The built-in company research prompt, shown read-only. */
+  builtInResearchPrompt: string;
+  researchPrompts: LibraryPrompt[];
+  /** Null means the built-in research prompt is the active one. */
+  activeResearchPromptId: string | null;
   model: string;
   reasoning: string;
   updatedAt: string | null;
@@ -101,6 +107,9 @@ export function GenerationSettings({
   builtInPrompt,
   prompts,
   activePromptId,
+  builtInResearchPrompt,
+  researchPrompts,
+  activeResearchPromptId,
   model: savedModel,
   reasoning: savedReasoning,
   updatedAt,
@@ -114,9 +123,6 @@ export function GenerationSettings({
   const [model, setModel] = useState(savedModel);
   const [reasoning, setReasoning] = useState(savedReasoning);
   const [saving, setSaving] = useState(false);
-  const [viewing, setViewing] = useState<{ name: string; body: string } | null>(null);
-  const [editing, setEditing] = useState<Editing>(null);
-  const [busy, setBusy] = useState(false);
 
   const dirty = model.trim() !== savedModel || reasoning !== savedReasoning;
   const pricing = models.find((m) => m.id === model.trim());
@@ -156,48 +162,6 @@ export function GenerationSettings({
     router.refresh();
   };
 
-  const activate = async (value: string) => {
-    const result = await setActivePrompt(value === BUILT_IN ? null : value);
-    if (!result.ok) {
-      message.error(result.error);
-      return;
-    }
-    message.success("Active prompt changed. Every Generate now uses it.");
-    router.refresh();
-  };
-
-  const submitPrompt = async () => {
-    if (!editing) return;
-    setBusy(true);
-    const result = await savePrompt(editing);
-    setBusy(false);
-    if (!result.ok) {
-      message.error(result.error);
-      return;
-    }
-    message.success(editing.id ? "Prompt updated." : "Prompt added.");
-    setEditing(null);
-    router.refresh();
-  };
-
-  const remove = async (id: string) => {
-    const result = await deletePrompt(id);
-    if (!result.ok) {
-      message.error(result.error);
-      return;
-    }
-    message.success(
-      id === activePromptId ? "Deleted. The built-in prompt is active again." : "Prompt deleted.",
-    );
-    router.refresh();
-  };
-
-  const rows = [
-    { id: BUILT_IN, name: "Built-in default", body: builtInPrompt, updated_at: null as string | null, builtIn: true },
-    ...prompts.map((p) => ({ ...p, builtIn: false })),
-  ];
-  const active = activePromptId ?? BUILT_IN;
-
   return (
     <>
       <Space style={{ marginBottom: 20, width: "100%", justifyContent: "space-between" }} align="start">
@@ -206,8 +170,9 @@ export function GenerationSettings({
             Generation
           </Typography.Title>
           <Typography.Text type="secondary">
-            The model, reasoning and base prompt every Generate uses. People in
-            the builder only pick a profile and paste a job.
+            The model, reasoning and base prompt every Generate uses, and the
+            research prompt profile adders copy. People in the builder only
+            pick a profile and paste a job.
             {updatedAt ? ` Last changed ${formatDate(updatedAt)}.` : ""}
           </Typography.Text>
         </div>
@@ -287,113 +252,62 @@ export function GenerationSettings({
         </Col>
 
         <Col xs={24} xl={15}>
-          <Card
-            variant="borderless"
+          <PromptLibrary
+            kind="resume"
             title="Base prompts"
-            extra={
-              <Button size="small" icon={<PlusOutlined />} onClick={() => setEditing({ name: "", body: "" })}>
-                Add prompt
-              </Button>
+            builtIn={builtInPrompt}
+            prompts={prompts}
+            activeId={activePromptId}
+            placeholder="The base prompt — the instructions every resume is written by."
+            footer={
+              <Collapse
+                ghost
+                size="small"
+                style={{ marginTop: 8 }}
+                items={[
+                  {
+                    key: "contract",
+                    label: "What the app adds — the response format",
+                    children: (
+                      <>
+                        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                          The active prompt is the system message. The user message is
+                          the selected profile&apos;s employments and education, its
+                          company context if recorded, and the job description. The app
+                          appends only this, so the answer comes back as resume JSON the
+                          builder can render, with the profile&apos;s employment ids as
+                          the only allowed values. Names and contact details are not sent.
+                        </Typography.Paragraph>
+                        <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, background: "#f8fafc", padding: 12, borderRadius: 8, margin: 0 }}>
+                          {OUTPUT_CONTRACT}
+                        </pre>
+                      </>
+                    ),
+                  },
+                ]}
+              />
             }
-          >
-            <Radio.Group value={active} onChange={(e) => activate(e.target.value)} style={{ width: "100%" }}>
-              <Space orientation="vertical" style={{ width: "100%" }} size={0}>
-                {rows.map((p) => (
-                  <div
-                    key={p.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "10px 4px",
-                      borderBottom: "1px solid #edf0f5",
-                    }}
-                  >
-                    <Radio value={p.id} aria-label={`Use ${p.name}`} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <Space size={6} wrap>
-                        <Typography.Text strong>{p.name}</Typography.Text>
-                        {p.id === active && <Tag color="blue">Active</Tag>}
-                        {p.builtIn && <Tag>read-only</Tag>}
-                      </Space>
-                      <div>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {words(p.body).toLocaleString()} words
-                          {p.updated_at ? ` · updated ${formatDate(p.updated_at)}` : ""}
-                        </Typography.Text>
-                      </div>
-                    </div>
-                    <Space size={0}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EyeOutlined />}
-                        aria-label={`View ${p.name}`}
-                        onClick={() => setViewing({ name: p.name, body: p.body })}
-                      />
-                      {p.builtIn ? (
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<CopyOutlined />}
-                          onClick={() => setEditing({ name: "Copy of built-in default", body: p.body })}
-                        >
-                          Copy to library
-                        </Button>
-                      ) : (
-                        <>
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<EditOutlined />}
-                            aria-label={`Edit ${p.name}`}
-                            onClick={() => setEditing({ id: p.id, name: p.name, body: p.body })}
-                          />
-                          <Popconfirm
-                            title="Delete this prompt?"
-                            description={
-                              p.id === active ? "It's active — the built-in prompt takes over." : undefined
-                            }
-                            okButtonProps={{ danger: true }}
-                            onConfirm={() => remove(p.id)}
-                          >
-                            <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${p.name}`} />
-                          </Popconfirm>
-                        </>
-                      )}
-                    </Space>
-                  </div>
-                ))}
-              </Space>
-            </Radio.Group>
+          />
+        </Col>
 
-            <Collapse
-              ghost
-              size="small"
-              style={{ marginTop: 8 }}
-              items={[
-                {
-                  key: "contract",
-                  label: "What the app adds — the response format",
-                  children: (
-                    <>
-                      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-                        The active prompt is the system message. The user message is
-                        the selected profile&apos;s employments and education, its
-                        company context if recorded, and the job description. The app
-                        appends only this, so the answer comes back as resume JSON the
-                        builder can render, with the profile&apos;s employment ids as
-                        the only allowed values. Names and contact details are not sent.
-                      </Typography.Paragraph>
-                      <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, background: "#f8fafc", padding: 12, borderRadius: 8, margin: 0 }}>
-                        {OUTPUT_CONTRACT}
-                      </pre>
-                    </>
-                  ),
-                },
-              ]}
-            />
-          </Card>
+        <Col span={24}>
+          <PromptLibrary
+            kind="research"
+            title="Company research prompts"
+            builtIn={builtInResearchPrompt}
+            prompts={researchPrompts}
+            activeId={activeResearchPromptId}
+            placeholder="The research instructions. The profile's employments are added after it."
+            footer={
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: "10px 0 0" }}>
+                Whoever adds or edits a profile sees the active one beside the
+                Company context field. <b>Copy prompt + employments</b> copies it
+                followed by the profile&apos;s employments as JSON — employment
+                id, company, location, start and end — for them to run in an AI
+                assistant and paste the answer back.
+              </Typography.Paragraph>
+            }
+          />
         </Col>
 
         <Col span={24}>
@@ -435,6 +349,175 @@ export function GenerationSettings({
         </Col>
       </Row>
 
+    </>
+  );
+}
+
+const LIBRARY_COPY: Record<PromptKind, { noun: string; activeNote: string; switched: string }> = {
+  resume: {
+    noun: "base prompt",
+    activeNote: "This is the active prompt; saving changes what every Generate uses.",
+    switched: "Active prompt changed. Every Generate now uses it.",
+  },
+  research: {
+    noun: "research prompt",
+    activeNote: "This is the active prompt; saving changes what profile adders copy.",
+    switched: "Active research prompt changed. Profile adders now copy it.",
+  },
+};
+
+/**
+ * One prompt library: the built-in default (read-only, copyable into the
+ * library), the super admin's own prompts, and which one is in use.
+ *
+ * Used twice — base prompts and company research prompts — which differ only
+ * in what the active one is for.
+ */
+function PromptLibrary({
+  kind,
+  title,
+  builtIn,
+  prompts,
+  activeId,
+  placeholder,
+  footer,
+}: {
+  kind: PromptKind;
+  title: string;
+  builtIn: string;
+  prompts: LibraryPrompt[];
+  activeId: string | null;
+  placeholder: string;
+  footer?: ReactNode;
+}) {
+  const router = useRouter();
+  const { message } = App.useApp();
+  const [viewing, setViewing] = useState<{ name: string; body: string } | null>(null);
+  const [editing, setEditing] = useState<Editing>(null);
+  const [busy, setBusy] = useState(false);
+  const copy = LIBRARY_COPY[kind];
+
+  const activate = async (value: string) => {
+    const result = await setActivePrompt(value === BUILT_IN ? null : value, kind);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success(copy.switched);
+    router.refresh();
+  };
+
+  const submit = async () => {
+    if (!editing) return;
+    setBusy(true);
+    const result = await savePrompt({ ...editing, kind });
+    setBusy(false);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success(editing.id ? "Prompt updated." : "Prompt added.");
+    setEditing(null);
+    router.refresh();
+  };
+
+  const remove = async (id: string) => {
+    const result = await deletePrompt(id);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success(id === activeId ? "Deleted. The built-in prompt is active again." : "Prompt deleted.");
+    router.refresh();
+  };
+
+  const rows = [
+    { id: BUILT_IN, name: "Built-in default", body: builtIn, updated_at: null as string | null, builtIn: true },
+    ...prompts.map((p) => ({ ...p, builtIn: false })),
+  ];
+  const active = activeId ?? BUILT_IN;
+
+  return (
+    <Card
+      variant="borderless"
+      title={title}
+      extra={
+        <Button size="small" icon={<PlusOutlined />} onClick={() => setEditing({ name: "", body: "" })}>
+          Add prompt
+        </Button>
+      }
+    >
+      <Radio.Group value={active} onChange={(e) => activate(e.target.value)} style={{ width: "100%" }}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={0}>
+          {rows.map((p) => (
+            <div
+              key={p.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "10px 4px",
+                borderBottom: "1px solid #edf0f5",
+              }}
+            >
+              <Radio value={p.id} aria-label={`Use ${p.name}`} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Space size={6} wrap>
+                  <Typography.Text strong>{p.name}</Typography.Text>
+                  {p.id === active && <Tag color="blue">Active</Tag>}
+                  {p.builtIn && <Tag>read-only</Tag>}
+                </Space>
+                <div>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {words(p.body).toLocaleString()} words
+                    {p.updated_at ? ` · updated ${formatDate(p.updated_at)}` : ""}
+                  </Typography.Text>
+                </div>
+              </div>
+              <Space size={0}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EyeOutlined />}
+                  aria-label={`View ${p.name}`}
+                  onClick={() => setViewing({ name: p.name, body: p.body })}
+                />
+                {p.builtIn ? (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    onClick={() => setEditing({ name: "Copy of built-in default", body: p.body })}
+                  >
+                    Copy to library
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      aria-label={`Edit ${p.name}`}
+                      onClick={() => setEditing({ id: p.id, name: p.name, body: p.body })}
+                    />
+                    <Popconfirm
+                      title="Delete this prompt?"
+                      description={p.id === active ? "It's active — the built-in prompt takes over." : undefined}
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => remove(p.id)}
+                    >
+                      <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${p.name}`} />
+                    </Popconfirm>
+                  </>
+                )}
+              </Space>
+            </div>
+          ))}
+        </Space>
+      </Radio.Group>
+
+      {footer}
+
       <Modal
         title={viewing?.name}
         open={viewing !== null}
@@ -448,10 +531,10 @@ export function GenerationSettings({
       </Modal>
 
       <Modal
-        title={editing?.id ? "Edit prompt" : "Add a base prompt"}
+        title={editing?.id ? "Edit prompt" : `Add a ${copy.noun}`}
         open={editing !== null}
         onCancel={() => setEditing(null)}
-        onOk={submitPrompt}
+        onOk={submit}
         okText={editing?.id ? "Save" : "Add"}
         confirmLoading={busy}
         width={760}
@@ -464,19 +547,19 @@ export function GenerationSettings({
             onChange={(e) => setEditing((p) => (p ? { ...p, name: e.target.value } : p))}
           />
           <Input.TextArea
-            placeholder="The base prompt — the instructions every resume is written by."
+            placeholder={placeholder}
             value={editing?.body}
             onChange={(e) => setEditing((p) => (p ? { ...p, body: e.target.value } : p))}
             autoSize={{ minRows: 14, maxRows: 28 }}
             style={{ fontSize: 12 }}
           />
-          {editing?.id === activePromptId && editing?.id && (
+          {editing?.id && editing.id === activeId && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              This is the active prompt; saving changes what every Generate uses.
+              {copy.activeNote}
             </Typography.Text>
           )}
         </Space>
       </Modal>
-    </>
+    </Card>
   );
 }

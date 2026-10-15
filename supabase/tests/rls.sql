@@ -1592,3 +1592,46 @@ with changed as (
 )
 select 'nor change what they recorded' as check, count(*) = 0 as expect_true from changed;
 reset role;
+
+\echo ''
+\echo '=== 21. company research prompts are a second library ==='
+select 'existing prompts are base prompts' as check, count(*) = 0 as expect_true
+  from generation_prompt where kind <> 'resume';
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-00000000005a';
+insert into generation_prompt (id, name, body, kind, created_by)
+values ('00000000-0000-0000-0000-0000000000a8', 'Deeper research', 'Research each employer.',
+        'research', auth.uid());
+update generation_setting
+   set active_research_prompt_id = '00000000-0000-0000-0000-0000000000a8', updated_by = auth.uid();
+select 'super admin adds a research prompt and makes it active' as check,
+       active_research_prompt_id = '00000000-0000-0000-0000-0000000000a8' as expect_true
+  from generation_setting;
+select 'the base prompt choice is untouched' as check,
+       active_prompt_id is distinct from '00000000-0000-0000-0000-0000000000a8' as expect_true
+  from generation_setting;
+
+do $$
+begin
+  insert into generation_prompt (name, body, kind, created_by)
+  values ('Odd', 'x', 'other', auth.uid());
+  raise exception 'FAIL: a prompt of an unknown kind was accepted';
+exception
+  when check_violation then
+    raise notice 'PASS: a prompt is a base prompt or a research prompt';
+end $$;
+
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'a subadmin cannot read the research library' as check, count(*) = 0 as expect_true
+  from generation_prompt where kind = 'research';
+with changed as (
+  update generation_setting set active_research_prompt_id = null returning 1
+)
+select 'nor choose the active one' as check, count(*) = 0 as expect_true from changed;
+reset role;
+
+delete from generation_prompt where id = '00000000-0000-0000-0000-0000000000a8';
+select 'deleting the active research prompt falls back to the built-in' as check,
+       active_research_prompt_id is null as expect_true
+  from generation_setting;

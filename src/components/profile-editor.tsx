@@ -28,7 +28,6 @@ import dayjs from "dayjs";
 import { useState } from "react";
 
 import { revealSsn } from "@/app/dashboard/profiles/ssn-actions";
-import { COMPANY_RESEARCH_PROMPT } from "@/lib/ai/resume-prompt";
 import { normalizeUrl } from "@/lib/profile";
 
 export type EmploymentValues = {
@@ -73,9 +72,13 @@ type Props = {
   canSeeSsn: boolean;
   hasSsn?: boolean;
   initialValues?: Partial<ProfileFormValues>;
+  /** The super admin's active company research prompt, or the built-in. */
+  researchPrompt: ResearchPrompt;
   onCancel: () => void;
   onSubmit: (values: ProfileFormValues) => void;
 };
+
+export type ResearchPrompt = { name: string; body: string };
 
 /**
  * Accepts a bare host too — "linkedin.com/in/jane" is what people copy out of a
@@ -101,6 +104,7 @@ export function ProfileForm({
   canSeeSsn,
   hasSsn,
   initialValues,
+  researchPrompt,
   onCancel,
   onSubmit,
 }: Props) {
@@ -311,7 +315,7 @@ export function ProfileForm({
         </Form.List>
 
         <Divider titlePlacement="start">Company context</Divider>
-        <CompanyContextHelp form={form} />
+        <CompanyContextHelp form={form} prompt={researchPrompt} />
         <Form.Item
           name="companyContext"
           extra="What each employer actually does — business model, products or services, customers. Sent with resume generation so bullets speak the employer's real domain; never printed."
@@ -517,7 +521,13 @@ function SsnField({
  * stand in the form, so the adder pastes one block and gets back text for
  * the field below.
  */
-function CompanyContextHelp({ form }: { form: ReturnType<typeof Form.useForm<ProfileFormValues>>[0] }) {
+function CompanyContextHelp({
+  form,
+  prompt,
+}: {
+  form: ReturnType<typeof Form.useForm<ProfileFormValues>>[0];
+  prompt: ResearchPrompt;
+}) {
   const { message } = App.useApp();
 
   const copy = async () => {
@@ -535,7 +545,7 @@ function CompanyContextHelp({ form }: { form: ReturnType<typeof Form.useForm<Pro
       message.warning("Add the employments first — the prompt is copied with them.");
       return;
     }
-    await navigator.clipboard.writeText(`${COMPANY_RESEARCH_PROMPT}\n${JSON.stringify(list, null, 2)}`);
+    await navigator.clipboard.writeText(`${prompt.body.trimEnd()}\n${JSON.stringify(list, null, 2)}`);
     message.success("Copied. Paste it into ChatGPT or another assistant with web search, then paste the answer below.");
   };
 
@@ -549,8 +559,7 @@ function CompanyContextHelp({ form }: { form: ReturnType<typeof Form.useForm<Pro
         <>
           <Typography.Paragraph style={{ marginBottom: 8 }}>
             Copy the research prompt — it comes with this profile&apos;s
-            employments — into any AI assistant that can search the web. It asks
-            for verified facts about each company only.
+            employments — into any AI assistant that can search the web.
           </Typography.Paragraph>
           <Space wrap>
             <Button size="small" onClick={copy}>
@@ -561,9 +570,9 @@ function CompanyContextHelp({ form }: { form: ReturnType<typeof Form.useForm<Pro
               type="link"
               onClick={() =>
                 Modal.info({
-                  title: "Company research prompt",
+                  title: `Company research prompt — ${prompt.name}`,
                   width: 720,
-                  content: <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{COMPANY_RESEARCH_PROMPT}</pre>,
+                  content: <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{prompt.body}</pre>,
                 })
               }
             >

@@ -8,10 +8,10 @@ import { useState } from "react";
 
 import { createProfile, updateProfile } from "@/app/dashboard/profiles/actions";
 import { setSsn } from "@/app/dashboard/profiles/ssn-actions";
-import { ProfileForm, type ProfileFormValues } from "@/components/profile-editor";
+import { ProfileForm, type ProfileFormValues, type ResearchPrompt } from "@/components/profile-editor";
 import { toFormValues, toProfileRow } from "@/lib/profile-form";
 
-type Props =
+type Props = { researchPrompt: ResearchPrompt } & (
   | { mode: "create"; canSeeSsn: boolean }
   | {
       mode: "edit";
@@ -19,7 +19,8 @@ type Props =
       canSeeSsn: boolean;
       hasSsn: boolean;
       row: Parameters<typeof toFormValues>[0];
-    };
+    }
+);
 
 /**
  * New and edit profile, each on its own page. Saving writes the row, then the
@@ -91,6 +92,7 @@ export function ProfileFormPage(props: Props) {
         canSeeSsn={props.canSeeSsn}
         hasSsn={props.mode === "edit" ? props.hasSsn : false}
         initialValues={props.mode === "edit" ? toFormValues(props.row) : undefined}
+        researchPrompt={props.researchPrompt}
         onCancel={() => router.push(back)}
         onSubmit={submit}
       />

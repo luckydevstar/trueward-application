@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requireActor } from "@/lib/actor";
 import { createClient } from "@/lib/supabase/server";
+import type { PromptKind } from "@/lib/supabase/types";
 
 export type SaveResult = { ok: true } | { ok: false; error: string };
 
@@ -67,16 +68,41 @@ export async function saveGenerationSettings(input: {
   return { ok: true };
 }
 
-/** Which library prompt every Generate uses; null for the built-in default. */
-export async function setActivePrompt(promptId: string | null): Promise<SaveResult> {
+/**
+ * Which library prompt is in use; null for the built-in default.
+ *
+ *   resume    the base prompt every Generate uses
+ *   research  the company research prompt profile adders copy
+ */
+export async function setActivePrompt(
+  promptId: string | null,
+  kind: PromptKind = "resume",
+): Promise<SaveResult> {
   const actor = await superAdmin();
   if (!actor) return { ok: false, error: "Only the super admin chooses the active prompt." };
 
   const supabase = await createClient();
+
+  // A research prompt as the base prompt, or the other way round, would send
+  // the wrong instructions. The loaders refuse a mismatch too; this says so.
+  if (promptId) {
+    // `*` rather than `kind`, so choosing a base prompt still works on a
+    // database that hasn't run part 1 since the research library arrived.
+    const { data: prompt } = await supabase
+      .from("generation_prompt")
+      .select("*")
+      .eq("id", promptId)
+      .maybeSingle();
+    if (!prompt) return { ok: false, error: "That prompt no longer exists." };
+    if ((prompt.kind ?? "resume") !== kind) {
+      return { ok: false, error: "That prompt is in the other library." };
+    }
+  }
+
   const { data, error } = await supabase
     .from("generation_setting")
     .update({
-      active_prompt_id: promptId,
+      ...(kind === "research" ? { active_research_prompt_id: promptId } : { active_prompt_id: promptId }),
       updated_by: actor.id,
       updated_at: new Date().toISOString(),
     })
@@ -96,9 +122,11 @@ export async function savePrompt(input: {
   id?: string;
   name: string;
   body: string;
+  /** Which library a new prompt joins. An existing prompt keeps its own. */
+  kind?: PromptKind;
 }): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const actor = await superAdmin();
-  if (!actor) return { ok: false, error: "Only the super admin manages base prompts." };
+  if (!actor) return { ok: false, error: "Only the super admin manages prompts." };
 
   const name = input.name.trim();
   const body = input.body.trim();
@@ -115,7 +143,8 @@ export async function savePrompt(input: {
         .select("id")
     : await supabase
         .from("generation_prompt")
-        .insert({ name, body, created_by: actor.id })
+        // `kind` only when it isn't the column's default, for the same reason.
+        .insert({ name, body, created_by: actor.id, ...(input.kind === "research" ? { kind: "research" as const } : {}) })
         .select("id");
 
   if (error) return { ok: false, error: error.message };
@@ -127,7 +156,7 @@ export async function savePrompt(input: {
 /** Deleting the active prompt falls back to the built-in (on delete set null). */
 export async function deletePrompt(id: string): Promise<SaveResult> {
   const actor = await superAdmin();
-  if (!actor) return { ok: false, error: "Only the super admin manages base prompts." };
+  if (!actor) return { ok: false, error: "Only the super admin manages prompts." };
 
   const supabase = await createClient();
   const { data, error } = await supabase.from("generation_prompt").delete().eq("id", id).select("id");

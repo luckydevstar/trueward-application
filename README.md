@@ -513,7 +513,8 @@ setting. The flow end to end:
 
 1. A subadmin adds a profile, then its **company context** — what each
    employer actually does. The profile form has a research prompt to copy,
-   with the profile's employments, into any assistant with web search; it
+   with the profile's employments, into any assistant with web search — the
+   super admin's active one from the Generation page, or the built-in, which
    asks for verified company facts only. **Download JSON** on the profile
    page exports the profile document.
 2. In the builder, a bidder picks an assigned profile (its employments,
@@ -541,6 +542,12 @@ your own still works.
   library (`generation_prompt`): add, edit, delete, and mark one **Active**;
   the built-in prompt (`src/lib/ai/resume-prompt.ts`) is shown read-only and
   is what runs when none is active.
+- **Company research prompts** are a second library in the same table
+  (`generation_prompt.kind = 'research'`, active one in
+  `generation_setting.active_research_prompt_id`), managed the same way on the
+  Generation page. Profile adders see only the active one, read on the server
+  with the service role, beside the Company context field; the rest of the
+  library stays the super admin's.
 - **The response contract is the app's only addition.** After the base prompt, a fixed section
   describes the resume's shape, and the request uses strict structured output
   with the profile's employment ids as an enum — the model cannot answer with
