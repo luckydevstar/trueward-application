@@ -638,6 +638,21 @@ The builder at `/dashboard/profiles/[id]` takes tailored content as JSON — pas
 a model's output and it validates against the same schema the write path uses.
 Download stays disabled until it parses.
 
+## Device gate
+
+Only browsers approved in **Trueward Auth** (`auth.trueward.guru`,
+[trueward-auth](https://github.com/luckydevstar/trueward-auth)) reach this
+site — not even its sign-in page. `src/proxy.ts` runs the gate
+(`src/lib/gate.ts`) before anything else: an unapproved browser is sent to
+`/access`, which shows its device code and a **Request access** form; API calls
+and server actions get a 403. The super admin approves requests in the
+console, per site.
+
+`src/lib/gate.ts` and `src/app/access/` are identical copies in the
+application and the calendar — change both. The schema and the reasoning
+behind it are in trueward-auth's README. Off unless `GATE_ENABLED=true`; the
+other variables are in `.env.example`.
+
 ## Deploying
 
 Vercel, free tier, no special configuration — which is the whole point. There is

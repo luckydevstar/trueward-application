@@ -1,8 +1,19 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { runGate } from "@/lib/gate";
+
 /**
- * Runs before every matched request. Two jobs:
+ * Paths the device gate lets through unchecked: the page that explains it, and
+ * UploadThing's server-to-server callback, which carries no browser cookies
+ * and authorizes uploads itself.
+ */
+const GATE_OPEN = (pathname: string) =>
+  pathname === "/access" || pathname.startsWith("/api/uploadthing");
+
+/**
+ * Runs before every matched request. First the device gate (src/lib/gate.ts):
+ * a browser that isn't approved goes no further. Then two jobs:
  *
  *  1. Refresh the Supabase session. Access tokens are short-lived, and Server
  *     Components cannot write cookies — so if the refresh didn't happen here it
@@ -17,6 +28,9 @@ import { NextResponse, type NextRequest } from "next/server";
  * nodejs runtime — there is no edge option to opt into here.
  */
 export async function proxy(request: NextRequest) {
+  const gate = await runGate(request, GATE_OPEN);
+  if (gate.blocked) return gate.blocked;
+
   // Must be `let`: createServerClient replaces this response when it needs to
   // write refreshed auth cookies, and the replacement is what we return.
   let response = NextResponse.next({ request });
@@ -60,27 +74,28 @@ export async function proxy(request: NextRequest) {
   const user = data?.claims;
 
   const { pathname } = request.nextUrl;
-  const isPublic = pathname === "/login" || pathname.startsWith("/auth");
+  const isPublic =
+    pathname === "/login" || pathname.startsWith("/auth") || pathname === "/access";
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     // So a deep link survives the round trip through the login form.
     url.searchParams.set("next", pathname);
-    return NextResponse.redirect(url);
+    return gate.finish(NextResponse.redirect(url));
   }
 
   if (user && pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
-    return NextResponse.redirect(url);
+    return gate.finish(NextResponse.redirect(url));
   }
 
   // Returning `response` rather than a fresh NextResponse.next() is essential:
   // a new response would drop the refreshed cookies set above, and the session
   // would silently fail to renew.
-  return response;
+  return gate.finish(response);
 }
 
 export const config = {
