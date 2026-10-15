@@ -533,6 +533,15 @@ your own still works.
   and DeepSeek cache a repeated prefix themselves. Cached input costs about a
   tenth.
 
+### Usage
+
+`/dashboard/usage` — what generation has cost, and who spent it, from the
+generation log. A subadmin sees their own team by person and by profile; the
+super admin sees every team by subadmin, by end user and by profile, with the
+OpenRouter balance, and can include or isolate model-lab tests. Scope is RLS's
+(`resume_generation_select`): the page filters by nothing but period. Rows are
+aggregated on the server, so the browser gets totals rather than the log.
+
 ### Model lab
 
 `/dashboard/generation/lab`, from the Generation page — super admin only, and

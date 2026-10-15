@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BarChartOutlined,
   BlockOutlined,
   ExperimentOutlined,
   FileTextOutlined,
@@ -62,6 +63,12 @@ export function DashboardShell({ name, email, role, children }: Props) {
             key: "/dashboard/users",
             icon: <TeamOutlined />,
             label: <Link href="/dashboard/users">Users</Link>,
+          },
+          // What generation has cost: a subadmin's team, or every team.
+          {
+            key: "/dashboard/usage",
+            icon: <BarChartOutlined />,
+            label: <Link href="/dashboard/usage">Usage</Link>,
           },
         ]
       : []),
