@@ -111,6 +111,8 @@ export type ResumeStyle = {
   lineSpacing?: number;
   /** Stretch body copy to the full measure, last line of each block excepted. */
   justify?: boolean;
+  /** Typeface id from src/lib/pdf/fonts.ts; unset means the template's own. */
+  font?: string;
   /**
    * Which contact details print in the header. Partial — anything unset falls
    * back to HEADER_DEFAULTS in src/lib/resume-header.ts.

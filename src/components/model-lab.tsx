@@ -309,7 +309,7 @@ export function ModelLab({
       message.error("This answer doesn't validate, so it can't be rendered.");
       return;
     }
-    const url = await renderResumePdfUrl(doc.data, DEFAULT_STYLE, "classic");
+    const url = await renderResumePdfUrl(doc.data, DEFAULT_STYLE, "banner");
     window.open(url, "_blank", "noopener");
   };
 

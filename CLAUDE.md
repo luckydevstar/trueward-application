@@ -117,6 +117,16 @@ The cost is manual layout — no flexbox, no page-break control. `ensure()` is t
 whole pagination strategy. Check changes with `npm run render:fixture`, which
 runs the same renderer under Node and writes a file you can open.
 
+**Fonts are embedded, and must stay extractable.** Helvetica and Times are
+base-14; the other families in `src/lib/pdf/fonts.ts` are static Latin TTFs in
+`public/fonts/`, fetched when chosen and registered per document by
+`newResumePdf()` before `renderResumePdf()` runs (a font that fails to load
+falls back to Helvetica). jsPDF embeds them as CID TrueType with a ToUnicode
+map — `pdffonts` shows `uni yes` — which is what lets applicant-tracking
+systems read the text. Check a new font with `npm run render:fixture -- <dir>
+--fonts` and `pdftotext` before offering it; never add a variable font (jsPDF
+can't use one) or one without a Unicode cmap.
+
 **There is exactly one renderer.** The builder's preview is the real PDF in an
 iframe, not an HTML approximation — `renderResumePdfUrl` and
 `downloadResumePdf` both call `renderResumePdf`. Do not add an HTML preview

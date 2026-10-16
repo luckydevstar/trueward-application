@@ -6,6 +6,7 @@ import {
   type ResumeDocument,
 } from "@/lib/document/schema";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
+import { pdfFamily, prepareFont, type FontLoader } from "@/lib/pdf/fonts";
 import {
   mix,
   prefersLightText,
@@ -25,8 +26,9 @@ import type { ResumeStyle } from "@/lib/supabase/types";
  * Chromium into the function, forcing its binary through the file tracer, and
  * paying a cold boot per render. That approach is what made PDF export
  * unreliable in the previous project. Everything here runs in the user's
- * browser in a few milliseconds against jsPDF's built-in Helvetica — one of the
- * PDF base-14 fonts, so nothing is embedded and the text stays selectable.
+ * browser in a few milliseconds. Text is drawn in the resume's font — a base-14
+ * font, or an embedded open-licence one (fonts.ts) — and stays selectable and
+ * extractable either way.
  *
  * The tradeoff is real: layout is manual. There is no flexbox and no
  * page-break-inside. Text flows through `Flow` cursors below, which is the
@@ -38,7 +40,10 @@ const MUTED: RGB = [100, 116, 139];
 
 const ACCENTS: Record<string, RGB> = {
   slate: [30, 41, 59],
+  navy: [30, 58, 138],
   blue: [29, 78, 216],
+  indigo: [67, 56, 202],
+  teal: [15, 118, 110],
   emerald: [4, 120, 87],
   plum: [109, 40, 217],
   rose: [190, 24, 93],
@@ -47,6 +52,11 @@ const ACCENTS: Record<string, RGB> = {
 
 export const ACCENT_NAMES = Object.keys(ACCENTS);
 
+/** Each accent as CSS, for the swatches in the style toolbar. */
+export const ACCENT_CSS: Record<string, string> = Object.fromEntries(
+  Object.entries(ACCENTS).map(([name, [r, g, b]]) => [name, `rgb(${r}, ${g}, ${b})`]),
+);
+
 type Resolved = {
   fontScale: number;
   headerPosition: "left" | "center";
@@ -54,11 +64,17 @@ type Resolved = {
   lineSpacing: number;
   justify: boolean;
   spec: TemplateSpec;
-  /** Base-14 family. Both stay selectable and embed nothing. */
-  font: "helvetica" | "times";
+  /** The jsPDF family to draw with — see fonts.ts. */
+  font: string;
 };
 
-function resolve(style: ResumeStyle, template: string): Resolved {
+function resolve(pdf: JsPdf, style: ResumeStyle, template: string): Resolved {
+  const spec = templateSpec(template);
+  const family = pdfFamily(style.font ?? spec.font);
+  // A font that wasn't registered with this document — it failed to load, or
+  // the caller didn't prepare it — falls back to Helvetica rather than
+  // failing the whole render.
+  const font = family in pdf.getFontList() ? family : "helvetica";
   return {
     // Stored as a percentage so the UI slider reads naturally; used as a ratio.
     fontScale: (style.fontScale ?? 100) / 100,
@@ -66,28 +82,21 @@ function resolve(style: ResumeStyle, template: string): Resolved {
     accent: ACCENTS[style.accent ?? "slate"] ?? ACCENTS.slate,
     lineSpacing: style.lineSpacing ?? 1.4,
     justify: style.justify ?? false,
-    spec: templateSpec(template),
-    font: templateSpec(template).font ?? "helvetica",
+    spec,
+    font,
   };
 }
 
-/**
- * A column of text with its own vertical cursor and page.
- *
- * Two columns are needed for the sidebar template, and they fill independently
- * — the sidebar can run onto page two while the main column is still on page
- * one, or the reverse. Carrying the page number per column is what lets them
- * advance without dragging each other along.
- */
+/** A column of text with its own vertical cursor and page. */
 type Flow = { x: number; width: number; y: number; page: number };
 
 export function renderResumePdf(
   pdf: JsPdf,
   doc: ResumeDocument,
   style: ResumeStyle = {},
-  template = "classic",
+  template = "banner",
 ) {
-  const s = resolve(style, template);
+  const s = resolve(pdf, style, template);
   const { spec } = s;
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
@@ -98,12 +107,6 @@ export function renderResumePdf(
   const contactParts = headerSegments(profile.contact, fields);
   const experiences = renderedExperiences(doc);
 
-  const sidebarWidth = spec.header === "sidebar" ? (spec.sidebarWidth ?? 0) : 0;
-  const sidebarFill = shade(s.accent, 0.12);
-  const sidebarText: RGB = prefersLightText(sidebarFill)
-    ? [255, 255, 255]
-    : INK;
-
   /**
    * Page furniture — the filled shapes text sits on top of.
    *
@@ -112,10 +115,6 @@ export function renderResumePdf(
    * already there.
    */
   const paintChrome = (page: number) => {
-    if (sidebarWidth) {
-      pdf.setFillColor(...sidebarFill);
-      pdf.rect(0, 0, sidebarWidth, pageHeight, "F");
-    }
     // The banner and the wave belong to the first page only. Repeating either
     // on page two reads as a second resume rather than a continuation.
     if (spec.header === "banner" && page === 1) {
@@ -130,9 +129,9 @@ export function renderResumePdf(
   const bannerHeight = () =>
     (contactParts.length ? 118 : 96) * Math.max(0.9, s.fontScale);
 
-  /** Roughly the top third of the page, before the curve dips below it. */
-  const waveHeight = () => pageHeight * 0.3;
-  const waveDip = () => pageHeight * 0.055;
+  /** The wave panel: the header's height, and the curve's dip below it. */
+  const waveHeight = () => (contactParts.length ? 132 : 108) * Math.max(0.9, s.fontScale);
+  const waveDip = () => 26;
 
   /**
    * A vertical linear gradient, drawn as a stack of thin bands.
@@ -160,13 +159,17 @@ export function renderResumePdf(
   };
 
   /**
-   * Clips to the wave panel — a full-width block whose lower edge is a single
-   * symmetric bezier bulging into the page — then paints the gradient through
-   * it.
+   * The header on a deep panel of the accent whose lower edge curves into the
+   * page.
    *
-   * Clipping rather than masking with a white shape: a mask would only be
-   * invisible against a white page, and would show as a pale slab the moment
-   * anything sat behind it.
+   * It holds the header and nothing else. It used to be a pale wash that the
+   * summary and skills flowed across, which put body text on a coloured
+   * ground — legible, but greyed and low in contrast. Now the panel is dark
+   * enough for white text (the name, title and contact are reversed out of
+   * it) and the body starts on white paper below the curve.
+   *
+   * Clipped rather than masked with a white shape: a mask would show as a
+   * pale slab the moment anything sat behind it.
    */
   const paintWave = () => {
     const base = waveHeight();
@@ -178,45 +181,11 @@ export function renderResumePdf(
     pdf.lineTo(pageWidth, base);
     // Control points at 4/3 the dip put the curve's midpoint at exactly `dip`
     // below the edges, which is what makes the bulge look measured.
-    pdf.curveTo(
-      pageWidth * 0.66,
-      base + dip * 1.34,
-      pageWidth * 0.34,
-      base + dip * 1.34,
-      0,
-      base,
-    );
+    pdf.curveTo(pageWidth * 0.66, base + dip * 1.34, pageWidth * 0.34, base + dip * 1.34, 0, base);
     pdf.clip();
-    // `null` discards the path itself: it exists to define the clip, and
-    // stroking or filling it here would draw an outline over the gradient.
     pdf.discardPath();
-
-    /**
-     * A pale wash, not a saturated block.
-     *
-     * The panel is a backdrop that ordinary content sits on — summary, skills
-     * and the first experiences all flow across it — so it has to stay light
-     * enough for ink text to read against. A strong fill would force the text
-     * over it to be reversed, and any paragraph straddling the curve would then
-     * change colour mid-sentence.
-     *
-     * The hue still shifts across the gradient, toward a warmer end of the same
-     * colour, so it reads as one surface lit unevenly rather than a flat tint.
-     *
-     * 0.65 is as saturated as the top can go and stay comfortably readable.
-     * Measured contrast of INK against it, by accent: slate 6.9, rose 8.0,
-     * blue 8.3, plum 8.1, rust 8.2, emerald 8.7. WCAG AA wants 4.5 for body
-     * text and AAA wants 7, so every accent clears AA with room and all but
-     * slate clear AAA. Pushing it darker starts trading legibility for colour.
-     */
-    gradientBand(
-      0,
-      0,
-      pageWidth,
-      base + dip + 1,
-      tint(s.accent, 0.65),
-      tint(mix(s.accent, [236, 72, 153], 0.3), 0.93),
-    );
+    // Darkest at the top, where the name is; the accent itself by the curve.
+    gradientBand(0, 0, pageWidth, base + dip + 1, shade(s.accent, 0.45), shade(s.accent, 0.08));
     pdf.restoreGraphicsState();
   };
 
@@ -238,9 +207,17 @@ export function renderResumePdf(
 
   const on = (flow: Flow) => pdf.setPage(flow.page);
 
-  const wrap = (text: string, size: number, width: number) => {
+  /** Lines of `text` that fit `width`, measured in the weight they'll be drawn in. */
+  const wrap = (text: string, size: number, width: number, bold = false) => {
+    pdf.setFont(s.font, bold ? "bold" : "normal");
     pdf.setFontSize(size);
     return pdf.splitTextToSize(text, width) as string[];
+  };
+
+  /** A filled dot, centred on the x-height of text set at `size` on baseline `y`. */
+  const dot = (x: number, y: number, size: number, color: RGB, radius = 1.3) => {
+    pdf.setFillColor(...color);
+    pdf.circle(x, y - size * 0.3, radius, "F");
   };
 
   const write = (
@@ -326,71 +303,50 @@ export function renderResumePdf(
       return;
     }
 
+    const label = title.toUpperCase();
     const spaced = { charSpace: spec.headingSpace };
 
-    // A rule *above* the heading opens the section before naming it, which
-    // reads as more formal — the effect most academic and legal templates use.
-    if (spec.heading === "ruleAbove") {
-      pdf.setDrawColor(...tint(color, 0.45));
-      pdf.setLineWidth(0.8);
-      pdf.line(flow.x, flow.y - size * 0.9, flow.x + flow.width, flow.y - size * 0.9);
-      flow.y += 4;
-      write(title.toUpperCase(), flow.x, flow.y, size, {
-        bold: true,
-        color,
-        ...spaced,
-      });
-      flow.y += size * 0.9 + 6;
+    /**
+     * The heading on a pale strip of the accent, full width. Darker text than
+     * the accent itself: the accent on its own tint is too close in value to
+     * read comfortably at heading size.
+     */
+    if (spec.heading === "band") {
+      const top = flow.y - size * 0.95 - 4;
+      const height = size + 9;
+      pdf.setFillColor(...tint(color, 0.9));
+      pdf.rect(flow.x, top, flow.width, height, "F");
+      write(label, flow.x + 8, flow.y, size, { bold: true, color: shade(color, 0.2), ...spaced });
+      flow.y = top + height + 13;
       return;
     }
+
+    write(label, flow.x, flow.y, size, { bold: true, color, ...spaced });
 
     /**
-     * The heading hangs in the left column and the body is indented past it.
-     * Nothing is drawn — the column itself is the structure.
-     *
-     * It still advances. Setting the section's first line on the heading's own
-     * baseline collided with that entry's date, which occupies the same
-     * column: "EXPERIENCE" and "March 2022 – Present" were drawn on top of one
-     * another. The hanging position is what makes the layout read, not a
-     * shared baseline.
+     * A hairline from the end of the heading to the margin, on the middle of
+     * its capitals: the heading and the rule read as one line, which takes
+     * less height than a rule underneath and still divides the page.
      */
-    if (spec.heading === "gutter") {
-      write(title.toUpperCase(), flow.x, flow.y, size, {
-        bold: true,
-        color,
-        ...spaced,
-      });
-      flow.y += size * 0.9 + 7;
-      return;
-    }
-
-    write(title.toUpperCase(), flow.x, flow.y, size, {
-      bold: true,
-      color,
-      ...spaced,
-    });
-
-    if (spec.heading === "plain") {
-      // Whitespace alone. The letterspacing above is what marks it as a
-      // heading, so a rule here would be saying the same thing twice.
-      flow.y += size * 0.75 + 6;
-      return;
-    }
-
-    flow.y += 5;
-
-    if (spec.heading === "bar") {
-      // A short stub rather than a full rule: it anchors the heading without
-      // drawing a line across the whole column.
-      pdf.setFillColor(...color);
-      pdf.rect(flow.x, flow.y, 34, 2.4, "F");
-      flow.y += 12;
-    } else {
-      pdf.setDrawColor(...tint(color, 0.55));
+    if (spec.heading === "inline") {
+      pdf.setFont(s.font, "bold");
+      pdf.setFontSize(size);
+      const width =
+        pdf.getTextWidth(label) + (spec.headingSpace ?? 0) * Math.max(0, label.length - 1);
+      const lineY = flow.y - size * 0.34;
+      pdf.setDrawColor(...tint(color, 0.6));
       pdf.setLineWidth(0.7);
-      pdf.line(flow.x, flow.y, flow.x + flow.width, flow.y);
-      flow.y += 11;
+      pdf.line(flow.x + width + 8, lineY, flow.x + flow.width, lineY);
+      flow.y += size * 0.8 + 7;
+      return;
     }
+
+    // "bar": a short thick stub beneath. It anchors the heading without
+    // drawing a line across the whole column.
+    flow.y += 5;
+    pdf.setFillColor(...color);
+    pdf.rect(flow.x, flow.y, 34, 2.4, "F");
+    flow.y += 12;
   };
 
   const bullet = (flow: Flow, text: string, color = INK, offset = 0) => {
@@ -401,10 +357,8 @@ export function renderResumePdf(
     advance(flow, height);
     on(flow);
 
-    pdf.setFillColor(...color);
-    // -2.3 lifts the dot from the baseline to the middle of the x-height. The
-    // offset keeps it with its text rather than out in the date column.
-    pdf.circle(flow.x + offset + 3, flow.y - 2.3, 1.25, "F");
+    // On the middle of the x-height, in the accent when the template asks.
+    dot(flow.x + offset + 3, flow.y, size, spec.accentBullets ? s.accent : color, 1.25);
     write(lines, flow.x + indent, flow.y, size, {
       color,
       justify: s.justify,
@@ -415,27 +369,12 @@ export function renderResumePdf(
 
   // -------------------------------------------------------------- header
 
-  const mainX = sidebarWidth ? sidebarWidth + spec.margin * 0.7 : spec.margin;
-  const mainWidth = pageWidth - mainX - spec.margin;
-
-  const main: Flow = { x: mainX, width: mainWidth, y: spec.margin, page: 1 };
-
-  /**
-   * A left column holding dates, and the section heading that opens each block.
-   *
-   * Zero for every template but Ledger, where body text is indented past it and
-   * dates are set in it rather than right-aligned. Nothing is filled and there
-   * is no second flow — it is one column with a hanging indent, which is why it
-   * paginates like any other single-column layout.
-   */
-  const gutter = spec.dateGutter ?? 0;
-  const bodyX = main.x + gutter;
-  const bodyWidth = main.width - gutter;
+  const main: Flow = { x: spec.margin, width: pageWidth - spec.margin * 2, y: spec.margin, page: 1 };
 
   const nameSize = 21 * s.fontScale * (spec.nameScale ?? 1);
   const titleSize = 11 * s.fontScale;
   const contactSize = 8.5 * s.fontScale;
-  const CONTACT_SEP = "  ·  ";
+  const CONTACT_SEP = spec.contactSeparator;
 
   /** Draws the contact line and, when it fits on one line, its link boxes. */
   const contactLine = (
@@ -476,22 +415,23 @@ export function renderResumePdf(
     return lines.length * contactSize * s.lineSpacing;
   };
 
-  if (spec.header === "banner") {
-    const reversed: RGB = prefersLightText(s.accent) ? [255, 255, 255] : INK;
-    const soft = prefersLightText(s.accent)
-      ? tint(s.accent, 0.78)
-      : shade(s.accent, 0.45);
+  const centered = s.headerPosition === "center";
+  const align = centered ? "center" : "left";
 
-    const centered = s.headerPosition === "center";
+  if (spec.header === "banner" || spec.header === "wave") {
+    /**
+     * Name, title and contact reversed out of a filled panel. The banner is the
+     * accent itself; the wave is a deeper gradient of it, so both take white
+     * text — and a pale accent on the banner takes ink instead.
+     */
+    const fill = spec.header === "wave" ? shade(s.accent, 0.3) : s.accent;
+    const light = prefersLightText(fill);
+    const reversed: RGB = light ? [255, 255, 255] : INK;
+    const soft = light ? tint(s.accent, spec.header === "wave" ? 0.82 : 0.78) : shade(s.accent, 0.45);
     const anchor = centered ? pageWidth / 2 : spec.margin;
-    const align = centered ? "center" : "left";
 
     let y = spec.margin + nameSize * 0.4;
-    write(profile.fullName, anchor, y, nameSize, {
-      bold: true,
-      color: reversed,
-      align,
-    });
+    write(profile.fullName, anchor, y, nameSize, { bold: true, color: reversed, align });
     y += nameSize * 0.95;
     write(content.targetTitle, anchor, y, titleSize, { color: soft, align });
     y += titleSize * 1.5;
@@ -499,75 +439,38 @@ export function renderResumePdf(
 
     // The first section heading adds its own sectionGap on top of this, so the
     // offset here is deliberately less than a full margin.
-    main.y = bannerHeight() + spec.margin * 0.45;
-  } else if (spec.header === "wave") {
-    /**
-     * The header sits *on* the panel rather than being framed by it, and
-     * everything after it keeps flowing over the same backdrop until the
-     * content runs past the curve on its own.
-     *
-     * So this branch is the plain header with a louder name — no special
-     * vertical centring, and no jump past the curve. Deciding where the panel
-     * ends is the panel's business, not the content's.
-     */
-    const centered = s.headerPosition === "center";
-    const anchor = centered ? pageWidth / 2 : spec.margin;
-    const align = centered ? "center" : "left";
-
-    write(profile.fullName, anchor, main.y + nameSize * 0.3, nameSize, {
-      bold: true,
-      color: shade(s.accent, 0.25),
-      align,
-    });
-    main.y += nameSize * 1.05;
-    write(content.targetTitle, anchor, main.y, titleSize, {
-      color: shade(s.accent, 0.1),
-      align,
-    });
-    main.y += titleSize * 1.3;
-    main.y += contactLine(anchor, main.y, mainWidth, align, MUTED);
-  } else if (spec.header === "sidebar") {
-    // Name and role head the main column; the sidebar carries the details.
-    write(profile.fullName, main.x, main.y + nameSize * 0.3, nameSize, {
-      bold: true,
-    });
-    main.y += nameSize * 1.05;
-    write(content.targetTitle, main.x, main.y, titleSize, { color: s.accent });
-    main.y += titleSize * 1.3;
+    main.y =
+      spec.header === "wave"
+        ? waveHeight() + waveDip() + spec.margin * 0.25
+        : bannerHeight() + spec.margin * 0.45;
   } else {
-    const centered = s.headerPosition === "center";
-    const anchor = centered ? pageWidth / 2 : spec.margin;
-    const align = centered ? "center" : "left";
-    const nameColor = spec.heading === "bar" ? s.accent : INK;
+    /**
+     * Name in ink, the role in the accent, contact muted. A left-aligned header
+     * can carry an accent bar down its edge (Signal), with the text set in
+     * from it; a centred one never does — a bar beside centred text points at
+     * nothing.
+     */
+    const bar = Boolean(spec.headerBar) && !centered;
+    const anchor = centered ? pageWidth / 2 : spec.margin + (bar ? 14 : 0);
+    const width = main.width - (bar ? 14 : 0);
+    const top = main.y;
 
-    write(
-      spec.uppercaseName ? profile.fullName.toUpperCase() : profile.fullName,
-      anchor,
-      main.y + nameSize * 0.3,
-      nameSize,
-      {
-        bold: true,
-        color: nameColor,
-        align,
-        // Caps at display size need air between the letters or they read as a
-        // solid block rather than a name.
-        ...(spec.uppercaseName ? { charSpace: nameSize * 0.06 } : {}),
-      },
-    );
+    write(profile.fullName, anchor, main.y + nameSize * 0.3, nameSize, { bold: true, align });
     main.y += nameSize * 1.05;
-    write(content.targetTitle, anchor, main.y, titleSize, {
-      color: spec.heading === "bar" ? MUTED : s.accent,
-      align,
-      charSpace: spec.headingSpace ? spec.headingSpace * 0.4 : undefined,
-    });
-    main.y += titleSize * 1.25;
-    main.y += contactLine(anchor, main.y, mainWidth, align, MUTED);
+    write(content.targetTitle, anchor, main.y, titleSize, { bold: true, color: s.accent, align });
+    main.y += titleSize * 1.3;
+    main.y += contactLine(anchor, main.y, width, align, MUTED);
+
+    if (bar) {
+      pdf.setFillColor(...s.accent);
+      pdf.rect(spec.margin, top - 2, 4, main.y - top - contactSize * 0.4, "F");
+    }
 
     // A rule closing the header, so the block reads as a masthead rather than
     // as the first three lines of the document.
     if (spec.headerRule) {
-      main.y += 8;
-      pdf.setDrawColor(...(spec.headerRule >= 2 ? s.accent : tint(INK, 0.5)));
+      main.y += 4;
+      pdf.setDrawColor(...s.accent);
       pdf.setLineWidth(spec.headerRule);
       pdf.line(spec.margin, main.y, pageWidth - spec.margin, main.y);
       main.y += 2;
@@ -577,32 +480,56 @@ export function renderResumePdf(
   // -------------------------------------------------------- main column
 
   if (content.summary) {
-    heading(main, spec.header === "sidebar" ? "Profile" : "Summary");
-    block(
-      main,
-      wrap(content.summary, 9.5 * s.fontScale, bodyWidth),
-      9.5 * s.fontScale,
-      INK,
-      gutter,
-    );
+    heading(main, "Summary");
+    block(main, wrap(content.summary, 9.5 * s.fontScale, main.width), 9.5 * s.fontScale);
   }
 
-  /** Skills as "Category: a, b, c", with the label set bold inline. */
-  const skillGroups = (flow: Flow, color: RGB, labelColor: RGB, indent = 0) => {
-    const x = flow.x + indent;
-    const width = flow.width - indent;
+  /**
+   * Skills, one category at a time, each opening with an accent dot and its
+   * name in bold — so the categories read as a list of their own rather than
+   * running into one another.
+   *
+   * inline  "• Languages: Go, TypeScript, …", wrapping under the name
+   * grid    the name in a column of its own, its skills beside it
+   */
+  const skills = (flow: Flow) => {
+    const size = 9 * s.fontScale;
+    const lineHeight = size * s.lineSpacing;
+    const dotGap = 9;
 
+    if (spec.skills === "grid") {
+      // As wide as the longest category name needs, within reason: short
+      // names shouldn't leave a gulf before their skills, and a very long one
+      // wraps rather than squeezing the skills into a sliver.
+      pdf.setFont(s.font, "bold");
+      pdf.setFontSize(size);
+      const longest = Math.max(...content.skills.map((g) => pdf.getTextWidth(g.name)));
+      const labelWidth = Math.min(Math.max(longest + dotGap + 14, 80), flow.width * 0.3);
+      for (const group of content.skills) {
+        const label = wrap(group.name, size, labelWidth - dotGap - 8, true);
+        const items = wrap(group.items.join(", "), size, flow.width - labelWidth);
+        const height = Math.max(label.length, items.length) * lineHeight;
+        advance(flow, height);
+        on(flow);
+        dot(flow.x + 2.2, flow.y, size, s.accent, 1.5);
+        write(label, flow.x + dotGap, flow.y, size, { bold: true });
+        write(items, flow.x + labelWidth, flow.y, size);
+        flow.y += height + 2.5;
+      }
+      return;
+    }
+
+    const x = flow.x + dotGap;
+    const width = flow.width - dotGap;
     for (const group of content.skills) {
-      const size = 9 * s.fontScale;
-      const lineHeight = size * s.lineSpacing;
       const label = `${group.name}: `;
-
       pdf.setFont(s.font, "bold");
       pdf.setFontSize(size);
       const labelWidth = pdf.getTextWidth(label);
 
-      // The first line is shortened by the label; the rest run full width. The
-      // 0.35 floor stops a long category name squeezing it to a few characters.
+      // The first line is shortened by the label; the rest run the full width
+      // under it. The 0.35 floor stops a long category name squeezing the
+      // first line to a few characters.
       const firstWidth = Math.max(width - labelWidth, width * 0.35);
       const all = wrap(group.items.join(", "), size, firstWidth);
       const first = all.shift() ?? "";
@@ -610,58 +537,28 @@ export function renderResumePdf(
 
       advance(flow, (1 + rest.length) * lineHeight);
       on(flow);
-      write(label, x, flow.y, size, { bold: true, color: labelColor });
-      write(first, x + labelWidth, flow.y, size, { color });
+      dot(flow.x + 2.2, flow.y, size, s.accent, 1.5);
+      write(label, x, flow.y, size, { bold: true });
+      write(first, x + labelWidth, flow.y, size);
       flow.y += lineHeight;
-
       if (rest.length) {
-        write(rest, x, flow.y, size, { color });
+        write(rest, x, flow.y, size);
         flow.y += rest.length * lineHeight;
       }
+      flow.y += 1.5;
     }
   };
 
-  /** Skills stacked one per line — narrow columns have no room for inline. */
-  const skillList = (flow: Flow, color: RGB, labelColor: RGB) => {
-    for (const group of content.skills) {
-      const size = 8.5 * s.fontScale;
-      const lineHeight = size * s.lineSpacing;
-
-      advance(flow, lineHeight);
-      on(flow);
-      write(group.name, flow.x, flow.y, size, { bold: true, color: labelColor });
-      flow.y += lineHeight;
-
-      const lines = wrap(group.items.join(", "), size, flow.width);
-      advance(flow, lines.length * lineHeight);
-      on(flow);
-      write(lines, flow.x, flow.y, size, { color });
-      flow.y += lines.length * lineHeight + 4;
-    }
-  };
-
-  if (content.skills.length && spec.header !== "sidebar") {
+  if (content.skills.length) {
     heading(main, "Skills");
-    skillGroups(main, INK, INK, gutter);
+    skills(main);
   }
 
   if (experiences.length) {
     heading(main, "Experience");
-    experiences.forEach(({ employment, title, bullets }, index) => {
+    for (const { employment, title, bullets } of experiences) {
       const headSize = 10 * s.fontScale;
       const metaSize = 8.5 * s.fontScale;
-
-      // A hairline between roles, never above the first — that would read as a
-      // second rule under the section heading.
-      if (spec.entryDivider && index > 0) {
-        advance(main, 12);
-        on(main);
-        main.y += 4;
-        pdf.setDrawColor(...tint(MUTED, 0.6));
-        pdf.setLineWidth(0.5);
-        pdf.line(bodyX, main.y, main.x + main.width, main.y);
-        main.y += 10;
-      }
 
       advance(main, (headSize + metaSize) * s.lineSpacing);
       on(main);
@@ -670,141 +567,49 @@ export function renderResumePdf(
         employment.endDate ?? null,
         "Present",
       )}`;
+      // Right-aligned on the title's baseline, so a role and its period read
+      // as one row rather than two stacked lines.
+      write(period, main.x + main.width, main.y, metaSize, { color: MUTED, align: "right" });
 
-      if (gutter) {
-        // Set in the gutter, on the title's baseline. Wrapped to the column so
-        // a long "September 2019 – December 2024" doesn't run under the title.
-        const dateLines = wrap(period, metaSize, gutter - 10);
-        write(dateLines, main.x, main.y, metaSize, { color: MUTED });
-      } else {
-        // Right-aligned on the title's baseline, so a role and its period read
-        // as one row rather than two stacked lines.
-        write(period, main.x + main.width, main.y, metaSize, {
-          color: MUTED,
-          align: "right",
-        });
-      }
-
-      write(title, bodyX, main.y, headSize, { bold: true });
+      write(title, main.x, main.y, headSize, { bold: true });
       main.y += headSize * s.lineSpacing;
 
       write(
         [employment.company, employment.location].filter(Boolean).join(" · "),
-        bodyX,
+        main.x,
         main.y,
         metaSize,
         { color: s.accent },
       );
       main.y += metaSize * s.lineSpacing + 2;
 
-      for (const b of bullets) bullet(main, b.text, INK, gutter);
+      for (const b of bullets) bullet(main, b.text, INK);
       main.y += 5;
-    });
+    }
   }
 
-  if (profile.education.length && spec.header !== "sidebar") {
+  if (profile.education.length) {
     heading(main, "Education");
     for (const edu of profile.education) {
       const size = 9.5 * s.fontScale;
       advance(main, size * s.lineSpacing * 2);
       on(main);
-      write(edu.degree, bodyX, main.y, size, { bold: true });
+      write(edu.degree, main.x, main.y, size, { bold: true });
       if (edu.year) {
-        const year = formatMonthYear(edu.year);
-        if (gutter) {
-          write(year, main.x, main.y, 8.5 * s.fontScale, { color: MUTED });
-        } else {
-          write(year, main.x + main.width, main.y, 8.5 * s.fontScale, {
-            color: MUTED,
-            align: "right",
-          });
-        }
+        write(formatMonthYear(edu.year), main.x + main.width, main.y, 8.5 * s.fontScale, {
+          color: MUTED,
+          align: "right",
+        });
       }
       main.y += size * s.lineSpacing;
       write(
         [edu.school, edu.location].filter(Boolean).join(" · "),
-        bodyX,
+        main.x,
         main.y,
         8.5 * s.fontScale,
         { color: MUTED },
       );
       main.y += 8.5 * s.fontScale * s.lineSpacing + 2;
-    }
-  }
-
-  // ----------------------------------------------------------- sidebar
-
-  if (sidebarWidth) {
-    const pad = spec.margin * 0.55;
-    const side: Flow = {
-      x: pad,
-      width: sidebarWidth - pad * 2,
-      y: spec.margin,
-      page: 1,
-    };
-    const softText = prefersLightText(sidebarFill)
-      ? tint(sidebarFill, 0.72)
-      : MUTED;
-    // Headings inside a filled column can't use the accent — it is the fill.
-    const sideHeadingColor = sidebarText;
-
-    const sideHeading = (title: string) => {
-      const size = 9.5 * s.fontScale;
-      advance(side, 30);
-      side.y += spec.sectionGap;
-      on(side);
-      write(title.toUpperCase(), side.x, side.y, size, {
-        bold: true,
-        color: sideHeadingColor,
-      });
-      side.y += 5;
-      pdf.setFillColor(...sideHeadingColor);
-      pdf.rect(side.x, side.y, 24, 2, "F");
-      side.y += 11;
-    };
-
-    if (contactParts.length) {
-      sideHeading("Contact");
-      const size = 8.5 * s.fontScale;
-      for (const part of contactParts) {
-        const lines = wrap(part.text, size, side.width);
-        const height = lines.length * size * s.lineSpacing;
-        advance(side, height);
-        on(side);
-        write(lines, side.x, side.y, size, { color: softText });
-        if (part.href) {
-          pdf.link(side.x, side.y - size, side.width, height, {
-            url: part.href,
-          });
-        }
-        side.y += height + 1.5;
-      }
-    }
-
-    if (content.skills.length) {
-      sideHeading("Skills");
-      skillList(side, softText, sidebarText);
-    }
-
-    if (profile.education.length) {
-      sideHeading("Education");
-      const size = 8.5 * s.fontScale;
-      for (const edu of profile.education) {
-        const degree = wrap(edu.degree, size, side.width);
-        advance(side, degree.length * size * s.lineSpacing);
-        on(side);
-        write(degree, side.x, side.y, size, { bold: true, color: sidebarText });
-        side.y += degree.length * size * s.lineSpacing;
-
-        const meta = [edu.school, edu.year ? formatMonthYear(edu.year) : null]
-          .filter(Boolean)
-          .join(" · ");
-        const metaLines = wrap(meta, size, side.width);
-        advance(side, metaLines.length * size * s.lineSpacing);
-        on(side);
-        write(metaLines, side.x, side.y, size, { color: softText });
-        side.y += metaLines.length * size * s.lineSpacing + 6;
-      }
     }
   }
 
@@ -826,18 +631,35 @@ export function renderResumePdf(
 export async function renderResumePdfUrl(
   doc: ResumeDocument,
   style: ResumeStyle = {},
-  template = "classic",
+  template = "banner",
 ): Promise<string> {
-  const { jsPDF } = await import("jspdf");
-  const pdf = new jsPDF({
-    orientation: "portrait",
-    unit: "pt",
-    format: "a4",
-    compress: true,
-  });
-
+  const pdf = await newResumePdf(style, template);
   renderResumePdf(pdf, doc, style, template);
   return URL.createObjectURL(pdf.output("blob"));
+}
+
+/**
+ * A blank A4 document with the resume's font registered.
+ *
+ * jsPDF is imported here rather than at module scope so it lands in its own
+ * chunk — it is ~350 KB, and a page that merely *offers* a download shouldn't
+ * pay for it on first load. A font that can't be fetched leaves the document
+ * without it, and the renderer then sets the resume in Helvetica rather than
+ * failing.
+ */
+export async function newResumePdf(
+  style: ResumeStyle,
+  template: string,
+  load?: FontLoader,
+): Promise<JsPdf> {
+  const { jsPDF } = await import("jspdf");
+  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
+  try {
+    await prepareFont(pdf, style.font ?? templateSpec(template).font, load);
+  } catch {
+    // See above: Helvetica it is.
+  }
+  return pdf;
 }
 
 /**
@@ -847,10 +669,9 @@ export async function renderResumePdfUrl(
 export async function renderResumePdfBlob(
   doc: ResumeDocument,
   style: ResumeStyle = {},
-  template = "classic",
+  template = "banner",
 ): Promise<Blob> {
-  const { jsPDF } = await import("jspdf");
-  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
+  const pdf = await newResumePdf(style, template);
   renderResumePdf(pdf, doc, style, template);
   return pdf.output("blob");
 }
@@ -875,10 +696,6 @@ export function saveBlob(blob: Blob, fileName: string) {
 /**
  * Builds the PDF and hands it to the user.
  *
- * jsPDF is imported here rather than at module scope so it lands in its own
- * chunk — it is ~350 KB, and a page that merely *offers* a download shouldn't
- * pay for it on first load.
- *
  * Prefers showSaveFilePicker where available (Chromium) so the user picks the
  * destination, falling back to pdf.save() elsewhere. Returns false when the
  * user cancels the picker, which is not an error and must not surface as one.
@@ -886,16 +703,9 @@ export function saveBlob(blob: Blob, fileName: string) {
 export async function downloadResumePdf(
   doc: ResumeDocument,
   style: ResumeStyle = {},
-  template = "classic",
+  template = "banner",
 ): Promise<boolean> {
-  const { jsPDF } = await import("jspdf");
-  const pdf = new jsPDF({
-    orientation: "portrait",
-    unit: "pt",
-    format: "a4",
-    compress: true,
-  });
-
+  const pdf = await newResumePdf(style, template);
   renderResumePdf(pdf, doc, style, template);
 
   const safeName =

@@ -101,10 +101,10 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     /**
-     * Everything except static assets and image files. Auth routes are matched
+     * Everything except static assets, images and the resume fonts. Auth routes are matched
      * deliberately — /auth/callback needs the cookie writer above to persist
      * the session it just exchanged a code for.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ttf|woff2?)$).*)",
   ],
 };

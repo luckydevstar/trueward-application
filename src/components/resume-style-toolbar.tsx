@@ -19,8 +19,9 @@ import {
   Typography,
 } from "antd";
 
-import { ACCENT_NAMES } from "@/lib/pdf/resume-pdf";
-import { TEMPLATES, type TemplateSpec } from "@/lib/pdf/templates";
+import { FONTS } from "@/lib/pdf/fonts";
+import { ACCENT_CSS, ACCENT_NAMES } from "@/lib/pdf/resume-pdf";
+import { TEMPLATES, templateSpec, type TemplateSpec } from "@/lib/pdf/templates";
 import {
   HEADER_FIELD_LABELS,
   resolveHeaderFields,
@@ -166,13 +167,53 @@ export function ResumeStyleToolbar({
 
       <Bar />
 
-      <Field label="Accent">
-        <Segmented
+      <Field label="Font">
+        <Select
           size="small"
-          value={style.accent ?? "slate"}
-          onChange={(v) => patch({ accent: String(v) })}
-          options={accents}
+          // Unset follows the template, which is where each one's typeface
+          // was chosen; picking one here overrides it.
+          value={style.font ?? templateSpec(template).font}
+          onChange={(font) => patch({ font })}
+          style={{ width: 140 }}
+          popupMatchSelectWidth={180}
+          options={(["Sans", "Serif"] as const).map((kind) => ({
+            label: kind,
+            options: FONTS.filter((f) => f.kind === kind).map((f) => ({ value: f.id, label: f.label })),
+          }))}
         />
+      </Field>
+
+      <Bar />
+
+      <Field label="Accent">
+        {/* Swatches rather than names: nine colours read faster than nine words. */}
+        <div style={{ display: "flex", gap: 5, padding: "3px 2px" }}>
+          {accents.map((name) => {
+            const selected = (style.accent ?? "slate") === name;
+            return (
+              <Tooltip key={name} title={name}>
+                <button
+                  type="button"
+                  aria-label={`Accent ${name}`}
+                  aria-pressed={selected}
+                  onClick={() => patch({ accent: name })}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 999,
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                    background: ACCENT_CSS[name],
+                    boxShadow: selected
+                      ? `0 0 0 2px #fff, 0 0 0 4px ${ACCENT_CSS[name]}`
+                      : "inset 0 0 0 1px rgba(0,0,0,0.08)",
+                  }}
+                />
+              </Tooltip>
+            );
+          })}
+        </div>
       </Field>
 
       <Bar />
@@ -191,7 +232,7 @@ export function ResumeStyleToolbar({
 
       <Bar />
 
-      <Field label={`Font ${style.fontScale ?? 100}%`}>
+      <Field label={`Size ${style.fontScale ?? 100}%`}>
         <Slider
           min={80}
           max={120}

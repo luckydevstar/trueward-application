@@ -3,11 +3,10 @@ export type RGB = [number, number, number];
 /**
  * How a template differs from the others.
  *
- * Before this, "template" only changed the page margin — three options that
- * produced near-identical documents. Everything that actually reads as a
- * different design lives here: whether the header is a plain block or a filled
- * band, how a section heading is drawn, and whether there is a coloured column
- * down the side.
+ * Everything that reads as a different design lives here: what the header is,
+ * how a section heading is drawn, how skills are laid out, and which typeface
+ * a resume starts in. The renderer (resume-pdf.ts) knows how to draw each
+ * option; a template is a choice of options.
  */
 export type TemplateSpec = {
   id: string;
@@ -19,79 +18,38 @@ export type TemplateSpec = {
   /**
    * plain   — name and contact as text, nothing behind them
    * banner  — a filled accent block across the top, text reversed out of it
-   * sidebar — a filled accent column holding contact, skills and education
-   * wave    — a gradient panel over the top third, its lower edge curved
+   * wave    — a deep accent panel behind the header, its lower edge curved
    */
-  header: "plain" | "banner" | "sidebar" | "wave";
+  header: "plain" | "banner" | "wave";
   /**
-   * rule      — small caps over a hairline
-   * bar       — small caps with a short thick accent stroke beneath
-   * chip      — small caps reversed out of a filled accent tab
-   * ruleAbove — a hairline first, heading beneath it
-   * plain     — letterspaced small caps and nothing else
-   * gutter    — heading set in the left date gutter, beside its content
+   * chip    — small caps reversed out of a filled accent tab
+   * bar     — small caps with a short thick accent stroke beneath
+   * inline  — small caps followed by a hairline running to the margin
+   * band    — small caps on a pale full-width strip of the accent
    */
-  heading: "rule" | "bar" | "chip" | "ruleAbove" | "plain" | "gutter";
-  /** Sidebar templates only: width of the coloured column, in points. */
-  sidebarWidth?: number;
+  heading: "chip" | "bar" | "inline" | "band";
+  /**
+   * inline — "• Category: a, b, c", wrapping under the label
+   * grid   — the category in a column of its own, its skills beside it
+   */
+  skills: "inline" | "grid";
   /** Multiplier on the name, for templates that want a louder or quieter one. */
   nameScale?: number;
-
-  /**
-   * Typeface. Both are PDF base-14, so neither embeds anything and both stay
-   * selectable — but a serif reads as traditional in a way no amount of colour
-   * does, which is most of what separates a law-firm resume from a startup one.
-   */
-  font?: "helvetica" | "times";
+  /** The typeface a resume starts in until one is chosen — see fonts.ts. */
+  font: string;
   /** Letterspacing on section headings, in points. Small caps want a little. */
   headingSpace?: number;
-  /** The name in caps, letterspaced to match. */
-  uppercaseName?: boolean;
-  /**
-   * Width of a left column carrying dates, in points. Zero puts dates
-   * right-aligned on the title's baseline instead.
-   *
-   * Not a sidebar: nothing is filled, the column holds only dates, and the
-   * text beside it is the ordinary single flow. It is a way of setting dates
-   * apart without a coloured panel.
-   */
-  dateGutter?: number;
-  /** A hairline between one role and the next. */
-  entryDivider?: boolean;
-  /** A rule beneath the whole header block. */
+  /** An accent rule beneath the whole header block, this many points thick. */
   headerRule?: number;
+  /** A thick accent bar down the left of a left-aligned header. */
+  headerBar?: boolean;
+  /** Bullets drawn in the accent rather than in ink. */
+  accentBullets?: boolean;
+  /** Between contact details. */
+  contactSeparator: string;
 };
 
 export const TEMPLATES: TemplateSpec[] = [
-  {
-    id: "classic",
-    label: "Classic",
-    hint: "Plain header, hairline rules. The safest thing to send.",
-    margin: 52,
-    sectionGap: 15,
-    header: "plain",
-    heading: "rule",
-  },
-  {
-    id: "modern",
-    label: "Modern",
-    hint: "Accent name and heavier section bars, still a single column.",
-    margin: 56,
-    sectionGap: 16,
-    header: "plain",
-    heading: "bar",
-    nameScale: 1.1,
-  },
-  {
-    id: "compact",
-    label: "Compact",
-    hint: "Tighter margins and spacing, for a history that runs long.",
-    margin: 40,
-    sectionGap: 10,
-    header: "plain",
-    heading: "rule",
-    nameScale: 0.92,
-  },
   {
     id: "banner",
     label: "Banner",
@@ -100,87 +58,55 @@ export const TEMPLATES: TemplateSpec[] = [
     sectionGap: 16,
     header: "banner",
     heading: "chip",
+    skills: "inline",
     nameScale: 1.15,
+    font: "helvetica",
+    contactSeparator: "  ·  ",
   },
   {
-    id: "sidebar",
-    label: "Sidebar",
-    hint: "Coloured column carrying contact, skills and education.",
-    margin: 44,
+    id: "engineer",
+    label: "Engineer",
+    hint: "One clean column, built to parse: rules beside headings, skills in a grid.",
+    margin: 46,
     sectionGap: 14,
-    header: "sidebar",
-    heading: "bar",
-    sidebarWidth: 178,
+    header: "plain",
+    heading: "inline",
+    skills: "grid",
+    nameScale: 1.15,
+    font: "inter",
+    headingSpace: 1.1,
+    headerRule: 1.4,
+    accentBullets: true,
+    contactSeparator: "  |  ",
+  },
+  {
+    id: "signal",
+    label: "Signal",
+    hint: "Accent bar beside the name, tinted section strips, skills in a grid.",
+    margin: 48,
+    sectionGap: 15,
+    header: "plain",
+    heading: "band",
+    skills: "grid",
+    nameScale: 1.12,
+    font: "ibm-plex-sans",
+    headingSpace: 1,
+    headerBar: true,
+    accentBullets: true,
+    contactSeparator: "  ·  ",
   },
   {
     id: "wave",
     label: "Wave",
-    hint: "Gradient panel over the top third, curving into the page.",
-    margin: 54,
+    hint: "Deep gradient panel behind the header, curving into the page.",
+    margin: 52,
     sectionGap: 16,
     header: "wave",
     heading: "bar",
+    skills: "inline",
     nameScale: 1.2,
-  },
-  {
-    id: "executive",
-    label: "Executive",
-    hint: "Serif, centred name in caps, rule beneath the header.",
-    margin: 58,
-    sectionGap: 15,
-    header: "plain",
-    heading: "rule",
-    font: "times",
-    nameScale: 1.1,
-    uppercaseName: true,
-    headingSpace: 1.4,
-    headerRule: 1.2,
-  },
-  {
-    id: "academic",
-    label: "Academic",
-    hint: "Serif, a rule above each section, generous spacing.",
-    margin: 62,
-    sectionGap: 18,
-    header: "plain",
-    heading: "ruleAbove",
-    font: "times",
-    headingSpace: 1.2,
-  },
-  {
-    id: "editorial",
-    label: "Editorial",
-    hint: "Large name, heavy header rule, roles divided by hairlines.",
-    margin: 52,
-    sectionGap: 16,
-    header: "plain",
-    heading: "plain",
-    nameScale: 1.3,
-    headingSpace: 1.8,
-    entryDivider: true,
-    headerRule: 2.4,
-  },
-  {
-    id: "ledger",
-    label: "Ledger",
-    hint: "Dates in a left column, headings beside the text they open.",
-    margin: 52,
-    sectionGap: 16,
-    header: "plain",
-    heading: "gutter",
-    dateGutter: 96,
-    headingSpace: 1.2,
-  },
-  {
-    id: "minimal",
-    label: "Minimal",
-    hint: "No rules anywhere. Whitespace and letterspacing do the work.",
-    margin: 64,
-    sectionGap: 20,
-    header: "plain",
-    heading: "plain",
-    headingSpace: 2.2,
-    nameScale: 0.95,
+    font: "lato",
+    contactSeparator: "  ·  ",
   },
 ];
 

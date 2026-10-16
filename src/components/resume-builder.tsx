@@ -157,7 +157,7 @@ const STYLE_STORAGE_KEY = "tw.resume.style";
 type Source = "ai" | "paste";
 const SOURCE_KEY = "tw.resume.source";
 
-const DEFAULT_PRESET: Preset = { template: "classic", style: DEFAULT_STYLE };
+const DEFAULT_PRESET: Preset = { template: "banner", style: DEFAULT_STYLE };
 
 /** Strips the ```json fence a model wraps its output in. */
 function unfence(value: string) {
