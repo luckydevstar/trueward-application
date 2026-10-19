@@ -23,7 +23,9 @@ export async function POST(request: Request) {
   try {
     ids = (await anonRpc<string[] | null>("resume_queue_claim", { p_secret: secret })) ?? [];
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Claim failed" }, { status: 502 });
+    // Anyone can call this route, so the database's words stay in the log.
+    console.error("resume_queue_claim failed", error);
+    return NextResponse.json({ error: "Claim failed" }, { status: 502 });
   }
 
   await Promise.allSettled(ids.map((id) => runResumeJob(id)));
