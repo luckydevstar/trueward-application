@@ -22,7 +22,7 @@ export async function POST(request: Request) {
 
   const { data: job } = await ctx.db
     .from("resume_job")
-    .select("profile_id, content, job_description, status")
+    .select("profile_id, content, status, job:job_id(description)")
     .eq("id", input.resumeJobId)
     .maybeSingle();
   if (!job) return fail("That resume isn't there any more.", 404);
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
   const result = await answerQuestion(ctx.db, ctx.actor, {
     profileId: job.profile_id,
-    jobDescription: job.job_description,
+    jobDescription: (job.job as unknown as { description: string } | null)?.description ?? "",
     resume: JSON.stringify(job.content, null, 2),
     question: input.question,
     history: (input.history ?? []).slice(-6),

@@ -3,12 +3,14 @@ import "server-only";
 import { UTApi } from "uploadthing/server";
 
 import { trackApplication } from "@/lib/jobs/work";
+import { applicationNo } from "@/lib/numbers";
 import { renderJobPdf } from "@/lib/pdf/server";
 import type { Actor } from "@/lib/roles";
 import type { Db } from "@/lib/supabase/request";
+import type { ResumeJobRow } from "@/lib/supabase/types";
 
 export type ApplyResult =
-  | { ok: true; applicationId: string; fileUrl: string | null; fileName: string; alreadyTracked: boolean }
+  | { ok: true; applicationId: string; fileUrl: string | null; fileName: string; alreadyTracked: boolean; number: string | null }
   | { ok: false; error: string; reason: "blocked" | "cooldown" | "other" };
 
 /**
@@ -18,11 +20,17 @@ export type ApplyResult =
  *
  * Recorded first, as in the builder: the duplicate cooldown and the blocklist
  * are why it might be refused, and that should be known before a file is
- * made. The company, title and URL come from the job-sheet row. A resume
- * already tracked isn't tracked twice; its file is handed back again.
+ * made. The company, title and URL come from the job, and the application
+ * takes its number. A resume already tracked isn't tracked twice; its file is
+ * handed back again.
  */
 export async function applyJob(db: Db, actor: Actor, jobId: string): Promise<ApplyResult> {
-  const { data: job } = await db.from("resume_job").select("*").eq("id", jobId).maybeSingle();
+  const { data: row } = await db
+    .from("resume_job")
+    .select("*, job:job_id(title, company, url)")
+    .eq("id", jobId)
+    .maybeSingle();
+  const job = row as (ResumeJobRow & { job: { title: string; company: string | null; url: string | null } | null }) | null;
   if (!job) return { ok: false, reason: "other", error: "That resume isn't there any more." };
   if (job.status !== "ready") return { ok: false, reason: "other", error: "That resume isn't ready yet." };
 
@@ -35,7 +43,7 @@ export async function applyJob(db: Db, actor: Actor, jobId: string): Promise<App
   if (job.application_id) {
     const { data: existing } = await db
       .from("application")
-      .select("id, resume_url")
+      .select("id, resume_url, no, no_part")
       .eq("id", job.application_id)
       .maybeSingle();
     if (existing) {
@@ -45,19 +53,17 @@ export async function applyJob(db: Db, actor: Actor, jobId: string): Promise<App
         fileUrl: existing.resume_url,
         fileName: rendered.fileName,
         alreadyTracked: true,
+        number: applicationNo(existing.no, existing.no_part),
       };
     }
   }
 
-  const target =
-    job.content && typeof job.content === "object" && "targetTitle" in job.content
-      ? String((job.content as { targetTitle: unknown }).targetTitle ?? "")
-      : "";
   const recorded = await trackApplication(db, actor, {
     profileId: job.profile_id,
-    title: job.job_title || target,
-    company: job.company ?? "",
-    jobUrl: job.job_url ?? "",
+    title: job.job?.title ?? "",
+    company: job.job?.company ?? "",
+    jobUrl: job.job?.url ?? "",
+    jobId: job.job_id,
   });
   if (!recorded.ok) return recorded;
 
@@ -80,10 +86,18 @@ export async function applyJob(db: Db, actor: Actor, jobId: string): Promise<App
     }
   }
 
+  // Tracked: the database clears this job's other drafts for the profile.
   await db
     .from("resume_job")
     .update({ application_id: recorded.id, updated_at: new Date().toISOString() })
     .eq("id", job.id);
 
-  return { ok: true, applicationId: recorded.id, fileUrl, fileName: rendered.fileName, alreadyTracked: false };
+  return {
+    ok: true,
+    applicationId: recorded.id,
+    fileUrl,
+    fileName: rendered.fileName,
+    alreadyTracked: false,
+    number: applicationNo(recorded.no, recorded.part),
+  };
 }

@@ -71,6 +71,7 @@ import {
   resumeFileName,
   saveBlob,
 } from "@/lib/pdf/resume-pdf";
+import { applicationNo, jobNo } from "@/lib/numbers";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
 import type { TemplateSpec } from "@/lib/pdf/templates";
 import { usePersistentState } from "@/lib/persistent-state";
@@ -129,12 +130,29 @@ type Props = {
    * resume_job table yet — Generate then runs in the request, as it used to.
    */
   jobs?: BuilderJob[] | null;
-  /** A generation to open on arrival — the Job sheet's "Open" link. */
+  /** A generation to open on arrival — the Jobs page's "Open in builder" link. */
   openJob?: string | null;
+  /** Your jobs, newest first, to generate for one without pasting it again. */
+  savedJobs?: SavedJob[];
 };
 
-/** A generation as the builder lists it: with its job-sheet number, when it came from one. */
-export type BuilderJob = ResumeJobRow & { sheet_job?: { job_no: string } | null };
+/** The job a generation was made for — its description, title, company and link live there. */
+export type BuilderJobDetails = {
+  id: string;
+  no: number;
+  title: string;
+  company: string | null;
+  url: string | null;
+  description: string;
+};
+
+/** A generation as the builder lists it, with its job. */
+export type BuilderJob = ResumeJobRow & { job: BuilderJobDetails | null };
+
+export type SavedJob = { id: string; no: number; title: string; company: string | null };
+
+/** What the builder selects for each generation. */
+const JOB_SELECT = "*, job:job_id(id, no, title, company, url, description)";
 
 type Answer = { question: string; answer: string; costUsd: number | null; latencyMs: number };
 
@@ -201,6 +219,7 @@ export function ResumeBuilder({
   generation,
   jobs: initialJobs = null,
   openJob: openOnArrival = null,
+  savedJobs = [],
 }: Props) {
   const router = useRouter();
   const { message, modal } = App.useApp();
@@ -214,6 +233,8 @@ export function ResumeBuilder({
   const [draftCompany, setDraftCompany] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftUrl, setDraftUrl] = useState("");
+  /** A job from your list to generate for, instead of pasting one. */
+  const [pickedJobId, setPickedJobId] = useState<string | null>(null);
 
   /*
    * Background generations. Each runs on the server after Generate returns,
@@ -235,9 +256,9 @@ export function ResumeBuilder({
   const [now, setNow] = useState(0);
 
   // Step 4: where this resume is going, so downloading it also tracks it.
-  const [company, setCompany] = useState(initialOpen?.company ?? "");
-  const [jobTitle, setJobTitle] = useState(initialOpen?.job_title ?? "");
-  const [jobUrl, setJobUrl] = useState(initialOpen?.job_url ?? "");
+  const [company, setCompany] = useState(initialOpen?.job?.company ?? "");
+  const [jobTitle, setJobTitle] = useState(initialOpen?.job?.title ?? "");
+  const [jobUrl, setJobUrl] = useState(initialOpen?.job?.url ?? "");
   const [tracking, setTracking] = useState(false);
   const { startUpload } = useUploadThing("applicationResume");
 
@@ -648,7 +669,7 @@ export function ResumeBuilder({
   const anyRunning = runningCount > 0 || jobs.some((j) => j.status === "queued");
 
   /** Loads a finished generation into the editor, the preview and Apply. */
-  const showJob = (job: ResumeJobRow) => {
+  const showJob = (job: BuilderJob) => {
     if (job.status !== "ready") return;
     const option = options.find((p) => p.id === job.profile_id);
     if (!option?.profile) {
@@ -660,9 +681,9 @@ export function ResumeBuilder({
     setDocumentId("");
     setTitle(jobLabel(job, false));
     setJson(JSON.stringify(job.content, null, 2));
-    setCompany(job.company ?? "");
-    setJobTitle(job.job_title ?? "");
-    setJobUrl(job.job_url ?? "");
+    setCompany(job.job?.company ?? "");
+    setJobTitle(job.job?.title ?? "");
+    setJobUrl(job.job?.url ?? "");
     setLastRun(null);
   };
 
@@ -688,7 +709,7 @@ export function ResumeBuilder({
   const refreshJobs = async () => {
     const { data, error } = await createClient()
       .from("resume_job")
-      .select("*, sheet_job(job_no)")
+      .select(JOB_SELECT)
       .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
       .order("created_at", { ascending: false })
       .limit(100);
@@ -738,41 +759,49 @@ export function ResumeBuilder({
   }, [jobsEnabled]);
 
   /*
-   * Edits to an open generation are saved back to its row, a moment after
-   * typing stops, so switching to another row and back loses nothing. Only
-   * JSON that parses is saved; Apply's fields go with it.
+   * Edits to an open generation are saved back a moment after typing stops,
+   * so switching to another row and back loses nothing: the content to its
+   * row (only JSON that parses), Apply's company, title and link to its job —
+   * which is where every other generation for that job reads them too.
    */
   useEffect(() => {
-    if (!openJob) return;
+    if (!openJob || reviewOnly) return;
     const timer = setTimeout(async () => {
+      const db = createClient();
       let content: unknown = openJob.content;
       try {
         content = JSON.parse(unfence(json));
       } catch {
         // Mid-edit; the last good version stays saved.
       }
-      const next = {
-        content,
-        valid: parsed.kind === "ok",
+      const next = { content, valid: parsed.kind === "ok" };
+      if (JSON.stringify(next.content) !== JSON.stringify(openJob.content) || next.valid !== openJob.valid) {
+        const { error } = await db
+          .from("resume_job")
+          .update({ ...next, updated_at: new Date().toISOString() })
+          .eq("id", openJob.id);
+        if (!error) setJobs((all) => all.map((j) => (j.id === openJob.id ? { ...j, ...next } : j)));
+      }
+
+      const job = openJob.job;
+      if (!job) return;
+      const details = {
+        // A job always has a title; clearing the box keeps the one it had.
+        title: jobTitle.trim() || job.title,
         company: company.trim() || null,
-        job_title: jobTitle.trim() || null,
-        job_url: jobUrl.trim() || null,
+        url: jobUrl.trim() || null,
       };
-      const changed =
-        JSON.stringify(next.content) !== JSON.stringify(openJob.content) ||
-        next.valid !== openJob.valid ||
-        next.company !== openJob.company ||
-        next.job_title !== openJob.job_title ||
-        next.job_url !== openJob.job_url;
-      if (!changed) return;
-      const { error } = await createClient()
-        .from("resume_job")
-        .update({ ...next, updated_at: new Date().toISOString() })
-        .eq("id", openJob.id);
-      if (!error) setJobs((all) => all.map((j) => (j.id === openJob.id ? { ...j, ...next } : j)));
+      if (details.title === job.title && details.company === job.company && details.url === job.url) return;
+      const { error } = await db
+        .from("job")
+        .update({ ...details, updated_at: new Date().toISOString() })
+        .eq("id", job.id);
+      if (!error) {
+        setJobs((all) => all.map((j) => (j.job?.id === job.id ? { ...j, job: { ...job, ...details } } : j)));
+      }
     }, 800);
     return () => clearTimeout(timer);
-  }, [openJob, json, parsed.kind, company, jobTitle, jobUrl]);
+  }, [openJob, reviewOnly, json, parsed.kind, company, jobTitle, jobUrl]);
 
   /**
    * Starts a generation in the background. The form clears at once so the
@@ -786,34 +815,28 @@ export function ResumeBuilder({
       return;
     }
     setGenerating(true);
-    const result = await startResumeJob({
-      profileId,
-      jobDescription,
-      company: draftCompany,
-      jobTitle: draftTitle,
-      jobUrl: draftUrl,
-    });
+    const result = await startResumeJob(
+      pickedJobId
+        ? { profileId, jobId: pickedJobId }
+        : { profileId, jobDescription, company: draftCompany, jobTitle: draftTitle, jobUrl: draftUrl },
+    );
     setGenerating(false);
     if (!result.ok) {
       message.error(result.error);
       return;
     }
     setJobs((all) => [result.job, ...all]);
+    setPickedJobId(null);
     setJobDescription("");
     setDraftCompany("");
     setDraftTitle("");
     setDraftUrl("");
-    message.success("Generating in the background — paste the next job whenever you like.");
+    const no = result.job.job ? `${jobNo(result.job.job.no)} — ` : "";
+    message.success(`${no}generating in the background. Add the next job whenever you like.`);
   };
 
-  const retryJob = async (job: ResumeJobRow) => {
-    const result = await startResumeJob({
-      profileId: job.profile_id,
-      jobDescription: job.job_description,
-      company: job.company ?? undefined,
-      jobTitle: job.job_title ?? undefined,
-      jobUrl: job.job_url ?? undefined,
-    });
+  const retryJob = async (job: BuilderJob) => {
+    const result = await startResumeJob({ profileId: job.profile_id, jobId: job.job_id });
     if (!result.ok) {
       message.error(result.error);
       return;
@@ -822,7 +845,7 @@ export function ResumeBuilder({
     setJobs((all) => [result.job, ...all.filter((j) => j.id !== job.id)]);
   };
 
-  const deleteJob = async (job: ResumeJobRow) => {
+  const deleteJob = async (job: BuilderJob) => {
     const { error } = await createClient().from("resume_job").delete().eq("id", job.id);
     if (error) {
       message.error(error.message);
@@ -884,6 +907,7 @@ export function ResumeBuilder({
         title: jobTitle.trim() || doc.content.targetTitle,
         company,
         jobUrl,
+        jobId: openJob?.job_id ?? null,
       });
 
       const blob = await renderResumePdfBlob(doc, style, template);
@@ -916,9 +940,11 @@ export function ResumeBuilder({
           name: uploaded.name,
         });
         if (!attached.ok) throw new Error(attached.error);
-        message.success("Downloaded, and tracked in Applications with the PDF attached.");
+        message.success(`Downloaded, and tracked as ${applicationNo(recorded.no, recorded.part)} with the PDF attached.`);
       } catch {
-        message.warning("Downloaded and tracked in Applications, but the PDF couldn't be attached to it.");
+        message.warning(
+          `Downloaded and tracked as ${applicationNo(recorded.no, recorded.part)}, but the PDF couldn't be attached to it.`,
+        );
       }
       if (openJob) {
         // The generation keeps its fields, now marked as sent.
@@ -927,6 +953,8 @@ export function ResumeBuilder({
           .update({ application_id: recorded.id, updated_at: new Date().toISOString() })
           .eq("id", openJob.id);
         setJobs((all) => all.map((j) => (j.id === openJob.id ? { ...j, application_id: recorded.id } : j)));
+        // The database has cleared this job's other drafts for the profile.
+        void refreshRef.current();
       } else {
         setCompany("");
         setJobTitle("");
@@ -946,7 +974,7 @@ export function ResumeBuilder({
     const result = await askFollowUp({
       profileId,
       // The open generation's own job; otherwise whatever is in the job box.
-      jobDescription: openJob?.job_description ?? jobDescription,
+      jobDescription: openJob?.job?.description ?? jobDescription,
       resume: json,
       question,
       history: answers.map(({ question, answer }) => ({ question, answer })),
@@ -971,7 +999,7 @@ export function ResumeBuilder({
     !isExample &&
     !reviewOnly &&
     Boolean(selectedProfile?.profile) &&
-    jobDescription.trim().length > 0;
+    (jobDescription.trim().length > 0 || Boolean(pickedJobId));
 
   return (
     <>
@@ -1163,6 +1191,29 @@ export function ResumeBuilder({
                       description="The super admin needs to finish setting up generation. Until then, use Paste JSON."
                     />
                   )}
+                  {jobsEnabled && savedJobs.length > 0 && (
+                    <div>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        From your jobs
+                      </Typography.Text>
+                      <Select
+                        allowClear
+                        showSearch
+                        style={{ width: "100%" }}
+                        placeholder="Pick a job — or paste a new one below"
+                        value={pickedJobId ?? undefined}
+                        onChange={(id) => setPickedJobId(id ?? null)}
+                        optionFilterProp="label"
+                        disabled={isExample}
+                        options={savedJobs.map((j) => ({
+                          value: j.id,
+                          label: `${jobNo(j.no)} · ${j.title}${j.company ? ` — ${j.company}` : ""}`,
+                        }))}
+                      />
+                    </div>
+                  )}
+                  {!pickedJobId && (
+                  <>
                   <div>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       Job description
@@ -1201,6 +1252,8 @@ export function ResumeBuilder({
                       />
                     </Col>
                   </Row>
+                  </>
+                  )}
                   <Tooltip
                     title={
                       !generation.enabled
@@ -1209,12 +1262,12 @@ export function ResumeBuilder({
                           ? "Review only. Assign this profile to yourself on the Profiles page to generate for it."
                           : isExample
                             ? "Pick a real candidate to generate for."
-                            : !jobDescription.trim()
-                              ? "Paste the job description first."
+                            : !jobDescription.trim() && !pickedJobId
+                              ? "Pick a job or paste its description first."
                               : jobsEnabled && runningCount >= MAX_RUNNING_JOBS
                                 ? `${MAX_RUNNING_JOBS} are generating — start the next when one finishes.`
                                 : jobsEnabled
-                                  ? "Runs in the background. Company, title and URL go with it to Apply."
+                                  ? "Runs in the background. The job — and its number — go with it to Apply."
                                   : json.trim()
                                     ? "Replaces the current content."
                                     : undefined
@@ -1238,12 +1291,7 @@ export function ResumeBuilder({
                           : "Generate resume"}
                     </Button>
                   </Tooltip>
-                  {!jobsEnabled && generation.enabled && (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Background generation turns on once the database update (schema
-                      part 1) has been run; until then Generate waits for the answer.
-                    </Typography.Text>
-                  )}
+
                 </>
               ) : (
                 <>
@@ -1803,17 +1851,16 @@ function StepCard({
   );
 }
 
-/** A generation's name: its title — given, or the model's — and company. */
+/** A generation's name: its job's number, title and company. */
 function jobLabel(job: BuilderJob, withCompany = true): string {
   const target =
     job.content && typeof job.content === "object" && "targetTitle" in job.content
       ? String((job.content as { targetTitle: unknown }).targetTitle ?? "")
       : "";
-  const firstLine = job.job_description.split("\n").find((l) => l.trim())?.trim().slice(0, 60) ?? "Job";
-  const title = job.job_title?.trim() || target.trim() || firstLine;
-  // The job-sheet row it came from, so it can be matched to the sheet.
-  const numbered = withCompany && job.sheet_job?.job_no ? `#${job.sheet_job.job_no} ${title}` : title;
-  return withCompany && job.company ? `${numbered} · ${job.company}` : numbered;
+  const title = job.job?.title?.trim() || target.trim() || "Job";
+  if (!withCompany) return title;
+  const numbered = job.job ? `${jobNo(job.job.no)} ${title}` : title;
+  return job.job?.company ? `${numbered} · ${job.job.company}` : numbered;
 }
 
 /**
@@ -1835,9 +1882,9 @@ function GenerationsList({
   now: number;
   timedOut: (job: ResumeJobRow) => boolean;
   profileName: (id: string) => string;
-  onOpen: (job: ResumeJobRow) => void;
-  onRetry: (job: ResumeJobRow) => void;
-  onDelete: (job: ResumeJobRow) => void;
+  onOpen: (job: BuilderJob) => void;
+  onRetry: (job: BuilderJob) => void;
+  onDelete: (job: BuilderJob) => void;
 }) {
   return (
     // Its own scroll: a batch of thirty shouldn't push the editor off the page.

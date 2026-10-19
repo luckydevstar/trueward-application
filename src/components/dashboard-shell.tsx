@@ -57,7 +57,7 @@ export function DashboardShell({ name, email, role, children }: Props) {
     {
       key: "/dashboard/jobs",
       icon: <TableOutlined />,
-      label: <Link href="/dashboard/jobs">Job sheet</Link>,
+      label: <Link href="/dashboard/jobs">Jobs</Link>,
     },
     {
       key: "/dashboard/blocklist",

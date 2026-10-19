@@ -79,7 +79,7 @@ export default async function ResumesPage({ searchParams }: PageProps<"/dashboar
    */
   const reach = await profileReach(supabase, actor, teamId);
 
-  const [profiles, documents, mine, jobs] = await Promise.all([
+  const [profiles, documents, mine, jobs, savedJobs] = await Promise.all([
     scopeToReach(
       (() => {
         const query = supabase
@@ -107,13 +107,21 @@ export default async function ResumesPage({ searchParams }: PageProps<"/dashboar
     // The profiles a super admin has taken on, which they work rather than
     // only review. Everyone else works whatever they can see.
     everyTeam ? assignedProfileIds(supabase, actor.id) : Promise.resolve(null),
-    // Your own background generations; RLS returns nobody else's.
+    // Your own background generations, with their jobs; RLS returns nobody else's.
     supabase
       .from("resume_job")
-      .select("*, sheet_job(job_no)")
+      .select("*, job:job_id(id, no, title, company, url, description)")
       .gte("created_at", jobWindowStart())
       .order("created_at", { ascending: false })
       .limit(JOB_LIMIT),
+    // Your jobs, to generate for one without pasting it again.
+    supabase
+      .from("job")
+      .select("id, no, title, company")
+      .eq("created_by", actor.id)
+      .is("archived_at", null)
+      .order("no", { ascending: false })
+      .limit(300),
   ]);
   const ai = generation();
 
@@ -154,6 +162,7 @@ export default async function ResumesPage({ searchParams }: PageProps<"/dashboar
       // builder then generates in the request, as it used to.
       jobs={jobs.error ? null : ((jobs.data ?? []) as unknown as BuilderJob[])}
       openJob={typeof params.job === "string" ? params.job : null}
+      savedJobs={savedJobs.data ?? []}
     />
   );
 }

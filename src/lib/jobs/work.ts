@@ -3,6 +3,7 @@ import "server-only";
 import { modelCatalog, reasoningParam } from "@/lib/ai/models";
 import { completeText, openRouterConfigured } from "@/lib/ai/openrouter";
 import { loadGenerationConfig } from "@/lib/ai/settings";
+import { MAX_JOB_DESCRIPTION } from "@/lib/jobs/fields";
 import { assignedProfileIds } from "@/lib/profile-scope";
 import type { Actor } from "@/lib/roles";
 import { canSelfAssign } from "@/lib/scope";
@@ -24,7 +25,7 @@ import type { Db } from "@/lib/supabase/request";
  */
 export const HOURLY_LIMIT = Number(process.env.GENERATION_HOURLY_LIMIT ?? 60);
 
-export const MAX_JOB_DESCRIPTION = 30_000;
+export { MAX_JOB_DESCRIPTION };
 
 export const NOT_ASSIGNED = "Assign this profile to yourself on the Profiles page to work it.";
 
@@ -53,7 +54,7 @@ export async function generationsLastHour(actorId: string): Promise<number> {
 }
 
 export type RecordResult =
-  | { ok: true; id: string }
+  | { ok: true; id: string; no: number; part: number }
   | { ok: false; error: string; reason: "blocked" | "cooldown" | "other" };
 
 /**
@@ -76,6 +77,8 @@ export async function trackApplication(
     title: string;
     company: string;
     jobUrl: string;
+    /** The job it was made from: the application takes its number. */
+    jobId?: string | null;
   },
 ): Promise<RecordResult> {
   const title = input.title.trim();
@@ -131,8 +134,9 @@ export async function trackApplication(
       resume_key: null,
       resume_url: null,
       resume_name: null,
+      job_id: input.jobId ?? null,
     })
-    .select("id")
+    .select("id, no, no_part")
     .single();
 
   if (error || !data) {
@@ -141,7 +145,7 @@ export async function trackApplication(
     if (error?.code === "23514") return { ok: false, reason: "cooldown", error: error.message };
     return { ok: false, reason: "other", error: error?.message ?? "Couldn't record the application." };
   }
-  return { ok: true, id: data.id };
+  return { ok: true, id: data.id, no: data.no, part: data.no_part };
 }
 
 /**

@@ -208,3 +208,118 @@ with (security_invoker = true) as
   where a.profile_id is not null
     and a.applied_at > now() - make_interval(days => application_cooldown_days())
   order by a.profile_id, normalize_company(a.company), a.applied_at desc;
+
+/**
+ * Job and application numbers — J007, A007, A007-2.
+ *
+ * One counter (record_no_seq) numbers both, so a job's number is free for its
+ * applications: the first takes it, each further profile the next part. An
+ * application recorded without a job takes a number of its own. Assigned
+ * here, not by a column default, so nobody picks theirs — a number a client
+ * sends is overwritten on insert and kept as it was on update. Security
+ * definer, so the counter needs no grant to the API roles.
+ */
+create or replace function public.assign_job_no()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    new.no := nextval('record_no_seq');
+  elsif old.no is not null then
+    new.no := old.no;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists job_no on job;
+create trigger job_no
+  before insert or update of no on job
+  for each row execute function public.assign_job_no();
+
+create or replace function public.assign_application_no()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_no    bigint;
+  v_owner uuid;
+begin
+  if tg_op = 'UPDATE' then
+    -- An application stays the one it was recorded as. (Its job can't be
+    -- deleted under it, so nothing legitimately unlinks one.)
+    if old.no is not null then
+      new.no := old.no;
+      new.no_part := old.no_part;
+      new.job_id := old.job_id;
+    end if;
+    return new;
+  end if;
+
+  if new.job_id is null then
+    new.no := nextval('record_no_seq');
+    new.no_part := 1;
+    return new;
+  end if;
+
+  -- Only your own job: its number is what you'd be claiming. No caller (the
+  -- service role, a migration) is trusted as it is everywhere else.
+  select no, created_by into v_no, v_owner from job where id = new.job_id;
+  if v_no is null or (auth.uid() is not null and v_owner is distinct from auth.uid()) then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'That job isn''t one of yours.';
+  end if;
+
+  -- One at a time per job, so two profiles applying together can't both
+  -- take part 2.
+  perform pg_advisory_xact_lock(hashtext('application_no'), v_no::integer);
+  new.no := v_no;
+  select coalesce(max(no_part), 0) + 1 into new.no_part from application where no = v_no;
+  return new;
+end;
+$$;
+
+drop trigger if exists application_no on application;
+create trigger application_no
+  before insert or update of no, no_part, job_id on application
+  for each row execute function public.assign_application_no();
+
+/**
+ * Once a generation is tracked, the other drafts for the same job and profile
+ * are spent — regenerations nobody sent. They go, so a job keeps one resume
+ * per profile: the one it was applied with. Anything still queued or running
+ * is left to finish; it is the person's to discard.
+ *
+ * Security definer only to see past the caller's own select policy, which a
+ * draft for a profile they've since lost would fail; the rows it deletes are
+ * the caller's own job's, which only they can generate for (part 4).
+ */
+create or replace function public.prune_spent_drafts()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from resume_job
+   where job_id = new.job_id
+     and profile_id = new.profile_id
+     and id <> new.id
+     and application_id is null
+     and status in ('ready', 'failed');
+  return null;
+end;
+$$;
+
+drop trigger if exists resume_job_prune on resume_job;
+create trigger resume_job_prune
+  after update of application_id on resume_job
+  for each row
+  when (new.application_id is not null and old.application_id is null)
+  execute function public.prune_spent_drafts();

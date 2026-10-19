@@ -2,6 +2,7 @@
 
 import { after } from "next/server";
 
+import type { BuilderJob } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { JOB_STALE_MS, MAX_RUNNING_JOBS } from "@/lib/ai/defaults";
 import { generateContent, logRow } from "@/lib/ai/generate";
@@ -20,10 +21,10 @@ import { runResumeJob } from "@/lib/ai/jobs";
 import { openRouterConfigured } from "@/lib/ai/openrouter";
 import { loadGenerationConfig } from "@/lib/ai/settings";
 import { profileSchema } from "@/lib/document/schema";
+import { cleanJob, type JobFields } from "@/lib/jobs/fields";
+import { findOrCreateJob } from "@/lib/jobs/jobs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import type { ResumeJobRow } from "@/lib/supabase/types";
-
 
 export type GenerateResult =
   | {
@@ -142,13 +143,17 @@ export async function generateResumeContent(input: {
   };
 }
 
-export type StartJobResult = { ok: true; job: ResumeJobRow } | { ok: false; error: string };
+export type StartJobResult = { ok: true; job: BuilderJob } | { ok: false; error: string };
 
 /**
  * Starts a generation in the background and returns at once with its row.
  *
- * The row is inserted through the caller's own client, so the policies decide
- * whether they may work this profile — exactly as for a resume or an
+ * For a job from your list (`jobId`), or for a description pasted here — which
+ * becomes a job, or finds the one it already is, so the description is
+ * stored once and the generation carries the job's number.
+ *
+ * The rows are inserted through the caller's own client, so the policies
+ * decide whether they may work this profile — exactly as for a resume or an
  * application. The model call happens in `after()`, once the response has
  * gone, bounded by the page's maxDuration; the builder polls the row.
  *
@@ -156,26 +161,24 @@ export type StartJobResult = { ok: true; job: ResumeJobRow } | { ok: false; erro
  * counts finished generations, so a burst can overshoot it by at most that
  * many.
  */
-export async function startResumeJob(input: {
-  profileId: string;
-  jobDescription: string;
-  company?: string;
-  jobTitle?: string;
-  jobUrl?: string;
-}): Promise<StartJobResult> {
+export async function startResumeJob(
+  input:
+    | { profileId: string; jobId: string }
+    | { profileId: string; jobDescription: string; company?: string; jobTitle?: string; jobUrl?: string },
+): Promise<StartJobResult> {
   const actor = await requireActor();
   if (!openRouterConfigured()) {
     return { ok: false, error: "Generation is off: OPENROUTER_API_KEY is not set." };
   }
 
-  const jobDescription = input.jobDescription.trim();
-  if (!jobDescription) return { ok: false, error: "Paste the job description first." };
-  if (jobDescription.length > MAX_JOB_DESCRIPTION) {
-    return { ok: false, error: "That job description is too long — trim it to the posting itself." };
-  }
-  const jobUrl = input.jobUrl?.trim() || null;
-  if (jobUrl && !/^https?:\/\//i.test(jobUrl)) {
-    return { ok: false, error: "The job URL should start with http:// or https://." };
+  let fields: JobFields | null = null;
+  if (!("jobId" in input)) {
+    const clean = cleanJob(
+      { description: input.jobDescription, title: input.jobTitle, company: input.company, url: input.jobUrl },
+      { complete: false },
+    );
+    if (!clean.ok) return clean;
+    fields = clean.value;
   }
 
   const supabase = await createClient();
@@ -208,26 +211,34 @@ export async function startResumeJob(input: {
     return { ok: false, error: `${MAX_RUNNING_JOBS} resumes are already generating. Start the next when one finishes.` };
   }
 
+  let jobId: string;
+  if ("jobId" in input) {
+    const { data: own } = await supabase.from("job").select("id").eq("id", input.jobId).eq("created_by", actor.id).maybeSingle();
+    if (!own) return { ok: false, error: "That job isn't on your list any more." };
+    jobId = own.id;
+  } else {
+    const found = await findOrCreateJob(supabase, actor.id, fields!);
+    if (!found.ok) return found;
+    jobId = found.job.id;
+  }
+
   const { data: job, error } = await supabase
     .from("resume_job")
     .insert({
       profile_id: row.id,
       team_id: row.team_id,
       created_by: actor.id,
-      job_description: jobDescription,
-      company: input.company?.trim() || null,
-      job_title: input.jobTitle?.trim() || null,
-      job_url: jobUrl,
+      job_id: jobId,
       started_at: new Date().toISOString(),
     })
-    .select("*")
+    .select("*, job:job_id(id, no, title, company, url, description)")
     .single();
   if (error || !job) {
     return { ok: false, error: error?.message ?? "The generation couldn't be started." };
   }
 
   after(() => runResumeJob(job.id));
-  return { ok: true, job };
+  return { ok: true, job: job as unknown as BuilderJob };
 }
 
 export type { RecordResult } from "@/lib/jobs/work";
@@ -241,6 +252,8 @@ export async function recordApplication(input: {
   title: string;
   company: string;
   jobUrl: string;
+  /** The open generation's job: the application takes its number. */
+  jobId?: string | null;
 }): Promise<RecordResult> {
   return trackApplication(await createClient(), await requireActor(), input);
 }

@@ -47,7 +47,7 @@ export async function runResumeJob(jobId: string): Promise<void> {
   try {
     const { data: job } = await admin
       .from("resume_job")
-      .select("id, profile_id, created_by, job_description, status")
+      .select("id, profile_id, created_by, status, job:job_id(description)")
       .eq("id", jobId)
       .maybeSingle();
     if (!job || job.status !== "running") return;
@@ -73,7 +73,7 @@ export async function runResumeJob(jobId: string): Promise<void> {
       model: config.model,
       systemPrompt: config.prompt.body,
       companyContext: row.company_context,
-      jobDescription: job.job_description,
+      jobDescription: (job.job as unknown as { description: string } | null)?.description ?? "",
       reasoning: config.reasoning,
       timeoutMs: JOB_CALL_TIMEOUT_MS,
     });

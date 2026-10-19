@@ -52,8 +52,7 @@ alter table generation_setting enable row level security;
 alter table resume_generation  enable row level security;
 alter table generation_prompt  enable row level security;
 alter table resume_job         enable row level security;
-alter table job_sheet          enable row level security;
-alter table sheet_job          enable row level security;
+alter table job                enable row level security;
 alter table resume_queue_setting enable row level security;
 alter table resume_queue_secret  enable row level security;
 
@@ -391,6 +390,8 @@ create policy resume_job_insert on resume_job
     and works_in_team(team_id, profile_id)
     and can_use_profile(profile_id)
     and profile_in_team(profile_id, team_id)
+    -- Your own job: the runner reads its description with the service role.
+    and exists (select 1 from job j where j.id = job_id and j.created_by = auth.uid())
   );
 
 drop policy if exists resume_job_update on resume_job;
@@ -401,24 +402,40 @@ create policy resume_job_update on resume_job
     and works_in_team(team_id, profile_id)
     and can_use_profile(profile_id)
     and profile_in_team(profile_id, team_id)
+    and exists (select 1 from job j where j.id = job_id and j.created_by = auth.uid())
   );
 
 drop policy if exists resume_job_delete on resume_job;
 create policy resume_job_delete on resume_job
   for delete using (created_by = auth.uid());
 
--- --- job_sheet / sheet_job -----------------------------------------------
--- A person's own job list. Nobody else reads it — not their subadmin, not the
--- super admin: what matters to the team is the resumes and applications made
--- from it, which carry their own policies.
+-- --- job -------------------------------------------------------------------
+-- A person's own list of postings: only its creator lists, adds, edits or
+-- deletes one. Reading reaches one step further — whoever can read an
+-- application made from a job can read the job, under the application's own
+-- policies (the subquery runs as the caller). That is how a subadmin's
+-- calendar shows the description an interview is for, without the bidder's
+-- untracked list becoming anyone else's.
 
-drop policy if exists job_sheet_own on job_sheet;
-create policy job_sheet_own on job_sheet
-  for all using (created_by = auth.uid()) with check (created_by = auth.uid());
+drop policy if exists sheet_job_own on job;
+drop policy if exists job_select on job;
+create policy job_select on job
+  for select using (
+    created_by = auth.uid()
+    or exists (select 1 from application a where a.job_id = job.id)
+  );
 
-drop policy if exists sheet_job_own on sheet_job;
-create policy sheet_job_own on sheet_job
-  for all using (created_by = auth.uid()) with check (created_by = auth.uid());
+drop policy if exists job_insert on job;
+create policy job_insert on job
+  for insert with check (created_by = auth.uid());
+
+drop policy if exists job_update on job;
+create policy job_update on job
+  for update using (created_by = auth.uid()) with check (created_by = auth.uid());
+
+drop policy if exists job_delete on job;
+create policy job_delete on job
+  for delete using (created_by = auth.uid());
 
 -- --- resume queue ----------------------------------------------------------
 -- The super admin may see and move the runner's endpoint; the secret has no

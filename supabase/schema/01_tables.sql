@@ -491,11 +491,11 @@ create index if not exists resume_generation_team_idx
 -- same time, and they survive leaving the page: the builder lists its
 -- person's rows and opens one into the editor when it's ready.
 --
--- Each row is a draft application, not only a result: the job description,
--- and optionally the company, title and URL, are captured when it starts, so
--- Download & track needs nothing retyped. Edits to the content are saved back
--- here, so switching between rows loses nothing. Saving to the resume library
--- (resume_document) stays a separate, deliberate step.
+-- Each row is a draft application, not only a result: it points at the job
+-- it was made for (job_id, below), so Download & track needs nothing retyped.
+-- Edits to the content are saved back here, so switching between rows loses
+-- nothing. Saving to the resume library (resume_document) stays a separate,
+-- deliberate step.
 --
 -- A person's own working space: only its creator reads or changes a row.
 -- team_id is the profile's team, as everywhere else, so the writes are held
@@ -511,10 +511,6 @@ create table if not exists resume_job (
   -- A row left running past the function's time limit is shown as timed out.
   status          text not null default 'running'
                   check (status in ('running', 'ready', 'failed')),
-  job_description text not null,
-  company         text,
-  job_title       text,
-  job_url         text,
   content         jsonb,
   -- Whether the content passed validation, after the one repair attempt.
   valid           boolean,
@@ -532,46 +528,10 @@ create table if not exists resume_job (
 create index if not exists resume_job_owner_idx on resume_job (created_by, created_at desc);
 create index if not exists resume_job_profile_idx on resume_job (profile_id);
 
--- --------------------------------------------------------------------------
--- Job sheets — a person's Google Sheet of jobs to apply for
---
--- The sheet is the to-do list: one row per job, with columns No, Title,
--- Company, URL and JD. It is link-shared ("anyone with the link can view") and
--- read as CSV; each row is copied into sheet_job, keyed by its No, so a
--- generated resume and a tracked application can name the row they came from.
--- One sheet per person, and only its owner reads it.
--- --------------------------------------------------------------------------
-
-create table if not exists job_sheet (
-  created_by     uuid primary key references app_user (id) on delete cascade,
-  url            text not null,
-  spreadsheet_id text not null,
-  gid            text not null default '0',
-  last_synced_at timestamptz,
-  last_error     text,
-  created_at     timestamptz not null default now()
-);
-
-create table if not exists sheet_job (
-  id          uuid primary key default gen_random_uuid(),
-  created_by  uuid not null references app_user (id) on delete cascade,
-  job_no      text not null,
-  title       text not null,
-  company     text,
-  url         text,
-  description text not null,
-  -- False once the row has gone from the sheet; kept, so the resumes and
-  -- applications made from it still say which job they were for.
-  in_sheet    boolean not null default true,
-  synced_at   timestamptz not null default now(),
-  unique (created_by, job_no)
-);
-
--- Batch generation. A job can now wait its turn (`queued`) — a batch of thirty
+-- Batch generation. A job can wait its turn (`queued`) — a batch of thirty
 -- runs six at a time, the rest picked up by the queue runner each minute —
 -- and carries the resume style its PDF is rendered in on the server.
 alter table resume_job
-  add column if not exists sheet_job_id uuid references sheet_job (id) on delete set null,
   add column if not exists template     text,
   add column if not exists style        jsonb,
   -- When it actually started running; the timeout counts from here, not from
@@ -584,7 +544,254 @@ alter table resume_job add constraint resume_job_status_check
 
 create index if not exists resume_job_queue_idx
   on resume_job (status, created_at) where status in ('queued', 'running');
-create index if not exists resume_job_sheet_idx on resume_job (sheet_job_id);
+
+-- --------------------------------------------------------------------------
+-- Jobs — the postings a person applies to
+--
+-- One row per posting, and the only copy of its description. A generation
+-- (resume_job.job_id) and an application (application.job_id) point at the
+-- job instead of carrying the text, so a job description is stored once
+-- however often it is generated for or applied to. Added on the Jobs page, or
+-- by pasting a description into the builder; listed and changed only by its
+-- creator. Anyone who can read an application made from it can read it too
+-- (part 4) — which is how the calendar shows an interview's job description.
+--
+-- Numbered from one counter shared with applications (record_no_seq) and
+-- shown as J007 and A007. An application made from a job takes the job's
+-- number, with a part for each further profile (A007-2); one recorded
+-- without a job takes the next number. Triggers in part 3 assign them; a
+-- client never does.
+--
+-- A job with applications can't be deleted (application.job_id restricts):
+-- its description is the record of what was applied to. It is archived
+-- instead, which only takes it off the list.
+-- --------------------------------------------------------------------------
+
+create sequence if not exists record_no_seq;
+
+-- These were once read from a Google Sheet: sheet_job is this table, and
+-- job_sheet (the sheet's address) has no successor.
+do $$
+begin
+  if to_regclass('public.sheet_job') is not null and to_regclass('public.job') is null then
+    alter table sheet_job rename to job;
+    alter index if exists sheet_job_pkey rename to job_pkey;
+  end if;
+  -- The sheet's own number orders its rows below, then goes; new jobs never have one.
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'job'
+                and column_name = 'job_no') then
+    alter table job alter column job_no drop not null;
+  end if;
+end $$;
+drop table if exists job_sheet;
+
+create table if not exists job (
+  id          uuid primary key default gen_random_uuid(),
+  created_by  uuid,
+  title       text not null,
+  company     text,
+  url         text,
+  description text not null
+);
+
+alter table job
+  add column if not exists no          bigint,
+  add column if not exists archived_at timestamptz,
+  add column if not exists created_at  timestamptz not null default now(),
+  add column if not exists updated_at  timestamptz not null default now();
+
+-- A job outlives the account that added it (its applications still need
+-- their description), so removing someone unlinks their jobs rather than
+-- deleting them. transfer_team() hands a subadmin's to their successor.
+alter table job alter column created_by drop not null;
+alter table job drop constraint if exists sheet_job_created_by_fkey;
+alter table job drop constraint if exists job_created_by_fkey;
+alter table job add constraint job_created_by_fkey
+  foreign key (created_by) references app_user (id) on delete set null;
+
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'resume_job'
+                and column_name = 'sheet_job_id')
+     and not exists (select 1 from information_schema.columns
+                      where table_schema = 'public' and table_name = 'resume_job'
+                        and column_name = 'job_id') then
+    alter table resume_job rename column sheet_job_id to job_id;
+  end if;
+end $$;
+
+alter table resume_job add column if not exists job_id uuid;
+
+alter table application
+  add column if not exists no      bigint,
+  add column if not exists no_part smallint not null default 1,
+  add column if not exists job_id  uuid;
+
+-- Converging an older database: generations that carried their own copy of
+-- the job description, sheet rows, and applications without numbers. Each
+-- step finds nothing to do on a database that is already converged.
+do $$
+declare
+  post  record;
+  v_job uuid;
+  v_max bigint;
+begin
+  -- Sheet rows keep when they were synced as when they were added.
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'job'
+                and column_name = 'synced_at') then
+    update job set created_at = synced_at, updated_at = synced_at where no is null;
+  end if;
+
+  -- Generations from before jobs: one job per distinct posting, so the
+  -- description is kept once rather than on every regeneration.
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'resume_job'
+                and column_name = 'job_description') then
+    for post in
+      select created_by, job_description, company, job_title, job_url,
+             min(created_at) as first_at,
+             (array_agg(content ->> 'targetTitle' order by created_at)
+                filter (where content ? 'targetTitle'))[1] as target,
+             array_agg(id) as ids
+        from resume_job
+       where job_id is null
+       group by created_by, job_description, company, job_title, job_url
+       order by min(created_at)
+    loop
+      insert into job (created_by, title, company, url, description, created_at, updated_at)
+      values (
+        post.created_by,
+        coalesce(
+          nullif(btrim(post.job_title), ''),
+          nullif(btrim(post.target), ''),
+          nullif(left(btrim(split_part(btrim(post.job_description), E'\n', 1)), 120), ''),
+          'Untitled job'
+        ),
+        nullif(btrim(post.company), ''),
+        nullif(btrim(post.job_url), ''),
+        left(post.job_description, 30000),
+        post.first_at,
+        post.first_at
+      )
+      returning id into v_job;
+      update resume_job set job_id = v_job where id = any (post.ids);
+    end loop;
+  end if;
+
+  -- An application recorded from a generation belongs to that generation's job.
+  update application a
+     set job_id = r.job_id
+    from resume_job r
+   where r.application_id = a.id
+     and a.job_id is null
+     and a.no is null
+     and r.job_id is not null;
+
+  -- Applications, oldest first; those of one job share its number.
+  select greatest(coalesce((select max(no) from application), 0),
+                  coalesce((select max(no) from job), 0))
+    into v_max;
+  with pending as (
+    select id, coalesce(job_id, id) as grp, applied_at, created_at
+      from application
+     where no is null
+  ),
+  groups as (
+    select grp, row_number() over (order by min(applied_at), min(created_at), grp) as n
+      from pending
+     group by grp
+  ),
+  parts as (
+    select id, grp,
+           row_number() over (partition by grp order by applied_at, created_at, id) as part
+      from pending
+  )
+  update application a
+     set no = v_max + g.n, no_part = p.part
+    from parts p
+    join groups g using (grp)
+   where a.id = p.id;
+
+  -- A job takes its applications' number; the rest come after, in order.
+  update job j
+     set no = a.no
+    from (select job_id, min(no) as no from application where job_id is not null group by job_id) a
+   where j.id = a.job_id
+     and j.no is null;
+
+  select greatest(coalesce((select max(no) from application), 0),
+                  coalesce((select max(no) from job), 0))
+    into v_max;
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'job'
+                and column_name = 'job_no') then
+    -- In the sheet's own order.
+    with pending as (
+      select id, row_number() over (
+               order by created_by,
+                        case when job_no ~ '^\d{1,15}$' then job_no::bigint end,
+                        job_no, id) as n
+        from job
+       where no is null
+    )
+    update job j set no = v_max + p.n from pending p where j.id = p.id;
+  else
+    with pending as (
+      select id, row_number() over (order by created_at, id) as n from job where no is null
+    )
+    update job j set no = v_max + p.n from pending p where j.id = p.id;
+  end if;
+
+  -- The counter carries on after the highest number handed out.
+  select greatest(coalesce((select max(no) from application), 0),
+                  coalesce((select max(no) from job), 0))
+    into v_max;
+  if v_max > 0 then
+    perform setval('record_no_seq', greatest(v_max, (select last_value from record_no_seq)), true);
+  end if;
+end $$;
+
+-- What the old copies were, now read from the job.
+alter table resume_job
+  drop column if exists job_description,
+  drop column if exists company,
+  drop column if exists job_title,
+  drop column if exists job_url;
+alter table job
+  drop column if exists job_no,
+  drop column if exists in_sheet,
+  drop column if exists synced_at;
+
+-- The builder's limit, held here too: a sheet never had one.
+update job set description = left(description, 30000) where char_length(description) > 30000;
+alter table job drop constraint if exists job_description_length;
+alter table job add constraint job_description_length
+  check (char_length(description) between 1 and 30000);
+
+alter table job         alter column no     set not null;
+alter table application alter column no     set not null;
+alter table resume_job  alter column job_id set not null;
+
+-- A job's drafts go with it; its applications keep it (see above).
+alter table resume_job drop constraint if exists resume_job_sheet_job_id_fkey;
+alter table resume_job drop constraint if exists resume_job_job_id_fkey;
+alter table resume_job add constraint resume_job_job_id_fkey
+  foreign key (job_id) references job (id) on delete cascade;
+alter table application drop constraint if exists application_job_id_fkey;
+alter table application add constraint application_job_id_fkey
+  foreign key (job_id) references job (id) on delete restrict;
+
+drop index if exists resume_job_sheet_idx;
+create index if not exists resume_job_job_idx on resume_job (job_id, profile_id);
+create unique index if not exists job_no_key on job (no);
+create index if not exists job_owner_idx on job (created_by, created_at desc);
+-- Pasting the same description twice finds the job it already is.
+create index if not exists job_description_md5_idx on job (created_by, md5(description));
+create unique index if not exists application_no_key on application (no, no_part);
+create index if not exists application_job_idx on application (job_id);
 
 -- The queue runner: where pg_cron calls each minute, and the secret it proves
 -- itself with. Only the super admin may change the endpoint (a policy in part

@@ -9,7 +9,7 @@ import type { ResumeStyle } from "@/lib/supabase/types";
 export const maxDuration = 300;
 
 /**
- * Generates resumes for the chosen sheet rows, for one profile. The template
+ * Generates resumes for the chosen jobs, for one profile. The template
  * comes from the panel; the rest of the style (accent, font, size) from the
  * person's last batch, so the extension follows what they settled on in the
  * app.
@@ -17,8 +17,8 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   const ctx = await requestActor(request);
   if (!ctx) return UNAUTHORIZED();
-  const input = await body<{ profileId?: string; sheetJobIds?: string[]; template?: string; regenerate?: boolean }>(request);
-  if (!input?.profileId || !input.sheetJobIds?.length) return fail("Choose a profile and the jobs to generate for.");
+  const input = await body<{ profileId?: string; jobIds?: string[]; template?: string; regenerate?: boolean }>(request);
+  if (!input?.profileId || !input.jobIds?.length) return fail("Choose a profile and the jobs to generate for.");
 
   const { data: last } = await ctx.db
     .from("resume_job")
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
   const result = await startBatch(ctx.db, ctx.actor, {
     profileId: input.profileId,
-    sheetJobIds: input.sheetJobIds,
+    jobIds: input.jobIds,
     template: input.template,
     style: (last?.style as ResumeStyle | null) ?? null,
     regenerate: input.regenerate,

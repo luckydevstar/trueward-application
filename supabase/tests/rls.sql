@@ -1170,7 +1170,7 @@ values ('Acme', 'acme', app_team_id(), auth.uid()),
 
 set test.uid = '00000000-0000-0000-0000-0000000000b4';
 insert into application (id, title, company, job_url, profile_id, team_id, created_by)
-values ('00000000-0000-0000-0000-00000000ad01', 'D Role', 'Hooli',
+values ('00000000-0000-0000-0000-00000000ae01', 'D Role', 'Hooli',
         'https://example.com/d1', '00000000-0000-0000-0000-0000000000fd',
         app_team_id(), auth.uid());
 insert into resume_document (id, title, profile_id, content, team_id, created_by)
@@ -1263,7 +1263,7 @@ set test.uid = '00000000-0000-0000-0000-00000000000c';
 select 'the inheritor sees the profile' as check, count(*) = 1 as expect_true
   from candidate_profile where id = '00000000-0000-0000-0000-0000000000fd';
 select 'and its application' as check, count(*) = 1 as expect_true
-  from application where id = '00000000-0000-0000-0000-00000000ad01';
+  from application where id = '00000000-0000-0000-0000-00000000ae01';
 select 'and the bidder' as check, count(*) = 1 as expect_true
   from app_user where id = '00000000-0000-0000-0000-0000000000b4';
 reset role;
@@ -1640,9 +1640,13 @@ select 'deleting the active research prompt falls back to the built-in' as check
 \echo '=== 22. background generations are their creator''s own ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-0000000000b1';
-insert into resume_job (id, profile_id, team_id, created_by, job_description, company)
+-- Every generation is for a job; the bidder's own.
+insert into job (id, created_by, title, company, url, description)
+values ('00000000-0000-0000-0000-00000000ac01', auth.uid(), 'Backend Engineer', 'Acme',
+        'https://acme.example/jobs/1', 'Build APIs in Go.');
+insert into resume_job (id, profile_id, team_id, created_by, job_id)
 values ('00000000-0000-0000-0000-00000000ab01', '00000000-0000-0000-0000-0000000000f0',
-        app_team_id(), auth.uid(), 'Build APIs.', 'Acme');
+        app_team_id(), auth.uid(), '00000000-0000-0000-0000-00000000ac01');
 select 'a bidder starts a generation for an assigned profile' as check, count(*) = 1 as expect_true
   from resume_job where id = '00000000-0000-0000-0000-00000000ab01' and status = 'running';
 with changed as (
@@ -1653,9 +1657,9 @@ select 'and edits it' as check, count(*) = 1 as expect_true from changed;
 
 do $$
 begin
-  insert into resume_job (profile_id, team_id, created_by, job_description)
+  insert into resume_job (profile_id, team_id, created_by, job_id)
   values ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-00000000000c',
-          auth.uid(), 'Cross-team');
+          auth.uid(), '00000000-0000-0000-0000-00000000ac01');
   raise exception 'FAIL: a generation was filed in another team';
 exception
   when insufficient_privilege then
@@ -1665,17 +1669,32 @@ end $$;
 set test.uid = '00000000-0000-0000-0000-0000000000b2';
 select 'a teammate cannot see it' as check, count(*) = 0 as expect_true from resume_job;
 with changed as (
-  update resume_job set company = 'Hijacked' where id = '00000000-0000-0000-0000-00000000ab01' returning 1
+  update resume_job set valid = false where id = '00000000-0000-0000-0000-00000000ab01' returning 1
 )
 select 'nor change it' as check, count(*) = 0 as expect_true from changed;
+insert into job (id, created_by, title, description)
+values ('00000000-0000-0000-0000-00000000ac02', auth.uid(), 'Teammate''s job', 'Theirs.');
 do $$
 begin
-  insert into resume_job (profile_id, team_id, created_by, job_description)
-  values ('00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid(), 'Not mine');
+  insert into resume_job (profile_id, team_id, created_by, job_id)
+  values ('00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid(),
+          '00000000-0000-0000-0000-00000000ac02');
   raise exception 'FAIL: a bidder generated for a profile not assigned to them';
 exception
   when insufficient_privilege then
     raise notice 'PASS: generations need an assigned profile';
+end $$;
+
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+do $$
+begin
+  insert into resume_job (profile_id, team_id, created_by, job_id)
+  values ('00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid(),
+          '00000000-0000-0000-0000-00000000ac02');
+  raise exception 'FAIL: a generation was started for someone else''s job';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: generations are for your own jobs only';
 end $$;
 
 set test.uid = '00000000-0000-0000-0000-00000000000a';
@@ -1683,11 +1702,13 @@ select 'the subadmin does not see a bidder''s drafts' as check, count(*) = 0 as 
   from resume_job where created_by = '00000000-0000-0000-0000-0000000000b1';
 
 set test.uid = '00000000-0000-0000-0000-00000000005a';
+insert into job (id, created_by, title, description)
+values ('00000000-0000-0000-0000-00000000ac03', auth.uid(), 'Super''s job', 'Review.');
 do $$
 begin
-  insert into resume_job (profile_id, team_id, created_by, job_description)
+  insert into resume_job (profile_id, team_id, created_by, job_id)
   values ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-00000000000a',
-          auth.uid(), 'Review only');
+          auth.uid(), '00000000-0000-0000-0000-00000000ac03');
   raise exception 'FAIL: the super admin generated for an unassigned profile';
 exception
   when insufficient_privilege then
@@ -1696,9 +1717,9 @@ end $$;
 insert into profile_assignment (profile_id, user_id, team_id, assigned_by)
 values ('00000000-0000-0000-0000-0000000000f0', auth.uid(),
         '00000000-0000-0000-0000-00000000000a', auth.uid());
-insert into resume_job (profile_id, team_id, created_by, job_description)
+insert into resume_job (profile_id, team_id, created_by, job_id)
 values ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-00000000000a',
-        auth.uid(), 'Assigned now');
+        auth.uid(), '00000000-0000-0000-0000-00000000ac03');
 select 'once assigned, they can' as check, count(*) = 1 as expect_true
   from resume_job where created_by = auth.uid();
 delete from profile_assignment
@@ -1712,36 +1733,125 @@ select 'its creator removes it' as check, count(*) = 1 as expect_true from gone;
 reset role;
 
 \echo ''
-\echo '=== 23. job sheets are their owner''s, and the queue runs six at a time ==='
+\echo '=== 23. jobs are their owner''s, numbered with their applications ==='
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-0000000000b1';
-insert into job_sheet (created_by, url, spreadsheet_id)
-values (auth.uid(), 'https://docs.google.com/spreadsheets/d/abc/edit', 'abc');
-insert into sheet_job (id, created_by, job_no, title, company, url, description)
-values ('00000000-0000-0000-0000-00000000ac01', auth.uid(), '1', 'Backend Engineer', 'Acme',
-        'https://acme.example/jobs/1', 'Build APIs in Go.');
-select 'a bidder keeps their own job sheet' as check, count(*) = 1 as expect_true from sheet_job;
+select 'a bidder lists only their own jobs' as check, count(*) = 1 as expect_true from job;
+insert into job (id, no, created_by, title, company, url, description)
+values ('00000000-0000-0000-0000-00000000ac04', 1, auth.uid(), 'Platform Engineer', 'Globex',
+        'https://globex.example/jobs/9', 'Run Kubernetes.');
+select 'a job gets the next number, whatever the client sends' as check,
+       no > (select no from job where id = '00000000-0000-0000-0000-00000000ac01') as expect_true
+  from job where id = '00000000-0000-0000-0000-00000000ac04';
+select no as globex_no from job where id = '00000000-0000-0000-0000-00000000ac04' \gset
+update job set no = 1, title = 'Platform Engineer II' where id = '00000000-0000-0000-0000-00000000ac04';
+select 'and keeps it through an edit' as check, no = :globex_no and title = 'Platform Engineer II' as expect_true
+  from job where id = '00000000-0000-0000-0000-00000000ac04';
 
--- Eight jobs from the sheet, waiting.
-insert into resume_job (profile_id, team_id, created_by, job_description, status, sheet_job_id)
-select '00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid(), 'JD ' || n, 'queued',
+-- Applied to from the job: the application takes its number.
+insert into application (id, title, company, job_url, profile_id, team_id, created_by, job_id)
+values ('00000000-0000-0000-0000-0000000a7e01', 'Platform Engineer', 'Globex',
+        'https://globex.example/jobs/9', '00000000-0000-0000-0000-0000000000f0', app_team_id(),
+        auth.uid(), '00000000-0000-0000-0000-00000000ac04');
+select 'an application from a job takes its number' as check,
+       no = :globex_no and no_part = 1 as expect_true
+  from application where id = '00000000-0000-0000-0000-0000000a7e01';
+insert into application (id, title, company, job_url, profile_id, team_id, created_by, job_id)
+values ('00000000-0000-0000-0000-0000000a7e02', 'Platform Engineer', 'Globex Labs',
+        'https://globex.example/jobs/9', '00000000-0000-0000-0000-0000000000f0', app_team_id(),
+        auth.uid(), '00000000-0000-0000-0000-00000000ac04');
+select 'a second one from the same job is part 2' as check,
+       no = :globex_no and no_part = 2 as expect_true
+  from application where id = '00000000-0000-0000-0000-0000000a7e02';
+insert into application (id, title, company, job_url, profile_id, team_id, created_by)
+values ('00000000-0000-0000-0000-0000000a7e03', 'Typed in', 'Initech', 'https://initech.example/',
+        '00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid());
+select 'one recorded without a job takes a number of its own' as check,
+       no > :globex_no and no_part = 1 as expect_true
+  from application where id = '00000000-0000-0000-0000-0000000a7e03';
+update application set no = 1, no_part = 9, notes = 'edited' where id = '00000000-0000-0000-0000-0000000a7e01';
+select 'an application keeps its number through an edit' as check,
+       no = :globex_no and no_part = 1 and notes = 'edited' as expect_true
+  from application where id = '00000000-0000-0000-0000-0000000a7e01';
+
+do $$
+begin
+  delete from job where id = '00000000-0000-0000-0000-00000000ac04';
+  raise exception 'FAIL: a job with applications was deleted';
+exception
+  when foreign_key_violation then
+    raise notice 'PASS: a job with applications is kept for its description';
+end $$;
+with changed as (
+  update job set archived_at = now() where id = '00000000-0000-0000-0000-00000000ac04' returning 1
+)
+select 'it can be archived instead' as check, count(*) = 1 as expect_true from changed;
+
+-- Tracking one draft clears the other drafts for that job and profile.
+insert into resume_job (id, profile_id, team_id, created_by, job_id, status, content)
+values ('00000000-0000-0000-0000-00000000ab11', '00000000-0000-0000-0000-0000000000f0', app_team_id(),
+        auth.uid(), '00000000-0000-0000-0000-00000000ac04', 'ready', '{}'),
+       ('00000000-0000-0000-0000-00000000ab12', '00000000-0000-0000-0000-0000000000f0', app_team_id(),
+        auth.uid(), '00000000-0000-0000-0000-00000000ac04', 'ready', '{}'),
+       ('00000000-0000-0000-0000-00000000ab13', '00000000-0000-0000-0000-0000000000f0', app_team_id(),
+        auth.uid(), '00000000-0000-0000-0000-00000000ac04', 'running', null);
+update resume_job set application_id = '00000000-0000-0000-0000-0000000a7e01'
+ where id = '00000000-0000-0000-0000-00000000ab11';
+select 'tracking a draft deletes its spent siblings, not running ones' as check,
+       array_agg(id order by id) = array['00000000-0000-0000-0000-00000000ab11',
+                                         '00000000-0000-0000-0000-00000000ab13']::uuid[] as expect_true
+  from resume_job where job_id = '00000000-0000-0000-0000-00000000ac04';
+delete from resume_job where id = '00000000-0000-0000-0000-00000000ab13';
+
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+select 'a teammate sees none of another''s jobs' as check, count(*) = 0 as expect_true
+  from job where created_by = '00000000-0000-0000-0000-0000000000b1';
+do $$
+begin
+  insert into job (created_by, title, description)
+  values ('00000000-0000-0000-0000-0000000000b1', 'Forged', 'x');
+  raise exception 'FAIL: a job was added to someone else''s list';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: a job is added by its owner only';
+end $$;
+do $$
+begin
+  insert into application (title, company, job_url, team_id, created_by, job_id)
+  values ('Claimed', 'Globex', 'https://globex.example/', app_team_id(), auth.uid(),
+          '00000000-0000-0000-0000-00000000ac04');
+  raise exception 'FAIL: an application claimed someone else''s job number';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: only your own job''s number can be taken';
+end $$;
+
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+select 'the subadmin reads a job through its application' as check, count(*) = 1 as expect_true
+  from job where id = '00000000-0000-0000-0000-00000000ac04';
+select 'but not a bidder''s untracked jobs' as check, count(*) = 0 as expect_true
+  from job where id = '00000000-0000-0000-0000-00000000ac01';
+with changed as (
+  update job set title = 'Hijacked' where id = '00000000-0000-0000-0000-00000000ac04' returning 1
+)
+select 'nor change the one they can read' as check, count(*) = 0 as expect_true from changed;
+
+set test.uid = '00000000-0000-0000-0000-00000000000c';
+select 'another team reads none of it' as check, count(*) = 0 as expect_true
+  from job where id = '00000000-0000-0000-0000-00000000ac04';
+reset role;
+
+\echo ''
+\echo '=== 24. the queue runs six at a time ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+-- Eight generations for one job, waiting.
+insert into resume_job (profile_id, team_id, created_by, status, job_id)
+select '00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid(), 'queued',
        '00000000-0000-0000-0000-00000000ac01'
   from generate_series(1, 8) as n;
 select 'a batch waits as queued' as check, count(*) = 8 as expect_true
   from resume_job where status = 'queued' and created_by = auth.uid();
-
-set test.uid = '00000000-0000-0000-0000-0000000000b2';
-select 'a teammate sees none of it' as check,
-       (select count(*) from sheet_job) = 0 and (select count(*) from job_sheet) = 0 as expect_true;
-do $$
-begin
-  insert into sheet_job (created_by, job_no, title, description)
-  values ('00000000-0000-0000-0000-0000000000b1', '2', 'Forged', 'x');
-  raise exception 'FAIL: a job was written into someone else''s sheet';
-exception
-  when insufficient_privilege then
-    raise notice 'PASS: a sheet is written by its owner only';
-end $$;
 reset role;
 
 select secret as queue_secret from resume_queue_secret \gset

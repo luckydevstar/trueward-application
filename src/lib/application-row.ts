@@ -28,8 +28,13 @@ export type ApplicationRow = {
   created_by: string | null;
   /** Null while the row is on the working list; a timestamp once archived. */
   archived_at: string | null;
+  /** A007-2 is no 7, part 2 — assigned by the database, never edited. */
+  no: number;
+  no_part: number;
+  /** The job it was made from, when it was. */
+  job_id: string | null;
 };
 
 /** The select list behind ApplicationRow. Keep the two in step. */
 export const ROW_COLUMNS =
-  "id, title, company, job_url, status, billing, notes, applied_at, resume_key, resume_url, resume_name, profile_id, created_by, archived_at";
+  "id, no, no_part, job_id, title, company, job_url, status, billing, notes, applied_at, resume_key, resume_url, resume_name, profile_id, created_by, archived_at";

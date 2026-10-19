@@ -1,32 +1,31 @@
-import { JobSheet, type JobRow } from "@/components/job-sheet";
+import { JobsBoard, type BoardJob } from "@/components/jobs-board";
 import { requireActor } from "@/lib/actor";
+import { applicationNo, jobNo } from "@/lib/numbers";
 import { assignedProfileIds } from "@/lib/profile-scope";
 import { canSelfAssign } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata = { title: "Job sheet · Application" };
+export const metadata = { title: "Jobs · Application" };
 
 /** Room for the first jobs of a batch to run in `after()`. */
 export const maxDuration = 300;
 
-const byJobNo = (a: { job_no: string }, b: { job_no: string }) => {
-  const x = Number(a.job_no);
-  const y = Number(b.job_no);
-  return Number.isFinite(x) && Number.isFinite(y) ? x - y : a.job_no.localeCompare(b.job_no, undefined, { numeric: true });
-};
-
 /**
- * The person's Google Sheet of jobs, and a resume for each — generated in a
- * batch, in the background, for the profile chosen here.
+ * The person's jobs — the postings they apply to — and, for the profile
+ * chosen here, where each one's resume and application stand. Descriptions
+ * stay on the server until a job is opened; the list is titles and states.
  */
-export default async function JobSheetPage({ searchParams }: PageProps<"/dashboard/jobs">) {
+export default async function JobsPage({ searchParams }: PageProps<"/dashboard/jobs">) {
   const actor = await requireActor();
   const db = await createClient();
   const params = await searchParams;
 
-  const [{ data: sheet }, { data: sheetJobs }, { data: allProfiles }] = await Promise.all([
-    db.from("job_sheet").select("url, last_synced_at, last_error").maybeSingle(),
-    db.from("sheet_job").select("id, job_no, title, company, url").eq("in_sheet", true),
+  const [{ data: jobs }, { data: allProfiles }] = await Promise.all([
+    db
+      .from("job")
+      .select("id, no, title, company, url, archived_at, created_at")
+      .eq("created_by", actor.id)
+      .order("no", { ascending: false }),
     db.from("candidate_profile").select("id, full_name").order("full_name"),
   ]);
 
@@ -38,39 +37,54 @@ export default async function JobSheetPage({ searchParams }: PageProps<"/dashboa
   const wanted = typeof params.profile === "string" ? params.profile : null;
   const profile = profiles.find((p) => p.id === wanted) ?? profiles[0] ?? null;
 
-  const latest = new Map<string, JobRow["resume"]>();
-  if (profile && sheetJobs?.length) {
-    const { data: resumes } = await db
-      .from("resume_job")
-      .select("id, sheet_job_id, status, valid, error, application_id, started_at, created_at")
-      .eq("profile_id", profile.id)
-      .not("sheet_job_id", "is", null)
-      .order("created_at", { ascending: false });
-    for (const r of resumes ?? []) {
-      if (!r.sheet_job_id || latest.has(r.sheet_job_id)) continue;
-      latest.set(r.sheet_job_id, {
+  const ids = (jobs ?? []).map((j) => j.id);
+  const resumes = new Map<string, BoardJob["resume"]>();
+  const applications = new Map<string, BoardJob["applications"]>();
+  if (ids.length) {
+    const [{ data: resumeRows }, { data: applicationRows }] = await Promise.all([
+      profile
+        ? db
+            .from("resume_job")
+            .select("id, job_id, status, valid, error, application_id, started_at, created_at")
+            .eq("profile_id", profile.id)
+            .in("job_id", ids)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [] as never[] }),
+      db.from("application").select("id, job_id, no, no_part, status, profile_id").in("job_id", ids).order("no_part"),
+    ]);
+    for (const r of resumeRows ?? []) {
+      if (resumes.has(r.job_id)) continue;
+      resumes.set(r.job_id, {
         id: r.id,
         status: r.status,
         valid: r.valid,
         error: r.error,
         tracked: Boolean(r.application_id),
-        startedAt: r.started_at ?? r.created_at,
       });
+    }
+    for (const a of applicationRows ?? []) {
+      if (!a.job_id) continue;
+      const list = applications.get(a.job_id) ?? [];
+      list.push({ no: applicationNo(a.no, a.no_part), status: a.status, mine: a.profile_id === profile?.id });
+      applications.set(a.job_id, list);
     }
   }
 
   return (
-    <JobSheet
-      sheet={sheet}
+    <JobsBoard
       profiles={profiles.map((p) => ({ id: p.id, name: p.full_name }))}
       profileId={profile?.id ?? null}
-      jobs={[...(sheetJobs ?? [])].sort(byJobNo).map((j) => ({
+      openJobId={typeof params.job === "string" ? params.job : null}
+      jobs={(jobs ?? []).map((j) => ({
         id: j.id,
-        no: j.job_no,
+        no: jobNo(j.no),
         title: j.title,
         company: j.company,
         url: j.url,
-        resume: latest.get(j.id) ?? null,
+        archived: Boolean(j.archived_at),
+        createdAt: j.created_at,
+        resume: resumes.get(j.id) ?? null,
+        applications: applications.get(j.id) ?? [],
       }))}
     />
   );

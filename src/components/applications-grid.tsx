@@ -41,6 +41,7 @@ import {
   ResizableTitle,
 } from "@/components/grid/resizable-title";
 import { useColumnWidths } from "@/lib/column-widths";
+import { applicationNo, parseRecordNo } from "@/lib/numbers";
 import { applyOverlay, resolveOverlay, type Overlay } from "@/lib/overlay";
 import { usePersistentState } from "@/lib/persistent-state";
 import { createClient } from "@/lib/supabase/client";
@@ -60,7 +61,8 @@ import {
 export type Row = ApplicationRow;
 
 /** The draft owns no author or archive state — neither is yours to type. */
-type Draft = Omit<Row, "id" | "created_by" | "archived_at">;
+/** What the entry row and an edit carry. The number and job are the database's. */
+type Draft = Omit<Row, "id" | "created_by" | "archived_at" | "no" | "no_part" | "job_id">;
 
 /** Which half of the tracker the grid is showing. */
 type ViewMode = "active" | "archived";
@@ -122,12 +124,14 @@ const cooldownEnds = (appliedAt: string) =>
 
 /** Column order. The entry row below renders one cell per key, in this order. */
 const COLUMN_KEYS = [
+  "no",
   "title",
   "company",
   "profile",
   "applier",
   "job_url",
   "status",
+  "interviews",
   "billing",
   "resume",
   "applied_at",
@@ -139,6 +143,7 @@ const COLUMN_KEYS = [
 const ARCHIVED_AT_KEY = "archived_at";
 
 const DEFAULT_WIDTHS: Record<string, number> = {
+  no: 92,
   title: 200,
   company: 160,
   profile: 160,
@@ -257,8 +262,16 @@ export function ApplicationsGrid({
       (r) => (r.archived_at !== null) === (view === "archived"),
     );
     if (!q) return inView;
+    // "A007", "a7" and "7" all find A007 (and A007-2); text searches role and company.
+    const number = parseRecordNo(q);
     return inView.filter(
-      (r) => r.title.toLowerCase().includes(q) || r.company.toLowerCase().includes(q),
+      (r) =>
+        (number !== null &&
+          number.kind !== "J" &&
+          r.no === number.no &&
+          (number.part === null || r.no_part === number.part)) ||
+        r.title.toLowerCase().includes(q) ||
+        r.company.toLowerCase().includes(q),
     );
   }, [liveRows, query, view]);
 
@@ -571,6 +584,17 @@ export function ApplicationsGrid({
 
   const baseColumns: ColumnsType<Row> = [
     {
+      key: "no",
+      title: "No.",
+      dataIndex: "no",
+      sorter: (a, b) => a.no - b.no || a.no_part - b.no_part,
+      render: (_value: number, row) => (
+        <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
+          {applicationNo(row.no, row.no_part)}
+        </span>
+      ),
+    },
+    {
       key: "title",
       title: "Role",
       dataIndex: "title",
@@ -727,8 +751,10 @@ export function ApplicationsGrid({
         const editing = editingId === row.id;
         return (
           <ResumeCell
-                        name={editing ? (editBuffer?.resume_name ?? null) : row.resume_name}
+            name={editing ? (editBuffer?.resume_name ?? null) : row.resume_name}
             url={editing ? (editBuffer?.resume_url ?? null) : row.resume_url}
+            // A row you can't change can't take a file either; the policies would refuse it.
+            readOnly={!canAct(row)}
             onAttached={(file) =>
               editing ? patchEdit(file) : quickPatch(row.id, file)
             }
@@ -918,6 +944,13 @@ export function ApplicationsGrid({
 
   /** One cell per column key, in COLUMN_KEYS order. */
   const entryCells: Record<(typeof COLUMN_KEYS)[number], React.ReactNode> = {
+    // Numbered by the database when the row is added.
+    no: (
+      <Typography.Text type="secondary" style={{ paddingInline: 11, fontSize: 12 }}>
+        New
+      </Typography.Text>
+    ),
+    interviews: <Typography.Text type="secondary" style={{ paddingInline: 11 }}>—</Typography.Text>,
     title: (
       <Input
         variant="borderless"
@@ -987,7 +1020,7 @@ export function ApplicationsGrid({
     ),
     resume: (
       <ResumeCell
-                name={draft.resume_name}
+        name={draft.resume_name}
         url={draft.resume_url}
         // Held in the draft rather than written straight away: there is no row
         // yet for it to attach to, so it lands with the insert.
@@ -1057,7 +1090,7 @@ export function ApplicationsGrid({
           />
           <Input.Search
             allowClear
-            placeholder="Filter by role or company"
+            placeholder="A007, role or company"
             style={{ width: 260 }}
             onChange={(e) => {
               setQuery(e.target.value);

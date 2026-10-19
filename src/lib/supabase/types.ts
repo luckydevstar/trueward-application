@@ -155,6 +155,11 @@ export type ApplicationRow = Owned &
     applied_at: string;
     /** Null while active. A timestamp takes it off the working list. */
     archived_at: string | null;
+    /** A007-2 is no 7, part 2 — assigned by the database, see lib/numbers.ts. */
+    no: number;
+    no_part: number;
+    /** The job it was made from; its description lives there. */
+    job_id: string | null;
   };
 
 /** The one row of resume-generation settings — see 01_tables.sql. */
@@ -196,10 +201,8 @@ export type ResumeJobRow = {
   team_id: string;
   created_by: string;
   status: "queued" | "running" | "ready" | "failed";
-  job_description: string;
-  company: string | null;
-  job_title: string | null;
-  job_url: string | null;
+  /** The job it was made for, which holds the description, title, company and URL. */
+  job_id: string;
   content: unknown;
   valid: boolean | null;
   error: string | null;
@@ -207,8 +210,6 @@ export type ResumeJobRow = {
   cost_usd: number | null;
   latency_ms: number | null;
   application_id: string | null;
-  /** The job-sheet row it was made for, when it came from a batch. */
-  sheet_job_id: string | null;
   /** The style its PDF is rendered in on the server; null means Banner. */
   template: string | null;
   style: ResumeStyle | null;
@@ -218,28 +219,19 @@ export type ResumeJobRow = {
   finished_at: string | null;
 };
 
-/** A person's Google Sheet of jobs. */
-export type JobSheetRow = {
-  created_by: string;
-  url: string;
-  spreadsheet_id: string;
-  gid: string;
-  last_synced_at: string | null;
-  last_error: string | null;
-  created_at: string;
-};
-
-/** One row of it: a job to apply for. */
-export type SheetJobRow = {
+/** A posting someone applies to — the only copy of its description. */
+export type JobRow = {
   id: string;
-  created_by: string;
-  job_no: string;
+  /** J007 is 7 — assigned by the database, shared with applications. */
+  no: number;
+  created_by: string | null;
   title: string;
   company: string | null;
   url: string | null;
   description: string;
-  in_sheet: boolean;
-  synced_at: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 /** One generation, written by the server for the per-model averages. */
@@ -299,7 +291,11 @@ type Defaulted =
   | "cached_tokens"
   | "reasoning_tokens"
   | "output"
-  | "attempts";
+  | "attempts"
+  // Numbers the database assigns.
+  | "no"
+  | "no_part"
+  | "job_id";
 
 type Insert<T> = Omit<T, Defaulted & keyof T> &
   Partial<Pick<T, Defaulted & keyof T>>;
@@ -325,13 +321,12 @@ export type Database = {
       generation_setting: Table<GenerationSettingRow>;
       generation_prompt: Table<GenerationPromptRow>;
       resume_generation: Table<ResumeGenerationRow>;
-      job_sheet: Table<JobSheetRow, Pick<JobSheetRow, "created_by" | "url" | "spreadsheet_id"> & Partial<JobSheetRow>>;
-      sheet_job: Table<SheetJobRow, Pick<SheetJobRow, "created_by" | "job_no" | "title" | "description"> & Partial<SheetJobRow>>;
+      job: Table<JobRow, Pick<JobRow, "created_by" | "title" | "description"> & Partial<JobRow>>;
       resume_queue_setting: Table<{ id: boolean; endpoint: string; last_run_at: string | null }>;
       resume_job: Table<
         ResumeJobRow,
-        Pick<ResumeJobRow, "profile_id" | "team_id" | "created_by" | "job_description"> &
-          Partial<Omit<ResumeJobRow, "profile_id" | "team_id" | "created_by" | "job_description">>
+        Pick<ResumeJobRow, "profile_id" | "team_id" | "created_by" | "job_id"> &
+          Partial<Omit<ResumeJobRow, "profile_id" | "team_id" | "created_by" | "job_id">>
       >;
     };
     Views: {

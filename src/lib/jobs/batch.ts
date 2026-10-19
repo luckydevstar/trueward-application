@@ -12,7 +12,7 @@ import type { Actor } from "@/lib/roles";
 import type { Db } from "@/lib/supabase/request";
 import type { ResumeJobRow, ResumeStyle } from "@/lib/supabase/types";
 
-/** The most one batch may hold — a whole sheet, but not a runaway one. */
+/** The most one batch may hold — a day's list, but not a runaway one. */
 export const MAX_BATCH = 50;
 
 export type BatchResult =
@@ -27,7 +27,7 @@ function cleanStyle(style: ResumeStyle | null | undefined): ResumeStyle | null {
 }
 
 /**
- * Generates a resume for each chosen job-sheet row, for one profile.
+ * Generates a resume for each chosen job, for one profile.
  *
  * Up to MAX_RUNNING_JOBS run at once per person: as many as are free start
  * now, in `after()`; the rest wait as `queued` for the queue runner, which
@@ -42,14 +42,14 @@ export async function startBatch(
   actor: Actor,
   input: {
     profileId: string;
-    sheetJobIds: string[];
+    jobIds: string[];
     template?: string | null;
     style?: ResumeStyle | null;
     regenerate?: boolean;
   },
 ): Promise<BatchResult> {
   if (!openRouterConfigured()) return { ok: false, error: "Generation is off: OPENROUTER_API_KEY is not set." };
-  const ids = [...new Set(input.sheetJobIds)];
+  const ids = [...new Set(input.jobIds)];
   if (!ids.length) return { ok: false, error: "Choose the jobs to generate for." };
   if (ids.length > MAX_BATCH) return { ok: false, error: `Up to ${MAX_BATCH} jobs at a time.` };
 
@@ -64,20 +64,21 @@ export async function startBatch(
     return { ok: false, error: "This profile doesn't satisfy the schema; fix it on the Profiles page first." };
   }
 
-  const { data: sheetJobs } = await db.from("sheet_job").select("*").in("id", ids);
-  const rows = sheetJobs ?? [];
-  if (!rows.length) return { ok: false, error: "Those jobs aren't in your sheet any more — sync it again." };
+  // Your own jobs only: the policies would refuse a generation for anyone else's.
+  const { data: jobRows } = await db.from("job").select("id").in("id", ids).eq("created_by", actor.id);
+  const rows = jobRows ?? [];
+  if (!rows.length) return { ok: false, error: "Those jobs aren't on your list any more." };
 
   // Already generated, or on its way, for this profile: not again unless asked.
   let todo = rows;
   if (!input.regenerate) {
     const { data: existing } = await db
       .from("resume_job")
-      .select("sheet_job_id")
+      .select("job_id")
       .eq("profile_id", profile.id)
-      .in("sheet_job_id", rows.map((r) => r.id))
+      .in("job_id", rows.map((r) => r.id))
       .in("status", ["queued", "running", "ready"]);
-    const done = new Set((existing ?? []).map((e) => e.sheet_job_id));
+    const done = new Set((existing ?? []).map((e) => e.job_id));
     todo = rows.filter((r) => !done.has(r.id));
   }
   const skipped = rows.length - todo.length;
@@ -115,11 +116,7 @@ export async function startBatch(
         profile_id: profile.id,
         team_id: profile.team_id,
         created_by: actor.id,
-        job_description: row.description,
-        company: row.company,
-        job_title: row.title,
-        job_url: row.url,
-        sheet_job_id: row.id,
+        job_id: row.id,
         template,
         style,
         status: index < free ? ("running" as const) : ("queued" as const),

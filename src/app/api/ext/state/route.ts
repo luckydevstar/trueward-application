@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { UNAUTHORIZED } from "@/lib/ext-http";
+import { applicationNo, jobNo } from "@/lib/numbers";
 import { TEMPLATES } from "@/lib/pdf/templates";
 import { assignedProfileIds } from "@/lib/profile-scope";
 import { canSelfAssign } from "@/lib/scope";
@@ -9,18 +10,14 @@ import { requestActor } from "@/lib/supabase/request";
 const CONTACT =
   "id, full_name, email, phone, address, city, state, postal_code, country, birthday, github_url, linkedin_url";
 
-/** Numeric job numbers in number order, anything else after them as text. */
-const byJobNo = (a: { job_no: string }, b: { job_no: string }) => {
-  const x = Number(a.job_no);
-  const y = Number(b.job_no);
-  if (Number.isFinite(x) && Number.isFinite(y)) return x - y;
-  return a.job_no.localeCompare(b.job_no, undefined, { numeric: true });
-};
+/** The newest jobs the panel lists; older ones are on the Jobs page. */
+const JOB_LIMIT = 300;
 
 /**
  * Everything the extension's panel shows, in one round trip: who is signed
- * in, the profiles they can work, the chosen one's contact details, their job
- * sheet, and where each job's resume stands for that profile.
+ * in, the profiles they can work, the chosen one's contact details, their
+ * jobs, and for each job where its resume and application stand for that
+ * profile.
  *
  * Profiles are the ones the person may *work* — a bidder's assigned ones, a
  * subadmin's team, a super admin's own assignments. Never the SSN.
@@ -31,10 +28,15 @@ export async function GET(request: Request) {
   const { db, actor } = ctx;
   const wanted = new URL(request.url).searchParams.get("profileId");
 
-  const [{ data: allProfiles }, { data: sheet }, { data: sheetJobs }] = await Promise.all([
+  const [{ data: allProfiles }, { data: jobs }] = await Promise.all([
     db.from("candidate_profile").select(CONTACT).order("full_name"),
-    db.from("job_sheet").select("url, last_synced_at, last_error").maybeSingle(),
-    db.from("sheet_job").select("id, job_no, title, company, url").eq("in_sheet", true),
+    db
+      .from("job")
+      .select("id, no, title, company, url")
+      .eq("created_by", actor.id)
+      .is("archived_at", null)
+      .order("no", { ascending: false })
+      .limit(JOB_LIMIT),
   ]);
 
   let profiles = allProfiles ?? [];
@@ -44,23 +46,35 @@ export async function GET(request: Request) {
   }
   const profile = profiles.find((p) => p.id === wanted) ?? profiles[0] ?? null;
 
-  const latest = new Map<string, { id: string; status: string; valid: boolean | null; error: string | null; tracked: boolean }>();
-  if (profile && sheetJobs?.length) {
-    const { data: resumes } = await db
-      .from("resume_job")
-      .select("id, sheet_job_id, status, valid, error, application_id, created_at")
-      .eq("profile_id", profile.id)
-      .not("sheet_job_id", "is", null)
-      .order("created_at", { ascending: false });
-    for (const r of resumes ?? []) {
-      if (!r.sheet_job_id || latest.has(r.sheet_job_id)) continue;
-      latest.set(r.sheet_job_id, {
+  const resumes = new Map<string, { id: string; status: string; valid: boolean | null; error: string | null; tracked: boolean }>();
+  const applied = new Map<string, { no: string; status: string }>();
+  const jobIds = (jobs ?? []).map((j) => j.id);
+  if (profile && jobIds.length) {
+    const [{ data: resumeRows }, { data: applicationRows }] = await Promise.all([
+      db
+        .from("resume_job")
+        .select("id, job_id, status, valid, error, application_id, created_at")
+        .eq("profile_id", profile.id)
+        .in("job_id", jobIds)
+        .order("created_at", { ascending: false }),
+      db
+        .from("application")
+        .select("job_id, no, no_part, status")
+        .eq("profile_id", profile.id)
+        .in("job_id", jobIds),
+    ]);
+    for (const r of resumeRows ?? []) {
+      if (resumes.has(r.job_id)) continue;
+      resumes.set(r.job_id, {
         id: r.id,
         status: r.status,
         valid: r.valid,
         error: r.error,
         tracked: Boolean(r.application_id),
       });
+    }
+    for (const a of applicationRows ?? []) {
+      if (a.job_id) applied.set(a.job_id, { no: applicationNo(a.no, a.no_part), status: a.status });
     }
   }
 
@@ -83,15 +97,15 @@ export async function GET(request: Request) {
           github: profile.github_url,
         }
       : null,
-    sheet,
     templates: TEMPLATES.map((t) => ({ id: t.id, label: t.label })),
-    jobs: [...(sheetJobs ?? [])].sort(byJobNo).map((j) => ({
+    jobs: (jobs ?? []).map((j) => ({
       id: j.id,
-      no: j.job_no,
+      no: jobNo(j.no),
       title: j.title,
       company: j.company,
       url: j.url,
-      resume: latest.get(j.id) ?? null,
+      resume: resumes.get(j.id) ?? null,
+      application: applied.get(j.id) ?? null,
     })),
   });
 }

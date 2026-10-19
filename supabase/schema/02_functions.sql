@@ -597,6 +597,8 @@ begin
   update profile_assignment set team_id = to_team where team_id = from_team;
   update resume_generation  set team_id = to_team where team_id = from_team;
   update resume_job         set team_id = to_team where team_id = from_team;
+  -- Jobs are a person's, not a team's: the leaving subadmin's own list.
+  update job                set created_by = to_team where created_by = from_team;
 
   update app_user set created_by_id = to_team
    where created_by_id = from_team and role::text = 'bidder';
