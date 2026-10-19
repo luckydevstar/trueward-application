@@ -27,20 +27,23 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import type { TableProps } from "antd";
+import type { InputRef, TableProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useCallback, useMemo, useRef, useState } from "react";
 
+import { ColumnMenu } from "@/components/grid/column-menu";
 import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
 import { InterviewCell, type Interview } from "@/components/interview-cell";
 import { PageHeader } from "@/components/page-header";
 import { ROW_COLUMNS, type ApplicationRow } from "@/lib/application-row";
 import {
+  COLUMN_GRIP_CSS,
   EXACT_WIDTH_CLASS,
   EXACT_WIDTH_CSS,
   ResizableTitle,
 } from "@/components/grid/resizable-title";
+import { useColumnLayout } from "@/lib/column-layout";
 import { useColumnWidths } from "@/lib/column-widths";
 import { applicationNo, parseRecordNo } from "@/lib/numbers";
 import { applyOverlay, resolveOverlay, type Overlay } from "@/lib/overlay";
@@ -127,7 +130,10 @@ const COOLDOWN_MS = COOLDOWN_DAYS * 86_400_000;
 const cooldownEnds = (appliedAt: string) =>
   new Date(new Date(appliedAt).getTime() + COOLDOWN_MS).toISOString();
 
-/** Column order. The entry row below renders one cell per key, in this order. */
+/**
+ * The designed column order. Each browser can rearrange and hide columns
+ * (useColumnLayout); this is where they start, and where Reset returns.
+ */
 const COLUMN_KEYS = [
   "no",
   "title",
@@ -143,6 +149,11 @@ const COLUMN_KEYS = [
   "notes",
   "actions",
 ] as const;
+
+/** Fixed to the right edge, so it neither moves nor hides. */
+const PINNED_KEYS = ["actions"] as const;
+
+const LAYOUT_STORAGE_KEY = "tw.applications.columnLayout";
 
 /** Only ever shown in the archived view, so it is outside COLUMN_KEYS. */
 const ARCHIVED_AT_KEY = "archived_at";
@@ -200,6 +211,8 @@ export function ApplicationsGrid({
 
   const [query, setQuery] = useState(initialQuery);
   const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
+  const layout = useColumnLayout(LAYOUT_STORAGE_KEY, COLUMN_KEYS, PINNED_KEYS);
+  const roleInput = useRef<InputRef>(null);
 
   // Two views over one list, not two lists: everything is already loaded, so
   // switching is a filter rather than a round trip.
@@ -462,9 +475,12 @@ export function ApplicationsGrid({
       return;
     }
     mutate((current) => [created, ...current]);
-    // Cleared rather than left filled: the row's whole point is being ready for
-    // the next entry.
-    setDraft(emptyDraft());
+    // Cleared rather than left filled — the bar's whole point is being ready
+    // for the next entry — except the profile: the next one is usually for the
+    // same candidate.
+    setDraft({ ...emptyDraft(), profile_id: draft.profile_id });
+    message.success(`Added as ${applicationNo(created.no, created.no_part)}.`);
+    roleInput.current?.focus();
   };
 
   const saveEdit = async () => {
@@ -905,6 +921,17 @@ export function ApplicationsGrid({
     },
   ];
 
+  // Every column's definition, before arranging, for the Columns menu's labels.
+  const allColumns = [...baseColumns];
+
+  // In this browser's order, without the columns it has hidden.
+  const byKey = new Map(baseColumns.map((col) => [String(col.key), col]));
+  const arranged = layout.order
+    .filter((key) => !layout.hidden.has(key))
+    .map((key) => byKey.get(key))
+    .filter((col): col is (typeof baseColumns)[number] => Boolean(col));
+  baseColumns.splice(0, baseColumns.length, ...arranged);
+
   // Only meaningful once a row has been archived, so it is spliced in for that
   // view rather than sitting empty in the other one.
   if (view === "archived") {
@@ -920,6 +947,8 @@ export function ApplicationsGrid({
 
   // Width lives outside the column definitions so a resize doesn't rebuild
   // every renderer, and so the persisted map stays the single source.
+  const movable = (key: string) =>
+    COLUMN_KEYS.includes(key as (typeof COLUMN_KEYS)[number]) && !PINNED_KEYS.includes(key as "actions");
   const columns = baseColumns.map((col) => {
     const key = String(col.key);
     return {
@@ -929,9 +958,20 @@ export function ApplicationsGrid({
         width: widths[key] ?? DEFAULT_WIDTHS[key],
         onResize: (_e: unknown, { size }: { size: { width: number } }) =>
           setWidth(key, size.width),
+        // Dragged by the grip on its left; the menu above does the same by keyboard.
+        ...(movable(key) ? { columnKey: key, onMoveColumn: layout.move } : {}),
       }),
     };
   }) as ColumnsType<Row>;
+
+  /** The Columns menu's list: every movable column, in order, titled as in the header. */
+  const COLUMN_LABEL: Record<string, string> = { no: "No.", applier: "Applied by", job_url: "Job URL", applied_at: "Applied" };
+  const menuColumns = layout.order
+    .filter((key) => movable(key))
+    .map((key) => {
+      const title = allColumns.find((c) => String(c.key) === key)?.title;
+      return { key, label: COLUMN_LABEL[key] ?? (typeof title === "string" ? title : key) };
+    });
 
   // Selection column included: it is a real column in the layout, and leaving
   // it out would make the table that many pixels narrower than its contents.
@@ -964,121 +1004,137 @@ export function ApplicationsGrid({
   };
 
   /** One cell per column key, in COLUMN_KEYS order. */
-  const entryCells: Record<(typeof COLUMN_KEYS)[number], React.ReactNode> = {
-    // Numbered by the database when the row is added.
-    no: (
-      <Typography.Text type="secondary" style={{ paddingInline: 11, fontSize: 12 }}>
-        New
-      </Typography.Text>
-    ),
-    interviews: <Typography.Text type="secondary" style={{ paddingInline: 11 }}>—</Typography.Text>,
-    title: (
-      <Input
-        variant="borderless"
-        placeholder="Senior Frontend Engineer"
-        value={draft.title}
-        onChange={(e) => patchDraft({ title: e.target.value })}
-        onPressEnter={addDraft}
-      />
-    ),
-    company: (
-      <Input
-        variant="borderless"
-        placeholder="Acme Inc."
-        // Both reasons a company can be refused surface here as you type,
-        // rather than waiting for the row to be rejected on submit.
-        status={
-          (draft.company && blocked.has(normalizeCompany(draft.company))) ||
-          draftClash
-            ? "error"
-            : undefined
-        }
-        value={draft.company}
-        onChange={(e) => patchDraft({ company: e.target.value })}
-        onPressEnter={addDraft}
-      />
-    ),
-    profile: (
-      <Select
-        variant="borderless"
-        placeholder="Profile"
-        style={{ width: "100%" }}
-        value={draft.profile_id ?? undefined}
-        onChange={(profile_id) => patchDraft({ profile_id })}
-        options={workProfiles.map((p) => ({ value: p.id, label: p.label }))}
-        status={draftClash ? "error" : undefined}
-      />
-    ),
-    // Authorship is stamped from the session on insert, so there is nothing to
-    // choose here — showing who it will be is more honest than a blank cell.
-    applier: (
-      <Typography.Text type="secondary" style={{ paddingLeft: 8 }}>
-        {applierName.get(userId) ?? "You"}
-      </Typography.Text>
-    ),
-    job_url: (
-      <Input
-        variant="borderless"
-        placeholder="https://…"
-        value={draft.job_url}
-        onChange={(e) => patchDraft({ job_url: e.target.value })}
-        onPressEnter={addDraft}
-      />
-    ),
-    status: (
-      <StatusSelect
-        value={draft.status}
-        onChange={(status) => patchDraft({ status })}
-      />
-    ),
-    billing: (
-      <BillingSelect
-        value={draft.billing}
-        disabled={!isAdmin}
-        reason="Only an admin can set billing" 
-        onChange={(billing) => patchDraft({ billing })}
-      />
-    ),
-    resume: (
-      <ResumeCell
-        name={draft.resume_name}
-        url={draft.resume_url}
-        // Held in the draft rather than written straight away: there is no row
-        // yet for it to attach to, so it lands with the insert.
-        onAttached={(file) => patchDraft(file)}
-      />
-    ),
-    applied_at: (
-      <DatePicker
-        variant="borderless"
-        value={dayjs(draft.applied_at)}
-        allowClear={false}
-        style={{ width: "100%" }}
-        onChange={(d) => d && patchDraft({ applied_at: d.toISOString() })}
-      />
-    ),
-    notes: (
-      <Input
-        variant="borderless"
-        placeholder="Notes"
-        value={draft.notes ?? ""}
-        onChange={(e) => patchDraft({ notes: e.target.value })}
-        onPressEnter={addDraft}
-      />
-    ),
-    actions: (
-      <Tooltip title="Add this row — or press Enter in any field">
-        <Button
-          type="primary"
-          size="small"
-          aria-label="Add this application"
-          icon={<PlusOutlined />}
-          loading={adding}
-          onClick={addDraft}
+  /**
+   * The add bar's fields. A bar above the table rather than a row inside it:
+   * the grid is wider than most windows, and a row that scrolls sideways with
+   * it put half its fields out of reach in a narrow one. This wraps instead,
+   * at any width, in any column order.
+   */
+  const addFields: Array<{ key: string; label: string; flex: string; node: React.ReactNode }> = [
+    {
+      key: "title",
+      label: "Role",
+      flex: "2 1 200px",
+      node: (
+        <Input
+          ref={roleInput}
+          placeholder="Senior Frontend Engineer"
+          value={draft.title}
+          onChange={(e) => patchDraft({ title: e.target.value })}
+          onPressEnter={addDraft}
         />
-      </Tooltip>
-    ),
-  };
+      ),
+    },
+    {
+      key: "company",
+      label: "Company",
+      flex: "1.5 1 160px",
+      node: (
+        <Input
+          placeholder="Acme Inc."
+          // Both reasons a company can be refused surface here as you type,
+          // rather than waiting for the row to be rejected on submit.
+          status={
+            (draft.company && blocked.has(normalizeCompany(draft.company))) || draftClash ? "error" : undefined
+          }
+          value={draft.company}
+          onChange={(e) => patchDraft({ company: e.target.value })}
+          onPressEnter={addDraft}
+        />
+      ),
+    },
+    {
+      key: "job_url",
+      label: "Job URL",
+      flex: "2 1 200px",
+      node: (
+        <Input
+          placeholder="https://…"
+          value={draft.job_url}
+          onChange={(e) => patchDraft({ job_url: e.target.value })}
+          onPressEnter={addDraft}
+        />
+      ),
+    },
+    {
+      key: "profile",
+      label: "Profile",
+      flex: "1.5 1 170px",
+      node: (
+        <Select
+          placeholder="Profile"
+          showSearch
+          optionFilterProp="label"
+          style={{ width: "100%" }}
+          value={draft.profile_id ?? undefined}
+          onChange={(profile_id) => patchDraft({ profile_id })}
+          options={workProfiles.map((p) => ({ value: p.id, label: p.label }))}
+          status={draftClash ? "error" : undefined}
+        />
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      flex: "0 1 150px",
+      node: <StatusSelect variant="outlined" value={draft.status} onChange={(status) => patchDraft({ status })} />,
+    },
+    // Billing is an admin's call, so a bidder isn't shown a control they can't use.
+    ...(isAdmin
+      ? [
+          {
+            key: "billing",
+            label: "Billing",
+            flex: "0 1 140px",
+            node: (
+              <BillingSelect variant="outlined" value={draft.billing} onChange={(billing) => patchDraft({ billing })} />
+            ),
+          },
+        ]
+      : []),
+    {
+      key: "applied_at",
+      label: "Applied",
+      flex: "0 1 150px",
+      node: (
+        <DatePicker
+          value={dayjs(draft.applied_at)}
+          allowClear={false}
+          style={{ width: "100%" }}
+          onChange={(d) => d && patchDraft({ applied_at: d.toISOString() })}
+        />
+      ),
+    },
+    {
+      key: "resume",
+      label: "Resume",
+      flex: "1 1 150px",
+      node: (
+        <div style={{ height: 32, display: "flex", alignItems: "center", padding: "0 4px 0 11px", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+          <ResumeCell
+            name={draft.resume_name}
+            url={draft.resume_url}
+            // Held in the draft rather than written straight away: there is no row
+            // yet for it to attach to, so it lands with the insert.
+            onAttached={(file) => patchDraft(file)}
+          />
+        </div>
+      ),
+    },
+    {
+      key: "notes",
+      label: "Notes",
+      flex: "2 1 180px",
+      node: (
+        <Input
+          placeholder="Optional"
+          value={draft.notes ?? ""}
+          onChange={(e) => patchDraft({ notes: e.target.value })}
+          onPressEnter={addDraft}
+        />
+      ),
+    },
+  ];
 
   return (
     <>
@@ -1088,7 +1144,7 @@ export function ApplicationsGrid({
           readOnly
             ? "Every team's applications. Assign a profile to yourself on the Profiles page to record your own."
             : view === "active"
-              ? "Type into the top row to add a record. Drag any column edge to resize; double-click a row to edit it."
+              ? "Add a record with the bar above the table. Drag a column by its grip to move it, by its edge to resize; double-click a row to edit it."
               : "Archived records are read-only. Restore one to edit it again."
         }
         extra={
@@ -1100,6 +1156,14 @@ export function ApplicationsGrid({
                 { value: "active", label: `Active (${liveRows.length - archivedCount})` },
                 { value: "archived", label: `Archived (${archivedCount})` },
               ]}
+            />
+            <ColumnMenu
+              columns={menuColumns}
+              hidden={layout.hidden}
+              onToggle={layout.toggle}
+              onShift={layout.shift}
+              onReset={layout.reset}
+              customised={layout.customised}
             />
             <Input.Search
               allowClear
@@ -1210,6 +1274,25 @@ export function ApplicationsGrid({
       )}
 
       <Card styles={{ body: { padding: 0 } }}>
+        {/* Nothing to add to an archive, and nothing to add without a team —
+            which is why a super admin with no profile of their own gets no bar. */}
+        {!readOnly && view === "active" && (
+          <div className="tw-add-bar">
+            {addFields.map((field) => (
+              <label key={field.key} style={{ flex: field.flex, minWidth: 0 }}>
+                <span className="tw-add-label">{field.label}</span>
+                {field.node}
+              </label>
+            ))}
+            <div style={{ flex: "0 0 auto", display: "flex", alignItems: "flex-end" }}>
+              <Tooltip title="Or press Enter in any text field">
+                <Button type="primary" icon={<PlusOutlined />} loading={adding} onClick={addDraft}>
+                  Add
+                </Button>
+              </Tooltip>
+            </div>
+          </div>
+        )}
         <Table<Row>
           rowKey="id"
           size="small"
@@ -1301,33 +1384,11 @@ export function ApplicationsGrid({
           columns={columns}
           // fixed="top" pins the entry row above the body and outside sorting,
           // filtering and pagination — it stays put whatever the table is doing.
-          summary={
-            // Nothing to add to an archive, so the entry row belongs to the
-            // active view only — nor anything to add without a team, which is
-            // why a super admin gets no entry row either.
-            readOnly || view === "archived"
-              ? undefined
-              : () => (
-                  <Table.Summary fixed="top">
-                    <Table.Summary.Row className="tw-entry-row">
-                      {/* Stands in for the checkbox column, which rowSelection
-                          adds to the body but not to the summary — without it
-                          every cell below sits one column to the left. */}
-                      <Table.Summary.Cell index={0} />
-                      {COLUMN_KEYS.map((key, index) => (
-                        <Table.Summary.Cell key={key} index={index + 1}>
-                          {entryCells[key]}
-                        </Table.Summary.Cell>
-                      ))}
-                    </Table.Summary.Row>
-                  </Table.Summary>
-                )
-          }
           locale={{
             emptyText:
               view === "archived"
                 ? "Nothing archived."
-                : "No applications yet — the row above is ready for one.",
+                : "No applications yet — add the first with the bar above.",
           }}
         />
       </Card>
@@ -1335,11 +1396,18 @@ export function ApplicationsGrid({
       <style>{`
         ${MARQUEE_CSS}
         ${EXACT_WIDTH_CSS}
-        .tw-entry-row > td {
-          background: #f0f5ff;
-          border-bottom: 2px solid #d6e4ff !important;
-          padding: 2px 4px !important;
+        ${COLUMN_GRIP_CSS}
+        .tw-add-bar {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px 12px;
+          padding: 14px 16px;
+          background: #f5f7ff;
+          border-bottom: 1px solid #e0e7ff;
+          border-radius: 8px 8px 0 0;
         }
+        .tw-add-bar > label { display: flex; flex-direction: column; gap: 3px; }
+        .tw-add-label { font-size: 11px; font-weight: 500; color: #64748b; }
         .react-resizable-handle { touch-action: none; }
       `}</style>
     </>
@@ -1354,15 +1422,18 @@ function StatusSelect({
   value,
   disabled,
   onChange,
+  variant = "borderless",
 }: {
   value: ApplicationStatus;
   disabled?: boolean;
   onChange: (value: ApplicationStatus) => void;
+  /** Borderless in a grid cell; outlined in the add bar, where it's a form field. */
+  variant?: "borderless" | "outlined";
 }) {
   return (
     <Select
       value={value}
-      variant="borderless"
+      variant={variant}
       disabled={disabled}
       style={{ width: "100%" }}
       onChange={onChange}
@@ -1379,17 +1450,19 @@ function BillingSelect({
   disabled,
   reason,
   onChange,
+  variant = "borderless",
 }: {
   value: BillingStatus;
   disabled?: boolean;
   /** Why it's disabled. A greyed control with no explanation just reads broken. */
   reason?: string;
   onChange: (value: BillingStatus) => void;
+  variant?: "borderless" | "outlined";
 }) {
   const select = (
     <Select
       value={value}
-      variant="borderless"
+      variant={variant}
       disabled={disabled}
       style={{ width: "100%" }}
       onChange={onChange}

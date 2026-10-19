@@ -359,7 +359,7 @@ leaves them to the subadmin.
 
 The super admin can also assign a profile **to themselves** (Profiles →
 “Assigned to me”), in any team. It then opens in their resume builder and
-Applications entry row like a bidder's. The subadmin sees a “Super admin” tag
+Applications add bar like a bidder's. The subadmin sees a “Super admin” tag
 on it but cannot remove it — that assignment is the super admin's to give up.
 Handing the profile to another subadmin keeps it; the bidders' assignments are
 dropped as before.
@@ -389,6 +389,20 @@ relative to each other and ignored absolutely, which looks exactly like the
 first bug the moment you narrow enough columns. `EXACT_WIDTH_CLASS` in
 `src/components/grid/resizable-title.tsx` overrides it, so a column dragged to
 120px is 120px and the leftover space stays leftover space.
+
+**Order and visibility** persist the same way (`useColumnLayout` in
+`src/lib/column-layout.ts`): drag a header by the grip on its left, or use the
+**Columns** menu — tick to show or hide, arrows to move, Reset to go back. The
+grip is the only thing that starts a move, so clicking a title still sorts and
+dragging its edge still resizes. A column added later appears after its
+designed neighbour even in a rearranged layout. Hiding what you don't need is
+also how the grid fits a half-width window.
+
+**Adding an application** is a bar above the grid, not a row inside it. The
+grid is wider than most windows, and a row that scrolled sideways with it put
+half its fields out of reach in a narrow one; the bar wraps at any width and
+doesn't care about column order. It keeps the profile after each add — the
+next one is usually for the same candidate — and Enter in any text field adds.
 
 Overflowing text then stays on one line and truncates, and **hovering a cell
 scrolls it** so the hidden part can still be read — `Marquee`, in

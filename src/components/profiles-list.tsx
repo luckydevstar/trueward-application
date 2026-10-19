@@ -25,13 +25,16 @@ import {
   replaceProfileAssignees,
   setSelfAssignment,
 } from "@/app/dashboard/profiles/actions";
+import { ColumnMenu } from "@/components/grid/column-menu";
 import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
 import {
   EXACT_WIDTH_CLASS,
+  COLUMN_GRIP_CSS,
   EXACT_WIDTH_CSS,
   ResizableTitle,
 } from "@/components/grid/resizable-title";
 import { PageHeader } from "@/components/page-header";
+import { useColumnLayout } from "@/lib/column-layout";
 import { useColumnWidths } from "@/lib/column-widths";
 import { usePersistentState } from "@/lib/persistent-state";
 import { formatDate } from "@/lib/status";
@@ -77,6 +80,14 @@ type Props = {
 };
 
 const WIDTH_STORAGE_KEY = "tw.profiles.columnWidths";
+const LAYOUT_STORAGE_KEY = "tw.profiles.columnLayout";
+
+/**
+ * Every column the list can have, in its designed order — some only for some
+ * roles. Each browser can rearrange and hide them; actions stays at the edge.
+ */
+const COLUMN_KEYS = ["full_name", "email", "phone", "location", "team", "mine", "assignees", "updated_at", "actions"] as const;
+const PINNED_KEYS = ["actions"] as const;
 const PAGE_SIZE_STORAGE_KEY = "tw.profiles.pageSize";
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -109,6 +120,7 @@ export function ProfilesList({
   const { message, modal } = App.useApp();
   const [query, setQuery] = useState("");
   const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
+  const layout = useColumnLayout(LAYOUT_STORAGE_KEY, COLUMN_KEYS, PINNED_KEYS);
   const [pageSize, setPageSize] = usePersistentState<number>(
     PAGE_SIZE_STORAGE_KEY,
     DEFAULT_PAGE_SIZE,
@@ -361,18 +373,29 @@ export function ProfilesList({
     },
   ];
 
-  const columns = baseColumns.map((col) => {
-    const key = String(col.key);
-    return {
-      ...col,
-      width: widths[key] ?? DEFAULT_WIDTHS[key],
-      onHeaderCell: () => ({
+  // In this browser's order, without what it hides — of the columns this role has.
+  const byKey = new Map(baseColumns.map((col) => [String(col.key), col]));
+  const present = layout.order.filter((key) => byKey.has(key));
+  const movable = (key: string) => !PINNED_KEYS.includes(key as "actions");
+  const columns = present
+    .filter((key) => !layout.hidden.has(key))
+    .map((key) => {
+      const col = byKey.get(key)!;
+      return {
+        ...col,
         width: widths[key] ?? DEFAULT_WIDTHS[key],
-        onResize: (_e: unknown, { size }: { size: { width: number } }) =>
-          setWidth(key, size.width),
-      }),
-    };
-  }) as ColumnsType<ProfileRow>;
+        onHeaderCell: () => ({
+          width: widths[key] ?? DEFAULT_WIDTHS[key],
+          onResize: (_e: unknown, { size }: { size: { width: number } }) =>
+            setWidth(key, size.width),
+          ...(movable(key) ? { columnKey: key, onMoveColumn: layout.move } : {}),
+        }),
+      };
+    }) as ColumnsType<ProfileRow>;
+  const menuColumns = present.filter(movable).map((key) => {
+    const title = byKey.get(key)?.title;
+    return { key, label: typeof title === "string" && title ? title : key };
+  });
 
   const totalWidth = columns.reduce(
     (sum, col) => sum + (Number(col.width) || 0),
@@ -386,6 +409,14 @@ export function ProfilesList({
         description="The stable half of a resume — identity, employers, dates. Nothing here is rewritten when you tailor for a job."
         extra={
           <>
+            <ColumnMenu
+              columns={menuColumns}
+              hidden={layout.hidden}
+              onToggle={layout.toggle}
+              onShift={layout.shift}
+              onReset={layout.reset}
+              customised={layout.customised}
+            />
             <Input.Search
               allowClear
               placeholder="Filter by name or email"
@@ -446,7 +477,7 @@ export function ProfilesList({
         />
       </Card>
 
-      <style>{`${MARQUEE_CSS}${EXACT_WIDTH_CSS}`}</style>
+      <style>{`${MARQUEE_CSS}${EXACT_WIDTH_CSS}${COLUMN_GRIP_CSS}`}</style>
 
     </>
   );
