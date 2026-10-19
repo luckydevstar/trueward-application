@@ -52,6 +52,10 @@ alter table generation_setting enable row level security;
 alter table resume_generation  enable row level security;
 alter table generation_prompt  enable row level security;
 alter table resume_job         enable row level security;
+alter table job_sheet          enable row level security;
+alter table sheet_job          enable row level security;
+alter table resume_queue_setting enable row level security;
+alter table resume_queue_secret  enable row level security;
 
 -- --- app_user -------------------------------------------------------------
 
@@ -402,6 +406,29 @@ create policy resume_job_update on resume_job
 drop policy if exists resume_job_delete on resume_job;
 create policy resume_job_delete on resume_job
   for delete using (created_by = auth.uid());
+
+-- --- job_sheet / sheet_job -----------------------------------------------
+-- A person's own job list. Nobody else reads it — not their subadmin, not the
+-- super admin: what matters to the team is the resumes and applications made
+-- from it, which carry their own policies.
+
+drop policy if exists job_sheet_own on job_sheet;
+create policy job_sheet_own on job_sheet
+  for all using (created_by = auth.uid()) with check (created_by = auth.uid());
+
+drop policy if exists sheet_job_own on sheet_job;
+create policy sheet_job_own on sheet_job
+  for all using (created_by = auth.uid()) with check (created_by = auth.uid());
+
+-- --- resume queue ----------------------------------------------------------
+-- The super admin may see and move the runner's endpoint; the secret has no
+-- policy at all, so only the functions in part 2 and pg_cron read it.
+
+drop policy if exists resume_queue_setting_super on resume_queue_setting;
+create policy resume_queue_setting_super on resume_queue_setting
+  for all to authenticated using (is_super_admin()) with check (is_super_admin());
+
+revoke all on resume_queue_secret from anon, authenticated;
 
 -- ===========================================================================
 -- Retired with the resume_builder role. Dropped here rather than in part 2

@@ -124,6 +124,14 @@ the main column is still on page one.
 `npm run render:fixture` runs the same code under Node and writes one PDF per
 template, so a layout change can be checked without clicking through the UI.
 
+**One server path:** the Chrome extension's **Download & track** has no
+browser page to draw in, so `src/lib/pdf/server.ts` runs the same renderer in
+the function, reading the embedded fonts from `public/fonts/` on disk. Those
+files reach the function only because `next.config.ts` lists the two routes
+that render (`/api/ext/apply`, `/api/resume-jobs/[id]/pdf`) in
+`outputFileTracingIncludes` — a new route that renders must be added there.
+It is still jsPDF, not a browser: no binary, no cold boot worth the name.
+
 ### Templates
 
 `src/lib/pdf/templates.ts` holds the specs. A template is a set of structural
@@ -580,6 +588,68 @@ your own still works.
   and DeepSeek cache a repeated prefix themselves. Cached input costs about a
   tenth.
 
+### Job sheet and the queue
+
+`/dashboard/jobs` — a Google Sheet of jobs, with a resume generated for each.
+The sheet is shared *Anyone with the link → Viewer*; its first row names the
+columns **No**, **Title**, **Company**, **URL** and **JD** (the matching is
+loose — "Job title", "Link", "Job description" work too). **Sync** reads its
+CSV export (`src/lib/sheets.ts`) into `sheet_job`, keyed by the sheet's job
+number, so a row keeps its resumes when the sheet is re-sorted; a row deleted
+from the sheet is kept as `in_sheet = false` rather than lost. Each person
+connects their own sheet (`job_sheet`), and sees only their own jobs.
+
+Tick jobs, pick the profile and template, and **Generate**: one
+`resume_job` per job, linked by `sheet_job_id` and rendered later in the
+template and style chosen (the builder's remembered style). As many as the
+6-at-once limit allows start immediately in `after()`; the rest are
+`queued`. Rows already generated for that profile are skipped unless
+**Regenerate** is ticked, and the hourly cap counts the waiting ones too.
+
+The queue needs no worker. pg_cron runs `resume_queue_tick()` every minute;
+while something is waiting, it fails anything stuck past six minutes and
+calls `/api/cron/resume-jobs` (address in `resume_queue_setting`) with a
+secret only the database holds (`resume_queue_secret`, readable by no API
+role). The route hands the secret straight back to `resume_queue_claim()`,
+which checks it and moves the next jobs to `running` — fairly, at most six
+per person and twelve in all — and runs them. A wrong secret claims nothing,
+which is why the route sits outside the gate and sign-in. A builder run and
+a batch share the same table and the same limit; the builder's Generations
+list shows batch rows with their sheet number.
+
+### Chrome extension
+
+[trueward-extension](https://github.com/luckydevstar/trueward-extension) is a
+side panel for applying: pick a profile and copy its contact details, pick a
+job from the sheet (its posting opens), **Download & track** its resume,
+and answer screening questions. The Job sheet page serves the zip from
+`public/trueward-extension.zip`; the extension's own build copies a new one
+there.
+
+It talks to `/api/ext/*`. Those routes sit outside the cookie sign-in in
+`src/proxy.ts` and authenticate themselves: the extension signs in with the
+person's password (`/api/ext/login` proxies Supabase's password grant) and
+sends the access token as a bearer token, and `src/lib/supabase/request.ts`
+turns it into a Supabase client *as that person* — so RLS decides exactly as
+it does on the site. Nothing there uses the service role except what the site
+uses it for too: the generation log and the upload. Contact details go to
+the panel, never to a model, and never the SSN.
+
+**Download & track** records the application first (the cooldown and the
+blocklist can refuse it, and the panel says why), then renders the PDF on the
+server, uploads it to UploadThing and attaches it to the new row — the same
+outcome as the builder's button. A job already tracked returns its file.
+
+### Interviews
+
+Interviews are calendar events. An event in
+[trueward-calendar](https://github.com/luckydevstar/trueward-calendar) can be
+linked to an application and given an outcome — scheduled, passed, failed,
+cancelled. The **Interviews** column in Applications lists each
+application's events from `application_interviews()` (in the calendar's
+schema, which reads the application under this app's own rules); the
+event's creator and the super admin can change the outcome from there.
+
 ### Usage
 
 `/dashboard/usage` — what generation has cost, and who spent it, from the
@@ -648,6 +718,11 @@ site — not even its sign-in page. `src/proxy.ts` runs the gate
 and server actions get a 403. The super admin approves requests in the
 console, per site.
 
+The Chrome extension can't rely on its requests carrying the site's cookies,
+so it reads this browser's `tw_device` cookie and sends it as the
+`x-trueward-device` header, which the gate accepts in its place — the same
+device, approved the same way.
+
 `src/lib/gate.ts` and `src/app/access/` are identical copies in the
 application and the calendar — change both. The schema and the reasoning
 behind it are in trueward-auth's README. Off unless `GATE_ENABLED=true`; the
@@ -656,8 +731,13 @@ other variables are in `.env.example`.
 ## Deploying
 
 Vercel, free tier, no special configuration — which is the whole point. There is
-no browser binary to trace, no `serverExternalPackages`, and no `maxDuration` to
-raise.
+no browser binary to trace and no `serverExternalPackages`. Background
+generation runs in the functions it started from, inside their 300-second
+`maxDuration`.
+
+The queue runner's address is `resume_queue_setting.endpoint`, set to the
+production URL by schema part 1. A preview or a local copy calling the same
+database would never be called — the queue only drains on production.
 
 Set the environment variables from `.env.example` in the project settings, and
 turn off public sign-up in Supabase Auth (see *The first account*).

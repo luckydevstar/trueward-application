@@ -26,6 +26,13 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 
 export const DEVICE_COOKIE = "tw_device";
+/**
+ * The same token in a header, for the Chrome extension: its requests can't be
+ * relied on to carry the site's cookies, so it reads this browser's device
+ * cookie (chrome.cookies) and sends it here. Same secret, same check — an
+ * extension in a browser nobody approved is refused like the browser itself.
+ */
+export const DEVICE_HEADER = "x-trueward-device";
 const PASS_COOKIE = "tw_gate";
 const PASS_SECONDS = 60;
 /** Chrome's ceiling for a cookie's lifetime; it slides on every fresh check. */
@@ -212,7 +219,7 @@ export async function runGate(request: NextRequest, open: (pathname: string) => 
     return response;
   };
 
-  let token = request.cookies.get(DEVICE_COOKIE)?.value;
+  let token = request.cookies.get(DEVICE_COOKIE)?.value ?? request.headers.get(DEVICE_HEADER) ?? undefined;
   const minted = !validToken(token);
   if (!validToken(token)) {
     token = newToken();

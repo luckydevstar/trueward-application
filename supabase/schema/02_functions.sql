@@ -678,3 +678,162 @@ begin
   end loop;
 end
 $$;
+
+-- ===========================================================================
+-- The resume queue
+--
+-- A batch of generations runs six at a time per person. The first six start
+-- the moment the batch is made; the rest wait as `queued`, and every minute
+-- pg_cron runs resume_queue_tick(), which — only while something is waiting
+-- — calls the app's /api/cron/resume-jobs with the secret below. That route
+-- hands the secret back to resume_queue_claim() for the next jobs to run.
+-- ===========================================================================
+
+create or replace function public.resume_queue_secret_ok(p_secret text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    length(p_secret) >= 32
+      and p_secret = (select secret from resume_queue_secret where id),
+    false
+  )
+$$;
+
+/**
+ * Moves waiting jobs to running and returns their ids: oldest first, never
+ * more than `p_per_user` running for one person (counting what already runs),
+ * and `p_total` in all. Two runners at once can't take the same job — the
+ * update re-checks `queued` under its row lock. Empty for a wrong secret.
+ */
+create or replace function public.resume_queue_claim(
+  p_secret   text,
+  p_per_user integer default 6,
+  p_total    integer default 12
+)
+returns setof uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not resume_queue_secret_ok(p_secret) then
+    return;
+  end if;
+
+  update resume_queue_setting set last_run_at = now() where id;
+
+  return query
+  with running as (
+    select created_by, count(*) as n
+      from resume_job
+     where status = 'running'
+       and coalesce(started_at, created_at) > now() - interval '6 minutes'
+     group by created_by
+  ),
+  waiting as (
+    select j.id, j.created_by,
+           row_number() over (partition by j.created_by order by j.created_at) as place
+      from resume_job j
+     where j.status = 'queued'
+  ),
+  picked as (
+    select w.id
+      from waiting w
+      left join running r on r.created_by = w.created_by
+     where w.place <= p_per_user - coalesce(r.n, 0)
+     order by w.place
+     limit p_total
+  )
+  update resume_job j
+     set status = 'running', started_at = now(), updated_at = now()
+    from picked
+   where j.id = picked.id and j.status = 'queued'
+  returning j.id;
+end;
+$$;
+
+/**
+ * What pg_cron runs every minute. Fails jobs that ran past the function's
+ * time limit (so they stop counting against anyone's six), then — only if
+ * something is waiting — calls the runner. pg_net is called dynamically, so
+ * this file still applies where it isn't installed.
+ */
+create or replace function public.resume_queue_tick()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_endpoint text;
+  v_secret text;
+begin
+  update resume_job
+     set status = 'failed',
+         error = 'Timed out — retry it.',
+         finished_at = now(),
+         updated_at = now()
+   where status = 'running'
+     and coalesce(started_at, created_at) < now() - interval '6 minutes';
+
+  if not exists (select 1 from resume_job where status = 'queued') then
+    return;
+  end if;
+
+  select endpoint into v_endpoint from resume_queue_setting where id;
+  select secret into v_secret from resume_queue_secret where id;
+  begin
+    execute 'select net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 20000)'
+      using v_endpoint,
+            '{}'::jsonb,
+            jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_secret);
+  exception when others then
+    -- No pg_net (a test cluster): the queue simply waits.
+    null;
+  end;
+end;
+$$;
+
+do $$
+declare
+  fn text;
+begin
+  foreach fn in array array[
+    'public.resume_queue_secret_ok(text)',
+    'public.resume_queue_claim(text, integer, integer)',
+    'public.resume_queue_tick()'
+  ] loop
+    execute format('revoke all on function %s from public', fn);
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+      execute format('revoke all on function %s from anon', fn);
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+      execute format('revoke all on function %s from authenticated', fn);
+    end if;
+  end loop;
+  -- The runner calls the claim with the anon key; the secret is the check.
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'grant execute on function public.resume_queue_claim(text, integer, integer) to anon';
+  end if;
+end
+$$;
+
+-- Every minute, on Supabase (pg_cron + pg_net). Never fatal: if it can't be
+-- scheduled here, enable both under Database → Extensions and run this part
+-- again.
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_cron')
+     and exists (select 1 from pg_available_extensions where name = 'pg_net') then
+    create extension if not exists pg_net;
+    create extension if not exists pg_cron;
+    perform cron.schedule('resume-queue', '* * * * *', 'select public.resume_queue_tick()');
+  end if;
+exception when others then
+  raise notice 'Could not schedule the resume queue (%). Enable pg_cron and pg_net, then run this part again.', sqlerrm;
+end
+$$;

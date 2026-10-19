@@ -1710,3 +1710,78 @@ with gone as (
 )
 select 'its creator removes it' as check, count(*) = 1 as expect_true from gone;
 reset role;
+
+\echo ''
+\echo '=== 23. job sheets are their owner''s, and the queue runs six at a time ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+insert into job_sheet (created_by, url, spreadsheet_id)
+values (auth.uid(), 'https://docs.google.com/spreadsheets/d/abc/edit', 'abc');
+insert into sheet_job (id, created_by, job_no, title, company, url, description)
+values ('00000000-0000-0000-0000-00000000ac01', auth.uid(), '1', 'Backend Engineer', 'Acme',
+        'https://acme.example/jobs/1', 'Build APIs in Go.');
+select 'a bidder keeps their own job sheet' as check, count(*) = 1 as expect_true from sheet_job;
+
+-- Eight jobs from the sheet, waiting.
+insert into resume_job (profile_id, team_id, created_by, job_description, status, sheet_job_id)
+select '00000000-0000-0000-0000-0000000000f0', app_team_id(), auth.uid(), 'JD ' || n, 'queued',
+       '00000000-0000-0000-0000-00000000ac01'
+  from generate_series(1, 8) as n;
+select 'a batch waits as queued' as check, count(*) = 8 as expect_true
+  from resume_job where status = 'queued' and created_by = auth.uid();
+
+set test.uid = '00000000-0000-0000-0000-0000000000b2';
+select 'a teammate sees none of it' as check,
+       (select count(*) from sheet_job) = 0 and (select count(*) from job_sheet) = 0 as expect_true;
+do $$
+begin
+  insert into sheet_job (created_by, job_no, title, description)
+  values ('00000000-0000-0000-0000-0000000000b1', '2', 'Forged', 'x');
+  raise exception 'FAIL: a job was written into someone else''s sheet';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: a sheet is written by its owner only';
+end $$;
+reset role;
+
+select secret as queue_secret from resume_queue_secret \gset
+set role anon;
+select 'a wrong secret claims nothing' as check,
+       (select count(*) from resume_queue_claim('not-the-secret-not-the-secret-not-the-secret')) = 0 as expect_true;
+select 'the runner takes six of one person''s eight' as check,
+       (select count(*) from resume_queue_claim(:'queue_secret')) = 6 as expect_true;
+select 'and none more while those six run' as check,
+       (select count(*) from resume_queue_claim(:'queue_secret')) = 0 as expect_true;
+do $$
+begin
+  perform resume_queue_tick();
+  raise exception 'FAIL: anon ran the queue tick';
+exception
+  when insufficient_privilege then
+    raise notice 'PASS: only the scheduler runs the queue tick';
+end $$;
+reset role;
+
+select 'claimed jobs are running, with a start time' as check,
+       count(*) = 6 as expect_true
+  from resume_job where status = 'running' and started_at is not null
+   and created_by = '00000000-0000-0000-0000-0000000000b1';
+
+-- Two of them ran past the limit: the tick fails them, freeing two places.
+update resume_job set started_at = now() - interval '10 minutes'
+ where id in (select id from resume_job where status = 'running'
+               and created_by = '00000000-0000-0000-0000-0000000000b1' limit 2);
+select resume_queue_tick();
+select 'the tick fails jobs that timed out' as check, count(*) = 2 as expect_true
+  from resume_job where status = 'failed' and error like 'Timed out%'
+   and created_by = '00000000-0000-0000-0000-0000000000b1';
+set role anon;
+select 'which lets the last two waiting run' as check,
+       (select count(*) from resume_queue_claim(:'queue_secret')) = 2 as expect_true;
+reset role;
+
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000a1';
+with changed as (update resume_queue_setting set endpoint = 'https://evil.example/' returning 1)
+select 'a subadmin cannot move the runner''s endpoint' as check, count(*) = 0 as expect_true from changed;
+reset role;

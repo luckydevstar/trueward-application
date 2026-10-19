@@ -195,7 +195,7 @@ export type ResumeJobRow = {
   profile_id: string;
   team_id: string;
   created_by: string;
-  status: "running" | "ready" | "failed";
+  status: "queued" | "running" | "ready" | "failed";
   job_description: string;
   company: string | null;
   job_title: string | null;
@@ -207,9 +207,39 @@ export type ResumeJobRow = {
   cost_usd: number | null;
   latency_ms: number | null;
   application_id: string | null;
+  /** The job-sheet row it was made for, when it came from a batch. */
+  sheet_job_id: string | null;
+  /** The style its PDF is rendered in on the server; null means Banner. */
+  template: string | null;
+  style: ResumeStyle | null;
+  started_at: string | null;
   created_at: string;
   updated_at: string;
   finished_at: string | null;
+};
+
+/** A person's Google Sheet of jobs. */
+export type JobSheetRow = {
+  created_by: string;
+  url: string;
+  spreadsheet_id: string;
+  gid: string;
+  last_synced_at: string | null;
+  last_error: string | null;
+  created_at: string;
+};
+
+/** One row of it: a job to apply for. */
+export type SheetJobRow = {
+  id: string;
+  created_by: string;
+  job_no: string;
+  title: string;
+  company: string | null;
+  url: string | null;
+  description: string;
+  in_sheet: boolean;
+  synced_at: string;
 };
 
 /** One generation, written by the server for the per-model averages. */
@@ -295,6 +325,9 @@ export type Database = {
       generation_setting: Table<GenerationSettingRow>;
       generation_prompt: Table<GenerationPromptRow>;
       resume_generation: Table<ResumeGenerationRow>;
+      job_sheet: Table<JobSheetRow, Pick<JobSheetRow, "created_by" | "url" | "spreadsheet_id"> & Partial<JobSheetRow>>;
+      sheet_job: Table<SheetJobRow, Pick<SheetJobRow, "created_by" | "job_no" | "title" | "description"> & Partial<SheetJobRow>>;
+      resume_queue_setting: Table<{ id: boolean; endpoint: string; last_run_at: string | null }>;
       resume_job: Table<
         ResumeJobRow,
         Pick<ResumeJobRow, "profile_id" | "team_id" | "created_by" | "job_description"> &

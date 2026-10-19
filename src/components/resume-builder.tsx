@@ -2,6 +2,7 @@
 
 import {
   CheckCircleFilled,
+  ClockCircleOutlined,
   CloseCircleFilled,
   CloseOutlined,
   CodeOutlined,
@@ -127,8 +128,13 @@ type Props = {
    * Your background generations, newest first. Null when the database has no
    * resume_job table yet — Generate then runs in the request, as it used to.
    */
-  jobs?: ResumeJobRow[] | null;
+  jobs?: BuilderJob[] | null;
+  /** A generation to open on arrival — the Job sheet's "Open" link. */
+  openJob?: string | null;
 };
+
+/** A generation as the builder lists it: with its job-sheet number, when it came from one. */
+export type BuilderJob = ResumeJobRow & { sheet_job?: { job_no: string } | null };
 
 type Answer = { question: string; answer: string; costUsd: number | null; latencyMs: number };
 
@@ -194,6 +200,7 @@ export function ResumeBuilder({
   readOnly,
   generation,
   jobs: initialJobs = null,
+  openJob: openOnArrival = null,
 }: Props) {
   const router = useRouter();
   const { message, modal } = App.useApp();
@@ -216,15 +223,21 @@ export function ResumeBuilder({
    * are saved back to its row.
    */
   const jobsEnabled = initialJobs !== null;
-  const [jobs, setJobs] = useState<ResumeJobRow[]>(initialJobs ?? []);
-  const [openJobId, setOpenJobId] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<BuilderJob[]>(initialJobs ?? []);
+  // Arriving with ?job=…: that generation is open from the first render.
+  const [initialOpen] = useState(() =>
+    (initialJobs ?? []).find(
+      (j) => j.id === openOnArrival && j.status === "ready" && profiles.some((p) => p.id === j.profile_id && p.profile),
+    ) ?? null,
+  );
+  const [openJobId, setOpenJobId] = useState<string | null>(initialOpen?.id ?? null);
   /** Ticks while something runs: elapsed times, and when a row has timed out. */
   const [now, setNow] = useState(0);
 
   // Step 4: where this resume is going, so downloading it also tracks it.
-  const [company, setCompany] = useState("");
-  const [jobTitle, setJobTitle] = useState("");
-  const [jobUrl, setJobUrl] = useState("");
+  const [company, setCompany] = useState(initialOpen?.company ?? "");
+  const [jobTitle, setJobTitle] = useState(initialOpen?.job_title ?? "");
+  const [jobUrl, setJobUrl] = useState(initialOpen?.job_url ?? "");
   const [tracking, setTracking] = useState(false);
   const { startUpload } = useUploadThing("applicationResume");
 
@@ -242,14 +255,19 @@ export function ResumeBuilder({
   // A real profile wins when one exists — one you can work, for a super admin
   // — and the demo is the fallback, not the default.
   const [profileId, setProfileId] = useState(
-    (readOnly ? profiles.find((p) => p.workable) : undefined)?.id ??
+    initialOpen?.profile_id ??
+      (readOnly ? profiles.find((p) => p.workable) : undefined)?.id ??
       profiles[0]?.id ??
       EXAMPLE_PROFILE_ID,
   );
   const [documentId, setDocumentId] = useState("");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(() => (initialOpen ? jobLabel(initialOpen, false) : ""));
   const [json, setJson] = useState(() =>
-    profiles.length ? "" : JSON.stringify(EXAMPLE_DOCUMENT.content, null, 2),
+    initialOpen
+      ? JSON.stringify(initialOpen.content, null, 2)
+      : profiles.length
+        ? ""
+        : JSON.stringify(EXAMPLE_DOCUMENT.content, null, 2),
   );
   /**
    * Styling survives navigation.
@@ -623,10 +641,11 @@ export function ResumeBuilder({
   const answers = answersByKey[answerKey] ?? [];
 
   /** A row still "running" after the function's limit was cut off. */
+  /** Counted from when it started running — a batch job may have waited its turn first. */
   const timedOut = (job: ResumeJobRow) =>
-    job.status === "running" && now > 0 && now - Date.parse(job.created_at) > JOB_STALE_MS;
+    job.status === "running" && now > 0 && now - Date.parse(job.started_at ?? job.created_at) > JOB_STALE_MS;
   const runningCount = jobs.filter((j) => j.status === "running" && !timedOut(j)).length;
-  const anyRunning = runningCount > 0;
+  const anyRunning = runningCount > 0 || jobs.some((j) => j.status === "queued");
 
   /** Loads a finished generation into the editor, the preview and Apply. */
   const showJob = (job: ResumeJobRow) => {
@@ -669,15 +688,17 @@ export function ResumeBuilder({
   const refreshJobs = async () => {
     const { data, error } = await createClient()
       .from("resume_job")
-      .select("*")
+      .select("*, sheet_job(job_no)")
       .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
       .order("created_at", { ascending: false })
-      .limit(30);
+      .limit(100);
     if (error || !data) return;
 
+    const pending = (status: string | undefined) => status === "running" || status === "queued";
     const before = new Map(jobs.map((j) => [j.id, j.status]));
-    const finished = data.filter((j) => before.get(j.id) === "running" && j.status !== "running");
-    setJobs(data);
+    const fresh = data as unknown as BuilderJob[];
+    const finished = fresh.filter((j) => pending(before.get(j.id)) && !pending(j.status));
+    setJobs(fresh);
     setNow(Date.now());
 
     for (const job of finished) {
@@ -954,10 +975,20 @@ export function ResumeBuilder({
 
   return (
     <>
+      {/*
+        Pinned under the dashboard's own header, so Save and Download are in
+        reach from anywhere on the page — the steps are long once a resume is
+        open. The page's grey behind it, so content scrolls cleanly beneath.
+      */}
       <Space
         style={{
-          marginBottom: 16,
-          width: "100%",
+          position: "sticky",
+          top: 60,
+          zIndex: 15,
+          margin: "-12px -4px 16px",
+          padding: "12px 4px",
+          background: "#f5f7fb",
+          width: "calc(100% + 8px)",
           justifyContent: "space-between",
         }}
       >
@@ -1139,7 +1170,7 @@ export function ResumeBuilder({
                     <Input.TextArea
                       value={jobDescription}
                       onChange={(e) => setJobDescription(e.target.value)}
-                      autoSize={{ minRows: 8, maxRows: 24 }}
+                      autoSize={{ minRows: 6, maxRows: 14 }}
                       placeholder="Paste the job posting — title, responsibilities, requirements."
                       disabled={isExample}
                     />
@@ -1317,7 +1348,7 @@ export function ResumeBuilder({
               )}
               {json.trim() || source === "paste" ? (
                 <Input.TextArea
-                  autoSize={{ minRows: 12, maxRows: 48 }}
+                  autoSize={{ minRows: 10, maxRows: 22 }}
                   value={json}
                   onChange={(e) => setJson(e.target.value)}
                   placeholder='{ "targetTitle": "…", "summary": "…", "skills": [], "experiences": [] }'
@@ -1773,14 +1804,16 @@ function StepCard({
 }
 
 /** A generation's name: its title — given, or the model's — and company. */
-function jobLabel(job: ResumeJobRow, withCompany = true): string {
+function jobLabel(job: BuilderJob, withCompany = true): string {
   const target =
     job.content && typeof job.content === "object" && "targetTitle" in job.content
       ? String((job.content as { targetTitle: unknown }).targetTitle ?? "")
       : "";
   const firstLine = job.job_description.split("\n").find((l) => l.trim())?.trim().slice(0, 60) ?? "Job";
   const title = job.job_title?.trim() || target.trim() || firstLine;
-  return withCompany && job.company ? `${title} · ${job.company}` : title;
+  // The job-sheet row it came from, so it can be matched to the sheet.
+  const numbered = withCompany && job.sheet_job?.job_no ? `#${job.sheet_job.job_no} ${title}` : title;
+  return withCompany && job.company ? `${numbered} · ${job.company}` : numbered;
 }
 
 /**
@@ -1797,7 +1830,7 @@ function GenerationsList({
   onRetry,
   onDelete,
 }: {
-  jobs: ResumeJobRow[];
+  jobs: BuilderJob[];
   openJobId: string | null;
   now: number;
   timedOut: (job: ResumeJobRow) => boolean;
@@ -1807,16 +1840,22 @@ function GenerationsList({
   onDelete: (job: ResumeJobRow) => void;
 }) {
   return (
-    <div role="list" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    // Its own scroll: a batch of thirty shouldn't push the editor off the page.
+    <div role="list" style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 340, overflowY: "auto" }}>
       {jobs.map((job) => {
         const stale = timedOut(job);
+        const waiting = job.status === "queued";
         const running = job.status === "running" && !stale;
         const failed = job.status === "failed" || stale;
         const ready = job.status === "ready";
         const open = job.id === openJobId;
-        const elapsed = now ? Math.max(0, Math.round((now - Date.parse(job.created_at)) / 1000)) : null;
+        const elapsed = now
+          ? Math.max(0, Math.round((now - Date.parse(job.started_at ?? job.created_at)) / 1000))
+          : null;
 
-        const icon = running ? (
+        const icon = waiting ? (
+          <ClockCircleOutlined style={{ color: "var(--tw-muted, #94a3b8)" }} />
+        ) : running ? (
           <LoadingOutlined style={{ color: "#4f46e5" }} />
         ) : failed ? (
           <CloseCircleFilled style={{ color: "#dc2626" }} />
@@ -1826,7 +1865,9 @@ function GenerationsList({
           <ExclamationCircleFilled style={{ color: "#d97706" }} />
         );
 
-        const detail = running
+        const detail = waiting
+          ? "Waiting its turn"
+          : running
           ? `Generating…${elapsed !== null ? ` ${elapsed}s` : ""}`
           : stale
             ? "Timed out — retry it"

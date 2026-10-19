@@ -532,6 +532,79 @@ create table if not exists resume_job (
 create index if not exists resume_job_owner_idx on resume_job (created_by, created_at desc);
 create index if not exists resume_job_profile_idx on resume_job (profile_id);
 
+-- --------------------------------------------------------------------------
+-- Job sheets — a person's Google Sheet of jobs to apply for
+--
+-- The sheet is the to-do list: one row per job, with columns No, Title,
+-- Company, URL and JD. It is link-shared ("anyone with the link can view") and
+-- read as CSV; each row is copied into sheet_job, keyed by its No, so a
+-- generated resume and a tracked application can name the row they came from.
+-- One sheet per person, and only its owner reads it.
+-- --------------------------------------------------------------------------
+
+create table if not exists job_sheet (
+  created_by     uuid primary key references app_user (id) on delete cascade,
+  url            text not null,
+  spreadsheet_id text not null,
+  gid            text not null default '0',
+  last_synced_at timestamptz,
+  last_error     text,
+  created_at     timestamptz not null default now()
+);
+
+create table if not exists sheet_job (
+  id          uuid primary key default gen_random_uuid(),
+  created_by  uuid not null references app_user (id) on delete cascade,
+  job_no      text not null,
+  title       text not null,
+  company     text,
+  url         text,
+  description text not null,
+  -- False once the row has gone from the sheet; kept, so the resumes and
+  -- applications made from it still say which job they were for.
+  in_sheet    boolean not null default true,
+  synced_at   timestamptz not null default now(),
+  unique (created_by, job_no)
+);
+
+-- Batch generation. A job can now wait its turn (`queued`) — a batch of thirty
+-- runs six at a time, the rest picked up by the queue runner each minute —
+-- and carries the resume style its PDF is rendered in on the server.
+alter table resume_job
+  add column if not exists sheet_job_id uuid references sheet_job (id) on delete set null,
+  add column if not exists template     text,
+  add column if not exists style        jsonb,
+  -- When it actually started running; the timeout counts from here, not from
+  -- when it was queued.
+  add column if not exists started_at   timestamptz;
+
+alter table resume_job drop constraint if exists resume_job_status_check;
+alter table resume_job add constraint resume_job_status_check
+  check (status in ('queued', 'running', 'ready', 'failed'));
+
+create index if not exists resume_job_queue_idx
+  on resume_job (status, created_at) where status in ('queued', 'running');
+create index if not exists resume_job_sheet_idx on resume_job (sheet_job_id);
+
+-- The queue runner: where pg_cron calls each minute, and the secret it proves
+-- itself with. Only the super admin may change the endpoint (a policy in part
+-- 4), so nobody can point the secret somewhere else; nobody at all reads the
+-- secret through the API.
+create table if not exists resume_queue_setting (
+  id          boolean primary key default true check (id),
+  endpoint    text not null default 'https://application.trueward.guru/api/cron/resume-jobs',
+  last_run_at timestamptz
+);
+insert into resume_queue_setting (id) values (true) on conflict (id) do nothing;
+
+create table if not exists resume_queue_secret (
+  id     boolean primary key default true check (id),
+  secret text not null
+);
+insert into resume_queue_secret (id, secret)
+values (true, replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
+on conflict (id) do nothing;
+
 -- ===========================================================================
 -- Retiring resume_builder
 --

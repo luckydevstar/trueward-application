@@ -134,6 +134,13 @@ back. The previous one drifted immediately: template, header position and
 accent were wired to the PDF and silently did nothing on screen, so what you
 styled was not what you downloaded.
 
+**One exception, and it is still the same renderer:** the extension's
+Download & track runs `renderResumePdf` in the function
+(`src/lib/pdf/server.ts`), with fonts read from `public/fonts/` on disk. The
+fonts reach the function only through `outputFileTracingIncludes` in
+`next.config.ts`, keyed by route. A new route that renders a PDF must be added
+there, or it renders with Helvetica in production while working locally.
+
 ## Generation goes through one function
 
 `generateContent()` in `src/lib/ai/generate.ts` is the only caller of
@@ -147,7 +154,23 @@ service role (the log is not the caller's to write).
 so it is bounded by the builder page's `maxDuration` (300s). The per-call
 timeout in `jobs.ts` (two calls at most) must stay inside it, and
 `JOB_STALE_MS` must stay above it — a row still `running` after that is shown
-as timed out and stops counting toward the 6-at-once limit. The input is the
+as timed out and stops counting toward the 6-at-once limit. **Batches** (the job sheet, the extension) insert their `resume_job` rows
+as `queued` beyond the free slots; the queue runner
+(`/api/cron/resume-jobs`, called by pg_cron through `resume_queue_tick()`)
+claims them with `resume_queue_claim()`. The claim is the authorization — it
+checks the database-held secret — so the route needs neither the gate nor a
+session. The six-minute stale cut-off counts from `started_at`, not
+`created_at`: a job can wait an hour in the queue and still get its full run.
+
+**The extension's routes (`/api/ext/*`) are signed in by bearer token,** not
+cookie. Build their client with `requestClient()`/`requestActor()` from
+`src/lib/supabase/request.ts`, never `createClient()` — the cookie client
+would see no session and every query would come back empty rather than
+refused. Shared logic between a server action and an extension route lives in
+`src/lib/jobs/` and takes the client as an argument, so both paths run under
+the caller's own RLS.
+
+The input is the
 person's: their base prompt and additional prompt, plus the profile's
 employments and education — never contact details. `buildMessages()` appends
 only the response contract. Keep it that way: no client-side model calls, and

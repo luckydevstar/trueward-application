@@ -33,6 +33,7 @@ import dayjs from "dayjs";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
+import { InterviewCell, type Interview } from "@/components/interview-cell";
 import { ROW_COLUMNS, type ApplicationRow } from "@/lib/application-row";
 import {
   EXACT_WIDTH_CLASS,
@@ -95,6 +96,10 @@ type Props = {
    * entry row; without any, there is nothing they could record for.
    */
   readOnly?: boolean;
+  /** Interviews linked to each application in Trueward Calendar, by application id. */
+  interviews?: Record<string, Interview[]>;
+  /** The super admin may mark any interview; others, the ones they scheduled. */
+  isSuperAdmin?: boolean;
 };
 
 const WIDTH_STORAGE_KEY = "tw.applications.columnWidths";
@@ -140,6 +145,7 @@ const DEFAULT_WIDTHS: Record<string, number> = {
   applier: 140,
   job_url: 150,
   status: 150,
+  interviews: 150,
   billing: 140,
   resume: 170,
   applied_at: 140,
@@ -174,6 +180,8 @@ export function ApplicationsGrid({
   appliers,
   blockedNames,
   readOnly = false,
+  interviews = {},
+  isSuperAdmin = false,
 }: Props) {
   const { message } = App.useApp();
 
@@ -680,6 +688,13 @@ export function ApplicationsGrid({
               : quickPatch(row.id, { status: next })
           }
         />
+      ),
+    },
+    {
+      key: "interviews",
+      title: "Interviews",
+      render: (_value, row) => (
+        <InterviewCell interviews={interviews[row.id] ?? []} userId={userId} isSuperAdmin={isSuperAdmin} />
       ),
     },
     {

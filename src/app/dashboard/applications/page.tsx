@@ -1,6 +1,7 @@
 import { Alert } from "antd";
 
 import { ApplicationsGrid } from "@/components/applications-grid";
+import type { Interview } from "@/components/interview-cell";
 import { requireActor } from "@/lib/actor";
 import { ROW_COLUMNS, type ApplicationRow as Row } from "@/lib/application-row";
 import { fetchAll } from "@/lib/fetch-all";
@@ -38,7 +39,7 @@ export default async function ApplicationsPage() {
    * a second copy of those rules, free to drift from them.
    */
   const everyTeam = seesAllTeams(actor);
-  const [applications, profiles, members, blocked, mine] = await Promise.all([
+  const [applications, profiles, members, blocked, mine, interviews] = await Promise.all([
     /*
      * Paged, because PostgREST caps a response at 1,000 rows and says nothing
      * about it. Without this the grid showed the newest 1,000 applications
@@ -62,7 +63,16 @@ export default async function ApplicationsPage() {
     supabase.from("blocked_company").select("normalized_name"),
     // A super admin records only for the profiles assigned to themselves.
     everyTeam ? assignedProfileIds(supabase, actor.id) : Promise.resolve(null),
+    // Interviews from Trueward Calendar, for the applications this person can
+    // see — a function, because bidders can't read the calendar itself.
+    // Empty until the calendar's schema has been run.
+    supabase.rpc("application_interviews" as never),
   ]);
+
+  const byApplication: Record<string, Interview[]> = {};
+  for (const i of ((interviews.data ?? []) as Interview[])) {
+    (byApplication[i.application_id] ??= []).push(i);
+  }
 
   const rows = applications.rows;
 
@@ -76,6 +86,8 @@ export default async function ApplicationsPage() {
       userId={actor.id}
       isAdmin={isAdminRole(actor.role)}
       canChangeAny={managesTeam(actor.role)}
+      interviews={byApplication}
+      isSuperAdmin={actor.role === "super_admin"}
       rows={rows}
       profiles={(profiles.data ?? []).map((p) => ({
         id: p.id,

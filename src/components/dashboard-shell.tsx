@@ -8,6 +8,7 @@ import {
   IdcardOutlined,
   LogoutOutlined,
   ProfileOutlined,
+  TableOutlined,
   TeamOutlined,
   UserOutlined,
 } from "@ant-design/icons";
@@ -52,6 +53,11 @@ export function DashboardShell({ name, email, role, children }: Props) {
       key: "/dashboard/resumes",
       icon: <FileTextOutlined />,
       label: <Link href="/dashboard/resumes">Resume builder</Link>,
+    },
+    {
+      key: "/dashboard/jobs",
+      icon: <TableOutlined />,
+      label: <Link href="/dashboard/jobs">Job sheet</Link>,
     },
     {
       key: "/dashboard/blocklist",

@@ -1,4 +1,4 @@
-import { ResumeBuilder } from "@/components/resume-builder";
+import { ResumeBuilder, type BuilderJob } from "@/components/resume-builder";
 import { requireActor } from "@/lib/actor";
 import { openRouterConfigured } from "@/lib/ai/openrouter";
 import { profileSchema } from "@/lib/document/schema";
@@ -20,7 +20,7 @@ export const maxDuration = 300;
 
 /** How far back the builder lists your generations. */
 const JOB_DAYS = 7;
-const JOB_LIMIT = 30;
+const JOB_LIMIT = 100;
 
 /** Start of the job window. Out of the component: it reads the clock. */
 function jobWindowStart(): string {
@@ -36,8 +36,9 @@ function generation() {
   return { enabled: openRouterConfigured() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY) };
 }
 
-export default async function ResumesPage() {
+export default async function ResumesPage({ searchParams }: PageProps<"/dashboard/resumes">) {
   const actor = await requireActor();
+  const params = await searchParams;
   const supabase = await createClient();
 
   /*
@@ -109,7 +110,7 @@ export default async function ResumesPage() {
     // Your own background generations; RLS returns nobody else's.
     supabase
       .from("resume_job")
-      .select("*")
+      .select("*, sheet_job(job_no)")
       .gte("created_at", jobWindowStart())
       .order("created_at", { ascending: false })
       .limit(JOB_LIMIT),
@@ -151,7 +152,8 @@ export default async function ResumesPage() {
       generation={ai}
       // Null when the table isn't there yet (schema part 1 not re-run): the
       // builder then generates in the request, as it used to.
-      jobs={jobs.error ? null : (jobs.data ?? [])}
+      jobs={jobs.error ? null : ((jobs.data ?? []) as unknown as BuilderJob[])}
+      openJob={typeof params.job === "string" ? params.job : null}
     />
   );
 }

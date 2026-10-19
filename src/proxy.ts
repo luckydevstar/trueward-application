@@ -9,7 +9,22 @@ import { runGate } from "@/lib/gate";
  * and authorizes uploads itself.
  */
 const GATE_OPEN = (pathname: string) =>
-  pathname === "/access" || pathname.startsWith("/api/uploadthing");
+  pathname === "/access" || pathname.startsWith("/api/uploadthing") || pathname === QUEUE_RUNNER;
+
+/**
+ * The resume queue runner, which pg_cron calls each minute with a secret only
+ * the database holds. No browser is behind it, so it skips the gate and
+ * sign-in alike; a wrong secret claims nothing.
+ */
+const QUEUE_RUNNER = "/api/cron/resume-jobs";
+
+/**
+ * Routes that check who is signed in themselves, for the Chrome extension
+ * (bearer token) as well as the app (cookies). They answer 401 rather than
+ * being redirected to /login — but stay behind the device gate.
+ */
+const SELF_AUTHENTICATED = (pathname: string) =>
+  pathname.startsWith("/api/ext/") || pathname.startsWith("/api/resume-jobs/");
 
 /**
  * Runs before every matched request. First the device gate (src/lib/gate.ts):
@@ -75,7 +90,11 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isPublic =
-    pathname === "/login" || pathname.startsWith("/auth") || pathname === "/access";
+    pathname === "/login" ||
+    pathname.startsWith("/auth") ||
+    pathname === "/access" ||
+    pathname === QUEUE_RUNNER ||
+    SELF_AUTHENTICATED(pathname);
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
