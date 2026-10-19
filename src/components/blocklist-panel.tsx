@@ -20,7 +20,7 @@ import { PageHeader } from "@/components/page-header";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate, normalizeCompany } from "@/lib/status";
 
-type Row = { id: string; name: string; created_at: string };
+type Row = { id: string; name: string; created_at: string; /** Whose team, for the super admin. */ team?: string | null };
 
 type CoolingRow = {
   profile_id: string;
@@ -36,6 +36,8 @@ type Props = {
   canEdit: boolean;
   rows: Row[];
   cooling: CoolingRow[];
+  /** The super admin sees every team's list, so each row says whose. */
+  showTeam?: boolean;
 };
 
 /** Whole days from now until `when`, floored at zero. */
@@ -50,11 +52,21 @@ export function BlocklistPanel({
   canEdit,
   rows,
   cooling,
+  showTeam = false,
 }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const q = normalizeCompany(query);
+  const shownRows = q ? rows.filter((r) => normalizeCompany(r.name).includes(q)) : rows;
+  const shownCooling = q
+    ? cooling.filter(
+        (c) => normalizeCompany(c.company).includes(q) || c.profile_name.toLowerCase().includes(query.trim().toLowerCase()),
+      )
+    : cooling;
 
   const add = async () => {
     const trimmed = name.trim();
@@ -82,6 +94,7 @@ export function BlocklistPanel({
       return;
     }
     setName("");
+    message.success(`${trimmed} is blocked.`);
     router.refresh();
   };
 
@@ -92,6 +105,7 @@ export function BlocklistPanel({
       message.error(error.message);
       return;
     }
+    message.success("Unblocked.");
     router.refresh();
   };
 
@@ -100,6 +114,14 @@ export function BlocklistPanel({
       <PageHeader
         title="Blocklist"
         description="Companies not to apply to — for good, or for a while after the last application."
+        extra={
+          <Input.Search
+            allowClear
+            placeholder="Find a company or profile"
+            style={{ width: 260, maxWidth: "100%" }}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        }
       />
 
       <Card styles={{ body: { paddingTop: 8 } }}>
@@ -144,15 +166,25 @@ export function BlocklistPanel({
                   <Table<Row>
                     rowKey="id"
                     size="small"
-                    dataSource={rows}
+                    dataSource={shownRows}
                     pagination={{ pageSize: 25, hideOnSinglePage: true }}
-                    locale={{ emptyText: "Nothing blocked." }}
+                    locale={{ emptyText: query ? "Nothing matches that." : "Nothing blocked." }}
                     columns={[
                       {
                         title: "Company",
                         dataIndex: "name",
                         sorter: (a, b) => a.name.localeCompare(b.name),
                       },
+                      ...(showTeam
+                        ? [
+                            {
+                              title: "Team",
+                              dataIndex: "team",
+                              width: 200,
+                              render: (team: string | null) => team ?? "—",
+                            },
+                          ]
+                        : []),
                       {
                         title: "Blocked",
                         dataIndex: "created_at",
@@ -206,7 +238,7 @@ export function BlocklistPanel({
                   <Table<CoolingRow>
                     rowKey={(row) => `${row.profile_id}-${row.company}`}
                     size="small"
-                    dataSource={cooling}
+                    dataSource={shownCooling}
                     pagination={{ pageSize: 25, hideOnSinglePage: true }}
                     locale={{
                       emptyText: "No company is cooling off right now.",
