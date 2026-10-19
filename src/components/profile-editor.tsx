@@ -223,8 +223,9 @@ export function ProfileForm({
 
         <Divider titlePlacement="start">Employment</Divider>
         <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-          Each entry needs a stable id. Resume content references employers by
-          that id, which is what stops a generated resume from inventing one.
+          Each employer keeps a stable id — made from its company and start
+          year if you leave it blank. Resume content refers to employers by it,
+          which is what stops a generated resume from inventing one.
         </Typography.Paragraph>
         <Form.List name="employments">
           {(fields, { add, remove }) => (
@@ -244,16 +245,16 @@ export function ProfileForm({
                       <Form.Item
                         name={[field.name, "id"]}
                         label="Id"
-                        rules={[{ required: true, message: "Id" }]}
+                        tooltip="Optional. Left blank, it's made from the company and start year, e.g. acme-2021."
                       >
-                        <Input placeholder="acme-2021" />
+                        <Input placeholder="automatic" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={10}>
                       <Form.Item
                         name={[field.name, "company"]}
                         label="Company"
-                        rules={[{ required: true, message: "Company" }]}
+                        rules={[{ required: true, message: "Enter the company" }]}
                       >
                         <Input />
                       </Form.Item>
@@ -267,6 +268,7 @@ export function ProfileForm({
                       <Button
                         type="text"
                         danger
+                        aria-label="Remove this employer"
                         icon={<DeleteOutlined />}
                         onClick={() => remove(field.name)}
                         style={{ marginTop: 30 }}
@@ -276,7 +278,7 @@ export function ProfileForm({
                       <Form.Item
                         name={[field.name, "startDate"]}
                         label="Start"
-                        rules={[{ required: true, message: "Start date" }]}
+                        rules={[{ required: true, message: "Pick when it started" }]}
                       >
                         {/*
                           Month precision, because that is all a resume shows.
@@ -345,7 +347,7 @@ export function ProfileForm({
                       <Form.Item
                         name={[field.name, "school"]}
                         label="School"
-                        rules={[{ required: true, message: "School" }]}
+                        rules={[{ required: true, message: "Enter the school" }]}
                       >
                         <Input />
                       </Form.Item>
@@ -354,7 +356,7 @@ export function ProfileForm({
                       <Form.Item
                         name={[field.name, "degree"]}
                         label="Degree"
-                        rules={[{ required: true, message: "Degree" }]}
+                        rules={[{ required: true, message: "Enter the degree" }]}
                       >
                         <Input placeholder="BSc Computer Science" />
                       </Form.Item>
@@ -368,6 +370,7 @@ export function ProfileForm({
                       <Button
                         type="text"
                         danger
+                        aria-label="Remove this education"
                         icon={<DeleteOutlined />}
                         onClick={() => remove(field.name)}
                         style={{ marginTop: 30 }}
@@ -467,7 +470,7 @@ function SsnField({
         extra={
           hasSsn
             ? "One is on file. Leave blank to keep it; type a new one to replace it."
-            : "Stored encrypted. Only admins can reveal it, and every reveal is logged."
+            : "Stored encrypted. Only the team's subadmin can reveal it, and every reveal is logged."
         }
         rules={[
           {

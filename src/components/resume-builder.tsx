@@ -9,6 +9,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  EyeOutlined,
   ExclamationCircleFilled,
   LoadingOutlined,
   RedoOutlined,
@@ -134,6 +135,8 @@ type Props = {
   openJob?: string | null;
   /** Your jobs, newest first, to generate for one without pasting it again. */
   savedJobs?: SavedJob[];
+  /** The profile to start on — a profile page's "Build resume". */
+  initialProfile?: string | null;
 };
 
 /** The job a generation was made for — its description, title, company and link live there. */
@@ -220,6 +223,7 @@ export function ResumeBuilder({
   jobs: initialJobs = null,
   openJob: openOnArrival = null,
   savedJobs = [],
+  initialProfile = null,
 }: Props) {
   const router = useRouter();
   const { message, modal } = App.useApp();
@@ -277,6 +281,7 @@ export function ResumeBuilder({
   // — and the demo is the fallback, not the default.
   const [profileId, setProfileId] = useState(
     initialOpen?.profile_id ??
+      profiles.find((p) => p.id === initialProfile)?.id ??
       (readOnly ? profiles.find((p) => p.workable) : undefined)?.id ??
       profiles[0]?.id ??
       EXAMPLE_PROFILE_ID,
@@ -1008,7 +1013,7 @@ export function ResumeBuilder({
         reach from anywhere on the page — the steps are long once a resume is
         open. The page's grey behind it, so content scrolls cleanly beneath.
       */}
-      <Space
+      <div
         style={{
           position: "sticky",
           top: 60,
@@ -1017,10 +1022,14 @@ export function ResumeBuilder({
           padding: "12px 4px",
           background: "#f5f7fb",
           width: "calc(100% + 8px)",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "flex-end",
           justifyContent: "space-between",
+          gap: "10px 16px",
         }}
       >
-        <div>
+        <div style={{ minWidth: 0, flex: "1 1 320px" }}>
           <Typography.Title level={3} style={{ margin: 0, letterSpacing: "-0.02em" }}>
             Resume builder
           </Typography.Title>
@@ -1029,7 +1038,15 @@ export function ResumeBuilder({
             content — or paste your own — then style and download.
           </Typography.Text>
         </div>
-        <Space>
+        <Space wrap>
+          {/* Below lg the preview sits under the steps; this gets there in one click. */}
+          <Button
+            className="tw-preview-jump"
+            icon={<EyeOutlined />}
+            onClick={() => document.getElementById("tw-preview")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          >
+            Preview
+          </Button>
           <Tooltip
             title={
               reviewOnly && !isExample
@@ -1050,17 +1067,38 @@ export function ResumeBuilder({
               {overwrites ? "Save" : "Save as new"}
             </Button>
           </Tooltip>
-          <Button
-            type="primary"
-            icon={<DownloadOutlined />}
-            onClick={download}
-            loading={downloading}
-            disabled={parsed.kind !== "ok"}
+          <Tooltip title="The PDF only — not recorded in Applications">
+            <Button icon={<DownloadOutlined />} onClick={download} loading={downloading} disabled={parsed.kind !== "ok"}>
+              Download
+            </Button>
+          </Tooltip>
+          {/*
+            The main way out of the builder: the same as Apply's button below,
+            so the prominent download is the one that records the application.
+          */}
+          <Tooltip
+            title={
+              reviewOnly
+                ? "Review only — tracking needs a profile assigned to you."
+                : parsed.kind !== "ok"
+                  ? undefined
+                  : !company.trim() || !jobUrl.trim()
+                    ? "Add the company and job link under Apply first."
+                    : "Downloads the PDF and records the application with it attached."
+            }
           >
-            Download PDF
-          </Button>
+            <Button
+              type="primary"
+              icon={<DownloadOutlined />}
+              onClick={downloadAndTrack}
+              loading={tracking}
+              disabled={reviewOnly || isExample || parsed.kind !== "ok" || !company.trim() || !jobUrl.trim()}
+            >
+              Download &amp; track
+            </Button>
+          </Tooltip>
         </Space>
-      </Space>
+      </div>
 
       <Row gutter={[16, 16]} align="top">
         <Col xs={24} lg={10}>
@@ -1622,7 +1660,7 @@ export function ResumeBuilder({
           </div>
         </Col>
 
-        <Col xs={24} lg={14} style={{ position: "sticky", top: STICKY_TOP }}>
+        <Col id="tw-preview" xs={24} lg={14} style={{ position: "sticky", top: STICKY_TOP, scrollMarginTop: 140 }}>
           {/*
             Pinned beside the steps at the viewport's height: the style controls
             on top, the PDF filling the rest. The PDF viewer scrolls itself.

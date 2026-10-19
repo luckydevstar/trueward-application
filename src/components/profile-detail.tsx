@@ -5,6 +5,7 @@ import {
   DownloadOutlined,
   EditOutlined,
   FileOutlined,
+  FileTextOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import {
@@ -19,7 +20,6 @@ import {
   Popconfirm,
   Progress,
   Row,
-  Space,
   Typography,
 } from "antd";
 import Link from "next/link";
@@ -30,6 +30,7 @@ import {
   addProfileAttachments,
   deleteProfileAttachment,
 } from "@/app/dashboard/profiles/actions";
+import { PageHeader } from "@/components/page-header";
 import { displayUrl } from "@/lib/profile";
 import { toFormValues } from "@/lib/profile-form";
 import { formatDate } from "@/lib/status";
@@ -134,48 +135,43 @@ export function ProfileDetail({
 
   return (
     <>
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-      >
-        <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
-            {row.full_name}
-          </Typography.Title>
-          <Typography.Text type="secondary">{row.email}</Typography.Text>
-        </div>
-        <Space>
-          {/*
-            The profile as the resume document stores it, for keeping or for
-            pasting into another tool. Built from the page's own row, so it
-            downloads exactly what generation reads.
-          */}
-          <Button
-            icon={<DownloadOutlined />}
-            onClick={() => {
-              const blob = new Blob([JSON.stringify(row.profile, null, 2)], { type: "application/json" });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `${row.full_name.replace(/[^\w.-]+/g, "_")}.json`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-          >
-            Download JSON
-          </Button>
-          {canEdit && (
-            <Link href={`/dashboard/profiles/${profileId}/edit`}>
-              <Button type="primary" icon={<EditOutlined />}>
-                Edit profile
-              </Button>
+      <PageHeader
+        title={row.full_name}
+        description={row.email}
+        extra={
+          <>
+            <Link href={`/dashboard/resumes?profile=${profileId}`}>
+              <Button icon={<FileTextOutlined />}>Build resume</Button>
             </Link>
-          )}
-        </Space>
-      </Space>
+            {/*
+              The profile as the resume document stores it, for keeping or for
+              pasting into another tool. Built from the page's own row, so it
+              downloads exactly what generation reads.
+            */}
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(row.profile, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${row.full_name.replace(/[^\w.-]+/g, "_")}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              Download JSON
+            </Button>
+            {canEdit && (
+              <Link href={`/dashboard/profiles/${profileId}/edit`}>
+                <Button type="primary" icon={<EditOutlined />}>
+                  Edit profile
+                </Button>
+              </Link>
+            )}
+          </>
+        }
+      />
 
       <Row gutter={16}>
         <Col xs={24} lg={14}>
@@ -226,7 +222,7 @@ export function ProfileDetail({
                 renderItem={(e) => (
                   <List.Item>
                     <List.Item.Meta
-                      title={`${e.company} · ${e.id}`}
+                      title={e.company}
                       description={
                         <>
                           {e.startDate?.format("MMMM YYYY")} –{" "}

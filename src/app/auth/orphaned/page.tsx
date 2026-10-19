@@ -1,6 +1,6 @@
 import { Button, Card, Result } from "antd";
 
-export const metadata = { title: "Account not set up · Application" };
+export const metadata = { title: "Account not set up" };
 
 /**
  * Reached when auth.users has a row but app_user does not — the account was

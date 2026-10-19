@@ -8,7 +8,7 @@ import { COMPANY_RESEARCH_PROMPT, DEFAULT_SYSTEM_PROMPT } from "@/lib/ai/resume-
 import { fetchAll } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata = { title: "Generation · Application" };
+export const metadata = { title: "Generation" };
 
 /** The window the averages are taken over. */
 const DAYS = 30;

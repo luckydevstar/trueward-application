@@ -39,6 +39,7 @@ import {
   savePrompt,
   setActivePrompt,
 } from "@/app/dashboard/generation/actions";
+import { PageHeader } from "@/components/page-header";
 import { OUTPUT_CONTRACT } from "@/lib/ai/resume-prompt";
 import { formatDate } from "@/lib/status";
 import type { PromptKind } from "@/lib/supabase/types";
@@ -164,22 +165,21 @@ export function GenerationSettings({
 
   return (
     <>
-      <Space style={{ marginBottom: 20, width: "100%", justifyContent: "space-between" }} align="start">
-        <div>
-          <Typography.Title level={3} style={{ margin: 0, letterSpacing: "-0.02em" }}>
-            Generation
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            The model, reasoning and base prompt every Generate uses, and the
-            research prompt profile adders copy. People in the builder only
-            pick a profile and paste a job.
+      <PageHeader
+        title="Generation"
+        description={
+          <>
+            The model, reasoning and base prompt every Generate uses, and the research prompt profile adders copy.
+            People in the builder only pick a profile and a job.
             {updatedAt ? ` Last changed ${formatDate(updatedAt)}.` : ""}
-          </Typography.Text>
-        </div>
-        <Link href="/dashboard/generation/lab">
-          <Button icon={<ExperimentOutlined />}>Model lab</Button>
-        </Link>
-      </Space>
+          </>
+        }
+        extra={
+          <Link href="/dashboard/generation/lab">
+            <Button icon={<ExperimentOutlined />}>Model lab</Button>
+          </Link>
+        }
+      />
 
       {!configured && (
         <Alert
@@ -391,7 +391,7 @@ function PromptLibrary({
   footer?: ReactNode;
 }) {
   const router = useRouter();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [viewing, setViewing] = useState<{ name: string; body: string } | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [busy, setBusy] = useState(false);
@@ -447,7 +447,21 @@ function PromptLibrary({
         </Button>
       }
     >
-      <Radio.Group value={active} onChange={(e) => activate(e.target.value)} style={{ width: "100%" }}>
+      <Radio.Group
+        value={active}
+        // Every team's next generation changes with it, so a stray click shouldn't.
+        onChange={(e) => {
+          const value = e.target.value as string;
+          const name = rows.find((r) => r.id === value)?.name ?? "this prompt";
+          modal.confirm({
+            title: `Switch to “${name}”?`,
+            content: "Every team's next generation uses it, from the moment you switch.",
+            okText: "Switch",
+            onOk: () => activate(value),
+          });
+        }}
+        style={{ width: "100%" }}
+      >
         <Space orientation="vertical" style={{ width: "100%" }} size={0}>
           {rows.map((p) => (
             <div

@@ -16,6 +16,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { PageHeader } from "@/components/page-header";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate, normalizeCompany } from "@/lib/status";
 
@@ -96,9 +97,10 @@ export function BlocklistPanel({
 
   return (
     <>
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
-        Blocklist
-      </Typography.Title>
+      <PageHeader
+        title="Blocklist"
+        description="Companies not to apply to — for good, or for a while after the last application."
+      />
 
       <Card styles={{ body: { paddingTop: 8 } }}>
         <Tabs
@@ -170,6 +172,7 @@ export function BlocklistPanel({
                                   <Button
                                     type="text"
                                     danger
+                                    aria-label="Remove from the blocklist"
                                     icon={<DeleteOutlined />}
                                   />
                                 </Popconfirm>

@@ -2,7 +2,7 @@ import { AccountPanel } from "@/components/account-panel";
 import { requireActor } from "@/lib/actor";
 import { ROLE_META } from "@/lib/roles";
 
-export const metadata = { title: "Account · Application" };
+export const metadata = { title: "Account" };
 
 /**
  * Your own account: name and password. Every role has one — a bidder never

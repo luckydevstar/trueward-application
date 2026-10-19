@@ -65,3 +65,10 @@ a {
     transform: none;
   }
 }
+
+/* The builder's "Preview" jump: only needed once the preview drops under the steps. */
+@media (min-width: 992px) {
+  .tw-preview-jump {
+    display: none !important;
+  }
+}

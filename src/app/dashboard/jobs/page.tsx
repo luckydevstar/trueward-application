@@ -5,7 +5,7 @@ import { assignedProfileIds } from "@/lib/profile-scope";
 import { canSelfAssign } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata = { title: "Jobs · Application" };
+export const metadata = { title: "Jobs" };
 
 /** Room for the first jobs of a batch to run in `after()`. */
 export const maxDuration = 300;

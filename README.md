@@ -515,7 +515,7 @@ prints the live grants.
 ## Generating resumes
 
 The resume builder writes a resume's content itself. Whoever generates does
-two things — picks a profile and pastes the job description — and the rest is
+two things — picks a profile and a job — and the rest is
 the super admin's: the active base prompt, the model and the reasoning
 setting. The flow end to end:
 
@@ -527,16 +527,19 @@ setting. The flow end to end:
    page exports the profile document.
 2. In the builder, a bidder picks an assigned profile (its employments,
    education and company context go to the model, never contact details),
-   pastes the job description — with the company, title and URL if known —
-   and presses **Generate**. It runs in the background (`resume_job`), so the
-   next job can be pasted straight away; up to 6 run at once per person, and
-   they keep running if the page is left. Each appears under **Generations**;
-   opening a ready one loads its JSON into the editor and the preview, and
-   edits are saved back to it.
-3. **Download & track** takes the company, job title and job URL, records the
-   application (the duplicate cooldown and the blocklist can refuse it, with
-   the reason, and the download is then offered on its own), downloads the
-   PDF and attaches it to the new row in Applications.
+   picks one of their jobs or pastes a new description — with the company,
+   title and URL if known; it becomes a job — and presses **Generate**. Or
+   generates a batch from the Jobs page. It runs in the background
+   (`resume_job`), so the next job can be started straight away; up to 6 run
+   at once per person, and they keep running if the page is left. Each
+   appears under **Generations** by its job number; opening a ready one loads
+   its JSON into the editor and the preview, and edits are saved back to it.
+3. **Download & track** — the builder's main button, beside Save — takes the
+   company, job title and job URL (from the job, editable), records the
+   application under the job's number (the duplicate cooldown and the
+   blocklist can refuse it, with the reason, and the download is then offered
+   on its own), downloads the PDF and attaches it to the new row in
+   Applications. **Download** alone saves the PDF without recording anything.
 4. **Follow-up questions** — screening questions, short essays — are answered
    from the generated resume and the job by the same model, each in its own
    box with a copy button. They are logged (`source = 'followup'`) and count
@@ -588,23 +591,42 @@ your own still works.
   and DeepSeek cache a repeated prefix themselves. Cached input costs about a
   tenth.
 
-### Job sheet and the queue
+### Jobs, numbers and the queue
 
-`/dashboard/jobs` — a Google Sheet of jobs, with a resume generated for each.
-The sheet is shared *Anyone with the link → Viewer*; its first row names the
-columns **No**, **Title**, **Company**, **URL** and **JD** (the matching is
-loose — "Job title", "Link", "Job description" work too). **Sync** reads its
-CSV export (`src/lib/sheets.ts`) into `sheet_job`, keyed by the sheet's job
-number, so a row keeps its resumes when the sheet is re-sorted; a row deleted
-from the sheet is kept as `in_sheet = false` rather than lost. Each person
-connects their own sheet (`job_sheet`), and sees only their own jobs.
+`/dashboard/jobs` — the postings each person applies to. A job is a title,
+company, link and description, typed in, pasted as rows copied from a
+spreadsheet (**Paste from a spreadsheet**: a header row of Title, Company,
+URL, JD is found by name, otherwise read in that order), or added from the
+Chrome extension. Each person's list is their own (`job`, schema part 1).
 
-Tick jobs, pick the profile and template, and **Generate**: one
-`resume_job` per job, linked by `sheet_job_id` and rendered later in the
-template and style chosen (the builder's remembered style). As many as the
-6-at-once limit allows start immediately in `after()`; the rest are
-`queued`. Rows already generated for that profile are skipped unless
-**Regenerate** is ticked, and the hourly cap counts the waiting ones too.
+**A job description is stored once, on its job.** A generation
+(`resume_job.job_id`) and an application (`application.job_id`) point at the
+job rather than carrying a copy, so a posting generated for three times and
+applied to with two profiles is one row of text. Pasting a description that's
+already on your list — in the builder, on the Jobs page, from the extension
+— finds that job instead of adding another. Tracking a resume deletes the
+job's other drafts for that profile (`prune_spent_drafts()`, part 3): the
+regenerations nobody sent. A job with applications can't be deleted — its
+description is the record of what was applied to — so it's archived instead,
+which only takes it off the list. The calendar reads an interview's job
+description through the application (the job's select policy lets anyone who
+can read an application read its job).
+
+**Numbers.** One counter (`record_no_seq`) numbers jobs and applications, shown
+as J007 and A007 (`src/lib/numbers.ts`). An application made from a job takes
+the job's number, and a second profile applying to the same job adds a part —
+A007-2. One recorded straight into the grid takes the next number. Triggers
+assign them (`assign_job_no()`, `assign_application_no()`, part 3), so nobody
+picks their own, an edit can't change one, and an application can only take
+the number of the person's own job. The grid, the Jobs page and the calendar
+all search by number.
+
+Tick jobs, pick the profile and template, and **Generate resumes**: one
+`resume_job` per job, rendered later in the template and style chosen (the
+builder's remembered style). As many as the 6-at-once limit allows start
+immediately in `after()`; the rest are `queued`. Jobs already generated for
+that profile are skipped unless **Regenerate** is ticked, and the hourly cap
+counts the waiting ones too.
 
 The queue needs no worker. pg_cron runs `resume_queue_tick()` every minute;
 while something is waiting, it fails anything stuck past six minutes and
@@ -614,17 +636,18 @@ role). The route hands the secret straight back to `resume_queue_claim()`,
 which checks it and moves the next jobs to `running` — fairly, at most six
 per person and twelve in all — and runs them. A wrong secret claims nothing,
 which is why the route sits outside the gate and sign-in. A builder run and
-a batch share the same table and the same limit; the builder's Generations
-list shows batch rows with their sheet number.
+a batch share the same table and the same limit; the builder lists both, by
+job number.
 
 ### Chrome extension
 
 [trueward-extension](https://github.com/luckydevstar/trueward-extension) is a
 side panel for applying: pick a profile and copy its contact details, pick a
-job from the sheet (its posting opens), **Download & track** its resume,
-and answer screening questions. The Job sheet page serves the zip from
-`public/trueward-extension.zip`; the extension's own build copies a new one
-there.
+job (its posting opens), **Download & track** its resume, add the posting
+you're on as a job, and answer screening questions. It installs from
+<https://extension.trueward.guru>, linked from the Jobs page. Its screens load
+from that site on every open, so a push to its repo updates every installed
+copy; see its README for how the installed half and the hosted half talk.
 
 It talks to `/api/ext/*`. Those routes sit outside the cookie sign-in in
 `src/proxy.ts` and authenticate themselves: the extension signs in with the
@@ -638,14 +661,16 @@ the panel, never to a model, and never the SSN.
 **Download & track** records the application first (the cooldown and the
 blocklist can refuse it, and the panel says why), then renders the PDF on the
 server, uploads it to UploadThing and attaches it to the new row — the same
-outcome as the builder's button. A job already tracked returns its file.
+outcome as the builder's button, and the same number. A job already tracked
+returns its file.
 
 ### Interviews
 
 Interviews are calendar events. An event in
-[trueward-calendar](https://github.com/luckydevstar/trueward-calendar) can be
-linked to an application and given an outcome — scheduled, passed, failed,
-cancelled. The **Interviews** column in Applications lists each
+[trueward-calendar](https://github.com/luckydevstar/trueward-calendar) is
+linked to an application by its number (type A007) and given an outcome —
+scheduled, passed, failed, cancelled; the event then shows that
+application's resume, posting and job description. The **Interviews** column in Applications lists each
 application's events from `application_interviews()` (in the calendar's
 schema, which reads the application under this app's own rules); the
 event's creator and the super admin can change the outcome from there.

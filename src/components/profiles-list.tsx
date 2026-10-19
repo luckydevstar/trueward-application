@@ -31,6 +31,7 @@ import {
   EXACT_WIDTH_CSS,
   ResizableTitle,
 } from "@/components/grid/resizable-title";
+import { PageHeader } from "@/components/page-header";
 import { useColumnWidths } from "@/lib/column-widths";
 import { usePersistentState } from "@/lib/persistent-state";
 import { formatDate } from "@/lib/status";
@@ -198,7 +199,8 @@ export function ProfilesList({
       message.error(result.error);
       return;
     }
-
+    const names = next.map((id) => teamMembers.find((m) => m.id === id)?.label).filter(Boolean);
+    message.success(names.length ? `Assigned to ${names.join(", ")}.` : "Nobody is assigned now.");
     router.refresh();
   };
 
@@ -301,15 +303,9 @@ export function ProfilesList({
             render: (_, row) =>
               canAssign ? (
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <Select
-                    mode="multiple"
-                    allowClear
-                    size="small"
-                    variant="borderless"
-                    placeholder="Nobody"
-                    style={{ flex: "1 1 auto", minWidth: 0 }}
+                  <AssigneePicker
                     value={row.assignee_ids}
-                    onChange={(next) => setAssignees(row.id, next)}
+                    onSave={(next) => setAssignees(row.id, next)}
                     options={teamMembers.map((m) => ({
                       value: m.id,
                       label: m.label,
@@ -357,7 +353,7 @@ export function ProfilesList({
               onConfirm={() => remove(row.id)}
               okButtonProps={{ danger: true }}
             >
-              <Button type="text" danger icon={<DeleteOutlined />} />
+              <Button type="text" danger aria-label="Delete profile" icon={<DeleteOutlined />} />
             </Popconfirm>
           )}
         </Space>
@@ -385,41 +381,30 @@ export function ProfilesList({
 
   return (
     <>
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-      >
-        <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
-            Profiles
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            The stable half of a resume — identity, employers, dates. Nothing
-            here is rewritten when you tailor for a job.
-          </Typography.Text>
-        </div>
-        <Space>
-          <Input.Search
-            allowClear
-            placeholder="Filter by name or email"
-            style={{ width: 240 }}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(1);
-            }}
-          />
-          {canCreate && (
-            <Link href="/dashboard/profiles/new">
-              <Button type="primary" icon={<PlusOutlined />}>
-                New profile
-              </Button>
-            </Link>
-          )}
-        </Space>
-      </Space>
+      <PageHeader
+        title="Profiles"
+        description="The stable half of a resume — identity, employers, dates. Nothing here is rewritten when you tailor for a job."
+        extra={
+          <>
+            <Input.Search
+              allowClear
+              placeholder="Filter by name or email"
+              style={{ width: 240, maxWidth: "100%" }}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setPage(1);
+              }}
+            />
+            {canCreate && (
+              <Link href="/dashboard/profiles/new">
+                <Button type="primary" icon={<PlusOutlined />}>
+                  New profile
+                </Button>
+              </Link>
+            )}
+          </>
+        }
+      />
 
       <Card styles={{ body: { padding: 0 } }}>
         <Table<ProfileRow>
@@ -468,3 +453,46 @@ export function ProfilesList({
 }
 
 const Muted = () => <Typography.Text type="secondary">—</Typography.Text>;
+
+/**
+ * Who works a profile. Picks collect while the list is open and are saved
+ * once when it closes — choosing three bidders is one save, not three
+ * refreshes under the cursor. Removing a tag with the list closed saves at once.
+ */
+function AssigneePicker({
+  value,
+  options,
+  onSave,
+}: {
+  value: string[];
+  options: Array<{ value: string; label: string }>;
+  onSave: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const commit = (next: string[]) => {
+    setDraft(null);
+    const same = next.length === value.length && next.every((id) => value.includes(id));
+    if (!same) onSave(next);
+  };
+
+  return (
+    <Select
+      mode="multiple"
+      allowClear
+      size="small"
+      variant="borderless"
+      placeholder="Nobody"
+      aria-label="Assigned to"
+      style={{ flex: "1 1 auto", minWidth: 0 }}
+      value={draft ?? value}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next && draft) commit(draft);
+      }}
+      onChange={(next) => (open ? setDraft(next) : commit(next))}
+      options={options}
+    />
+  );
+}

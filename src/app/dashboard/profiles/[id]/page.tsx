@@ -5,6 +5,8 @@ import { requireActor } from "@/lib/actor";
 import { canEditProfile, canHandleSsn, canViewProfile } from "@/lib/profile-access";
 import { createClient } from "@/lib/supabase/server";
 
+export const metadata = { title: "Profile" };
+
 export default async function ProfileDetailPage({
   params,
 }: PageProps<"/dashboard/profiles/[id]">) {

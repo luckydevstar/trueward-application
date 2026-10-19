@@ -14,7 +14,7 @@ import { TEMPLATES } from "@/lib/pdf/templates";
 import { seesAllTeams } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata = { title: "Users · Application" };
+export const metadata = { title: "Users" };
 
 export default async function UsersPage() {
   const actor = await requireActor();

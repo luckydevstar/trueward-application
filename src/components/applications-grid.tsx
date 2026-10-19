@@ -34,6 +34,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import { MARQUEE_CSS, Marquee } from "@/components/grid/marquee";
 import { InterviewCell, type Interview } from "@/components/interview-cell";
+import { PageHeader } from "@/components/page-header";
 import { ROW_COLUMNS, type ApplicationRow } from "@/lib/application-row";
 import {
   EXACT_WIDTH_CLASS,
@@ -102,6 +103,10 @@ type Props = {
   interviews?: Record<string, Interview[]>;
   /** The super admin may mark any interview; others, the ones they scheduled. */
   isSuperAdmin?: boolean;
+  /** Where a link arrived pointing — a number or text to search, a status, a billing state. */
+  initialQuery?: string;
+  initialStatus?: ApplicationStatus | null;
+  initialBilling?: BillingStatus | null;
 };
 
 const WIDTH_STORAGE_KEY = "tw.applications.columnWidths";
@@ -187,10 +192,13 @@ export function ApplicationsGrid({
   readOnly = false,
   interviews = {},
   isSuperAdmin = false,
+  initialQuery = "",
+  initialStatus = null,
+  initialBilling = null,
 }: Props) {
   const { message } = App.useApp();
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
 
   // Two views over one list, not two lists: everything is already loaded, so
@@ -699,6 +707,7 @@ export function ApplicationsGrid({
         text: STATUS_META[s].label,
         value: s,
       })),
+      defaultFilteredValue: initialStatus ? [initialStatus] : undefined,
       onFilter: (value, row) => row.status === value,
       render: (value: ApplicationStatus, row) => (
         <StatusSelect
@@ -718,13 +727,21 @@ export function ApplicationsGrid({
       key: "interviews",
       title: "Interviews",
       render: (_value, row) => (
-        <InterviewCell interviews={interviews[row.id] ?? []} userId={userId} isSuperAdmin={isSuperAdmin} />
+        <InterviewCell
+          interviews={interviews[row.id] ?? []}
+          userId={userId}
+          isSuperAdmin={isSuperAdmin}
+          canOpenCalendar={isAdmin}
+        />
       ),
     },
     {
       key: "billing",
       title: "Billing",
       dataIndex: "billing",
+      filters: BILLING_STATUSES.map((b) => ({ text: BILLING_META[b].label, value: b })),
+      defaultFilteredValue: initialBilling ? [initialBilling] : undefined,
+      onFilter: (value, row) => row.billing === value,
       render: (value: BillingStatus, row) => (
         <BillingSelect
           value={editingId === row.id ? (editBuffer?.billing ?? value) : value}
@@ -810,11 +827,12 @@ export function ApplicationsGrid({
             <Space size={0}>
               <Button
                 type="text"
+                aria-label="Save changes"
                 icon={<CheckOutlined />}
                 loading={saving}
                 onClick={saveEdit}
               />
-              <Button type="text" icon={<CloseOutlined />} onClick={cancelEdit} />
+              <Button type="text" aria-label="Cancel editing" icon={<CloseOutlined />} onClick={cancelEdit} />
             </Space>
           );
         }
@@ -839,6 +857,7 @@ export function ApplicationsGrid({
               <Tooltip title="Restore to the active list">
                 <Button
                   type="text"
+                  aria-label="Restore"
                   icon={<UndoOutlined />}
                   onClick={() => setArchived([row.id], false)}
                 />
@@ -849,7 +868,7 @@ export function ApplicationsGrid({
                 onConfirm={() => remove([row.id])}
                 okButtonProps={{ danger: true }}
               >
-                <Button type="text" danger icon={<DeleteOutlined />} />
+                <Button type="text" danger aria-label="Delete" icon={<DeleteOutlined />} />
               </Popconfirm>
             </Space>
           );
@@ -859,6 +878,7 @@ export function ApplicationsGrid({
           <Space size={0}>
             <Button
               type="text"
+              aria-label="Edit"
               icon={<EditOutlined />}
               disabled={editingId !== null}
               onClick={() => startEdit(row)}
@@ -866,6 +886,7 @@ export function ApplicationsGrid({
             <Tooltip title="Archive — keeps the record, off the list">
               <Button
                 type="text"
+                aria-label="Archive"
                 icon={<InboxOutlined />}
                 onClick={() => setArchived([row.id], true)}
               />
@@ -876,7 +897,7 @@ export function ApplicationsGrid({
               onConfirm={() => remove([row.id])}
               okButtonProps={{ danger: true }}
             >
-              <Button type="text" danger icon={<DeleteOutlined />} />
+              <Button type="text" danger aria-label="Delete" icon={<DeleteOutlined />} />
             </Popconfirm>
           </Space>
         );
@@ -1050,6 +1071,7 @@ export function ApplicationsGrid({
         <Button
           type="primary"
           size="small"
+          aria-label="Add this application"
           icon={<PlusOutlined />}
           loading={adding}
           onClick={addDraft}
@@ -1060,47 +1082,40 @@ export function ApplicationsGrid({
 
   return (
     <>
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-      >
-        <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
-            Applications
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            {readOnly
-              ? "Every team's applications. Assign a profile to yourself on the Profiles page to record your own."
-              : view === "active"
-                ? "Type into the top row to add a record. Drag any column edge to resize; double-click a row to edit it."
-                : "Archived records are read-only. Restore one to edit it again."}
-          </Typography.Text>
-        </div>
-        <Space>
-          <Segmented<ViewMode>
-            value={view}
-            onChange={changeView}
-            options={[
-              { value: "active", label: `Active (${liveRows.length - archivedCount})` },
-              { value: "archived", label: `Archived (${archivedCount})` },
-            ]}
-          />
-          <Input.Search
-            allowClear
-            placeholder="A007, role or company"
-            style={{ width: 260 }}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              // Typing narrows the list under you; staying on page 3 of the
-              // old one would usually land on nothing.
-              setPage(1);
-            }}
-          />
-        </Space>
-      </Space>
+      <PageHeader
+        title="Applications"
+        description={
+          readOnly
+            ? "Every team's applications. Assign a profile to yourself on the Profiles page to record your own."
+            : view === "active"
+              ? "Type into the top row to add a record. Drag any column edge to resize; double-click a row to edit it."
+              : "Archived records are read-only. Restore one to edit it again."
+        }
+        extra={
+          <>
+            <Segmented<ViewMode>
+              value={view}
+              onChange={changeView}
+              options={[
+                { value: "active", label: `Active (${liveRows.length - archivedCount})` },
+                { value: "archived", label: `Archived (${archivedCount})` },
+              ]}
+            />
+            <Input.Search
+              allowClear
+              placeholder="A007, role or company"
+              defaultValue={initialQuery}
+              style={{ width: 260, maxWidth: "100%" }}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                // Typing narrows the list under you; staying on page 3 of the
+                // old one would usually land on nothing.
+                setPage(1);
+              }}
+            />
+          </>
+        }
+      />
 
       {/*
         Only counts rows you can see and act on, so it never promises more than
@@ -1492,6 +1507,7 @@ function ResumeCell({
           <Button
             type="text"
             size="small"
+            aria-label={name ? "Replace the resume" : "Attach a resume"}
             icon={<UploadOutlined />}
             loading={uploading}
             onClick={() => input.current?.click()}

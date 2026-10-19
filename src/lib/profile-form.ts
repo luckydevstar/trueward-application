@@ -48,7 +48,33 @@ const blank = (value?: string | null) => (value?.trim() ? value.trim() : null);
  * Throws if the derived document wouldn't validate — at save time, with the
  * form still on screen, rather than later inside the renderer.
  */
+/**
+ * An employer's id when none was typed: its company and start year,
+ * "acme-2021", made unique against the ids the profile already has. Ids that
+ * exist are never changed — resume content refers to employers by them.
+ */
+function employmentIds(employments: EmploymentValues[]): string[] {
+  const taken = new Set(employments.map((e) => e.id?.trim()).filter(Boolean));
+  return employments.map((e) => {
+    const typed = e.id?.trim();
+    if (typed) return typed;
+    const slug =
+      e.company
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "employer";
+    const base = e.startDate ? `${slug}-${e.startDate.format("YYYY")}` : slug;
+    let id = base;
+    for (let n = 2; taken.has(id); n += 1) id = `${base}-${n}`;
+    taken.add(id);
+    return id;
+  });
+}
+
 export function toProfileRow(values: ProfileFormValues): ProfileRowValues {
+  const ids = employmentIds(values.employments ?? []);
   const identity: ProfileIdentity = {
     fullName: values.fullName.trim(),
     email: values.email.trim(),
@@ -62,8 +88,8 @@ export function toProfileRow(values: ProfileFormValues): ProfileRowValues {
     // display form can be derived from it anywhere.
     githubUrl: normalizeUrl(values.githubUrl),
     linkedinUrl: normalizeUrl(values.linkedinUrl),
-    employments: (values.employments ?? []).map((e: EmploymentValues) => ({
-      id: e.id.trim(),
+    employments: (values.employments ?? []).map((e: EmploymentValues, index: number) => ({
+      id: ids[index],
       company: e.company.trim(),
       location: blank(e.location),
       startDate: toMonthYear(e.startDate),

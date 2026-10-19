@@ -10,7 +10,7 @@ import { profileSchema } from "@/lib/document/schema";
 import { fetchAll } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata = { title: "Model lab · Application" };
+export const metadata = { title: "Model lab" };
 
 /**
  * The model lab: one profile and one job, several models side by side, and

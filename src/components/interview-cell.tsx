@@ -36,10 +36,13 @@ export function InterviewCell({
   interviews: initial,
   userId,
   isSuperAdmin,
+  canOpenCalendar,
 }: {
   interviews: Interview[];
   userId: string;
   isSuperAdmin: boolean;
+  /** Bidders can't use the calendar, so they get no link that leads to a refusal. */
+  canOpenCalendar: boolean;
 }) {
   const { message } = App.useApp();
   const [interviews, setInterviews] = useState(initial);
@@ -103,9 +106,11 @@ export function InterviewCell({
           </div>
         );
       })}
-      <Button size="small" icon={<CalendarOutlined />} href={CALENDAR_URL} target="_blank" rel="noreferrer">
-        Open the calendar
-      </Button>
+      {canOpenCalendar && (
+        <Button size="small" icon={<CalendarOutlined />} href={CALENDAR_URL} target="_blank" rel="noreferrer">
+          Open the calendar
+        </Button>
+      )}
     </div>
   );
 

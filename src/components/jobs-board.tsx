@@ -44,6 +44,7 @@ import {
   jobDescription,
   saveJob,
 } from "@/app/dashboard/jobs/actions";
+import { PageHeader } from "@/components/page-header";
 import { DEFAULT_STYLE } from "@/components/resume-style-toolbar";
 import { MAX_RUNNING_JOBS } from "@/lib/ai/defaults";
 import { MAX_JOB_DESCRIPTION } from "@/lib/jobs/fields";
@@ -298,31 +299,27 @@ export function JobsBoard({ profiles, profileId, openJobId, jobs }: Props) {
 
   return (
     <>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <Typography.Title level={3} style={{ margin: 0, letterSpacing: "-0.02em" }}>
-            Jobs
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            The postings you apply to. Each gets a number — J007 — that its application shares (A007).
-          </Typography.Text>
-        </div>
-        <Space wrap>
-          <Tooltip title="The side panel for applying: this list, beside any job site">
-            <Button icon={<ChromeOutlined />} href="https://extension.trueward.guru" target="_blank" rel="noreferrer">
-              Chrome extension
+      <PageHeader
+        title="Jobs"
+        description="The postings you apply to. Each gets a number — J007 — that its application shares (A007)."
+        extra={
+          <>
+            <Tooltip title="The side panel for applying: this list, beside any job site">
+              <Button icon={<ChromeOutlined />} href="https://extension.trueward.guru" target="_blank" rel="noreferrer">
+                Chrome extension
+              </Button>
+            </Tooltip>
+            <Button icon={<SnippetsOutlined />} onClick={() => setPasteOpen(true)}>
+              Paste from a spreadsheet
             </Button>
-          </Tooltip>
-          <Button icon={<SnippetsOutlined />} onClick={() => setPasteOpen(true)}>
-            Paste from a spreadsheet
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={startNew}>
-            New job
-          </Button>
-        </Space>
-      </div>
+            <Button type="primary" icon={<PlusOutlined />} onClick={startNew}>
+              New job
+            </Button>
+          </>
+        }
+      />
 
-      <Row gutter={[16, 16]} style={{ marginTop: 20 }}>
+      <Row gutter={[16, 16]}>
         <Col xs={{ span: 24, order: 2 }} xl={{ span: 15, order: 1 }}>
           <Card variant="borderless" styles={{ body: { padding: 0 } }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", padding: 16 }}>
@@ -478,10 +475,12 @@ export function JobsBoard({ profiles, profileId, openJobId, jobs }: Props) {
                     j.applications.length ? (
                       <Space size={4} wrap>
                         {j.applications.map((a) => (
-                          <Tooltip key={a.no} title={`${a.status}${a.mine ? "" : " · another profile"}`}>
-                            <Tag color={a.mine ? "green" : undefined} bordered={false} style={{ marginInlineEnd: 0 }}>
-                              {a.no}
-                            </Tag>
+                          <Tooltip key={a.no} title={`${a.status}${a.mine ? "" : " · another profile"} — open in Applications`}>
+                            <Link href={`/dashboard/applications?q=${a.no}`} onClick={(e) => e.stopPropagation()}>
+                              <Tag color={a.mine ? "green" : undefined} bordered={false} style={{ marginInlineEnd: 0 }}>
+                                {a.no}
+                              </Tag>
+                            </Link>
                           </Tooltip>
                         ))}
                       </Space>

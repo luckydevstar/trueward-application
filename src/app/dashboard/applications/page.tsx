@@ -7,13 +7,16 @@ import { ROW_COLUMNS, type ApplicationRow as Row } from "@/lib/application-row";
 import { fetchAll } from "@/lib/fetch-all";
 import { assignedProfileIds } from "@/lib/profile-scope";
 import { isAdminRole, managesTeam } from "@/lib/roles";
+import { APPLICATION_STATUSES, BILLING_STATUSES } from "@/lib/status";
 import { canBrowseRecords, seesAllTeams, teamIdFor } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Applications" };
 
-export default async function ApplicationsPage() {
+export default async function ApplicationsPage({ searchParams }: PageProps<"/dashboard/applications">) {
   const actor = await requireActor();
+  const params = await searchParams;
+  const param = (key: string) => (typeof params[key] === "string" ? (params[key] as string) : null);
 
   if (!canBrowseRecords(actor)) {
     return (
@@ -88,6 +91,10 @@ export default async function ApplicationsPage() {
       canChangeAny={managesTeam(actor.role)}
       interviews={byApplication}
       isSuperAdmin={actor.role === "super_admin"}
+      // From a link: the Overview's cards, the Jobs page's A007 tags.
+      initialQuery={param("q") ?? ""}
+      initialStatus={APPLICATION_STATUSES.find((s) => s === param("status")) ?? null}
+      initialBilling={BILLING_STATUSES.find((b) => b === param("billing")) ?? null}
       rows={rows}
       profiles={(profiles.data ?? []).map((p) => ({
         id: p.id,

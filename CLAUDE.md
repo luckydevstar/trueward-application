@@ -154,7 +154,16 @@ service role (the log is not the caller's to write).
 so it is bounded by the builder page's `maxDuration` (300s). The per-call
 timeout in `jobs.ts` (two calls at most) must stay inside it, and
 `JOB_STALE_MS` must stay above it — a row still `running` after that is shown
-as timed out and stops counting toward the 6-at-once limit. **Batches** (the job sheet, the extension) insert their `resume_job` rows
+as timed out and stops counting toward the 6-at-once limit. **A job description lives on its job, nowhere else.** `resume_job` and
+`application` carry `job_id`, not the text; read it through the embed
+(`job:job_id(description)`), and create jobs with `findOrCreateJob()` in
+`src/lib/jobs/jobs.ts` so pasting the same description finds the job it
+already is. Don't add a description column back to either table — the copies
+were what this replaced. Numbers (J007, A007-2) come from triggers; never send
+`no` or `no_part` from the app, and format them only with `src/lib/numbers.ts`
+(the calendar has a copy — change both).
+
+**Batches** (the Jobs page, the extension) insert their `resume_job` rows
 as `queued` beyond the free slots; the queue runner
 (`/api/cron/resume-jobs`, called by pg_cron through `resume_queue_tick()`)
 claims them with `resume_queue_claim()`. The claim is the authorization — it

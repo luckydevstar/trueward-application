@@ -7,7 +7,7 @@ import { isAdminRole } from "@/lib/roles";
 import { seesAllTeams } from "@/lib/scope";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata = { title: "Usage · Application" };
+export const metadata = { title: "Usage" };
 
 /**
  * What resume generation has cost, and who spent it.

@@ -105,22 +105,24 @@ const STEPS: Record<UserRole, Step[]> = {
   ],
   bidder: [
     {
-      title: "Pick a profile",
-      body: "Resume builder, step 1. You see the profiles assigned to you.",
+      title: "Add your jobs",
+      body: "Each posting you'll apply to, with its description — typed in, pasted as rows from a spreadsheet, or added from the Chrome extension. Each gets a number, J007.",
+      href: "/dashboard/jobs",
+      cta: "Jobs",
+    },
+    {
+      title: "Generate their resumes",
+      body: "Tick the jobs, pick the profile and press Generate. Six run at once; the rest wait their turn, and you can leave the page.",
+    },
+    {
+      title: "Open and check",
+      body: "Open a ready one in the Resume builder and fix anything that needs it; the preview is the real PDF.",
       href: "/dashboard/resumes",
       cta: "Resume builder",
     },
     {
-      title: "Paste the job and generate",
-      body: "Paste the posting (company, title and URL if you have them) and press Generate. It runs in the background — paste the next one straight away, up to 6 at once.",
-    },
-    {
-      title: "Open and check",
-      body: "Click a ready one under Generations. Edit the JSON if something needs fixing; the preview is the real PDF.",
-    },
-    {
       title: "Download & track",
-      body: "Add the company, job title and URL. The PDF downloads and the application is recorded with it attached.",
+      body: "From the builder or the extension: the PDF downloads and the application is recorded with it — numbered like its job, J007 → A007.",
     },
     {
       title: "Answer follow-up questions",
@@ -128,7 +130,7 @@ const STEPS: Record<UserRole, Step[]> = {
     },
     {
       title: "Keep Applications current",
-      body: "Update the status as it moves — viewed, interviewing, offer.",
+      body: "Update the status as it moves. Interviews scheduled on the calendar for A007 show beside it.",
       href: "/dashboard/applications",
       cta: "Applications",
     },
@@ -255,7 +257,7 @@ function Flow() {
       </div>
 
       <div className="tw-row">
-        <Node icon={<FileSearchOutlined />} title="Check & edit" note="Editable JSON, live PDF preview" />
+        <Node icon={<FileSearchOutlined />} title="Check & edit" note="Edit it, with the real PDF beside it" />
         <Arrow />
         <Node icon={<DownloadOutlined />} title="Download & track" note="PDF saved to Applications" />
         <Arrow />

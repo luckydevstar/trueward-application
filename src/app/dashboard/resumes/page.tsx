@@ -162,6 +162,7 @@ export default async function ResumesPage({ searchParams }: PageProps<"/dashboar
       // builder then generates in the request, as it used to.
       jobs={jobs.error ? null : ((jobs.data ?? []) as unknown as BuilderJob[])}
       openJob={typeof params.job === "string" ? params.job : null}
+      initialProfile={typeof params.profile === "string" ? params.profile : null}
       savedJobs={savedJobs.data ?? []}
     />
   );

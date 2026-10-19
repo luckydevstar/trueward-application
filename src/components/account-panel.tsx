@@ -1,11 +1,12 @@
 "use client";
 
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
-import { App, Button, Card, Col, Form, Input, Row, Typography } from "antd";
+import { App, Button, Card, Col, Form, Input, Row } from "antd";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { updateUser } from "@/app/dashboard/users/actions";
+import { PageHeader } from "@/components/page-header";
 
 type PasswordValues = { currentPassword: string; password: string; confirm: string };
 
@@ -46,14 +47,9 @@ export function AccountPanel({ id, name, email, role }: { id: string; name: stri
 
   return (
     <>
-      <Typography.Title level={3} style={{ margin: 0, letterSpacing: "-0.02em" }}>
-        Account
-      </Typography.Title>
-      <Typography.Text type="secondary">
-        {email} · {role}
-      </Typography.Text>
+      <PageHeader title="Account" description={`${email} · ${role}`} />
 
-      <Row gutter={[16, 16]} style={{ marginTop: 20 }}>
+      <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <Card
             variant="borderless"

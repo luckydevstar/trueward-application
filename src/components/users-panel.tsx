@@ -20,6 +20,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { createUser, deleteUser, updateUser } from "@/app/dashboard/users/actions";
+import { PageHeader } from "@/components/page-header";
 import { ROLE_META, type UserRole } from "@/lib/roles";
 import { formatDate } from "@/lib/status";
 
@@ -164,27 +165,22 @@ export function UsersPanel({
 
   return (
     <>
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          Users
-        </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setOpen(true)}
-          disabled={!serviceRoleConfigured || creatableRoles.length === 0}
-        >
-          {creatableRoles.length === 1
-            ? `Add ${ROLE_META[creatableRoles[0]].label.toLowerCase()}`
-            : "Add user"}
-        </Button>
-      </Space>
+      <PageHeader
+        title="Users"
+        description="Accounts are only created here. A new person also needs their browser approved in Trueward Auth before any site lets them in."
+        extra={
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setOpen(true)}
+            disabled={!serviceRoleConfigured || creatableRoles.length === 0}
+          >
+            {creatableRoles.length === 1
+              ? `Add ${ROLE_META[creatableRoles[0]].label.toLowerCase()}`
+              : "Add user"}
+          </Button>
+        }
+      />
 
       {!serviceRoleConfigured && (
         <Alert
