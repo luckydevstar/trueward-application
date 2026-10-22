@@ -76,6 +76,7 @@ import { applicationNo, jobNo } from "@/lib/numbers";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
 import type { TemplateSpec } from "@/lib/pdf/templates";
 import { usePersistentState } from "@/lib/persistent-state";
+import { DEFAULT_PRESET, useProfileStyle } from "@/lib/profile-style";
 import { coerceChoice } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/client";
 import { useUploadThing } from "@/lib/uploadthing";
@@ -170,10 +171,6 @@ type Run = Extract<GenerateResult, { ok: true }>;
  */
 const STICKY_TOP = 80;
 
-/** Template and styling, remembered together so they can't fall out of step. */
-type Preset = { template: string; style: ResumeStyle };
-
-const STYLE_STORAGE_KEY = "tw.resume.style";
 
 /**
  * Where the content comes from: generated here, or pasted from elsewhere.
@@ -183,8 +180,6 @@ const STYLE_STORAGE_KEY = "tw.resume.style";
  */
 type Source = "ai" | "paste";
 const SOURCE_KEY = "tw.resume.source";
-
-const DEFAULT_PRESET: Preset = { template: "banner", style: DEFAULT_STYLE };
 
 /** Strips the ```json fence a model wraps its output in. */
 function unfence(value: string) {
@@ -296,20 +291,16 @@ export function ResumeBuilder({
         : JSON.stringify(EXAMPLE_DOCUMENT.content, null, 2),
   );
   /**
-   * Styling survives navigation.
-   *
-   * It is a working preference, not a property of any one resume — you settle
-   * on a template and a leading you like and then produce several documents
-   * with it. Resetting to defaults on every visit meant redoing that each time.
+   * Template and styling, remembered per profile (useProfileStyle): you
+   * settle on a look for a candidate and then produce several documents in
+   * it. Switching profile switches to that candidate's style; one not styled
+   * yet starts from the last style you used.
    *
    * Opening a saved resume still overrides this with that document's own style,
-   * and doing so updates the remembered preference, which is the behaviour you
-   * want: the last thing you looked at is where you carry on from.
+   * and doing so updates the profile's remembered style, which is the behaviour
+   * you want: the last thing you looked at is where you carry on from.
    */
-  const [preset, setPreset] = usePersistentState<Preset>(
-    STYLE_STORAGE_KEY,
-    DEFAULT_PRESET,
-  );
+  const [preset, setPreset] = useProfileStyle(userId, profileId);
   /**
    * Snapped inside the allowance before use. The preset is remembered in
    * localStorage and a saved resume carries its own, so either can name a
@@ -779,8 +770,15 @@ export function ResumeBuilder({
       } catch {
         // Mid-edit; the last good version stays saved.
       }
-      const next = { content, valid: parsed.kind === "ok" };
-      if (JSON.stringify(next.content) !== JSON.stringify(openJob.content) || next.valid !== openJob.valid) {
+      // The style goes with it, so a download from the extension — rendered on
+      // the server from this row — looks like the preview here.
+      const next = { content, valid: parsed.kind === "ok", template, style };
+      if (
+        JSON.stringify(next.content) !== JSON.stringify(openJob.content) ||
+        next.valid !== openJob.valid ||
+        next.template !== openJob.template ||
+        JSON.stringify(next.style) !== JSON.stringify(openJob.style)
+      ) {
         const { error } = await db
           .from("resume_job")
           .update({ ...next, updated_at: new Date().toISOString() })
@@ -806,7 +804,7 @@ export function ResumeBuilder({
       }
     }, 800);
     return () => clearTimeout(timer);
-  }, [openJob, reviewOnly, json, parsed.kind, company, jobTitle, jobUrl]);
+  }, [openJob, reviewOnly, json, parsed.kind, company, jobTitle, jobUrl, template, style]);
 
   /**
    * Starts a generation in the background. The form clears at once so the
@@ -822,8 +820,8 @@ export function ResumeBuilder({
     setGenerating(true);
     const result = await startResumeJob(
       pickedJobId
-        ? { profileId, jobId: pickedJobId }
-        : { profileId, jobDescription, company: draftCompany, jobTitle: draftTitle, jobUrl: draftUrl },
+        ? { profileId, jobId: pickedJobId, template, style }
+        : { profileId, jobDescription, company: draftCompany, jobTitle: draftTitle, jobUrl: draftUrl, template, style },
     );
     setGenerating(false);
     if (!result.ok) {
@@ -841,7 +839,12 @@ export function ResumeBuilder({
   };
 
   const retryJob = async (job: BuilderJob) => {
-    const result = await startResumeJob({ profileId: job.profile_id, jobId: job.job_id });
+    const result = await startResumeJob({
+      profileId: job.profile_id,
+      jobId: job.job_id,
+      template: job.template ?? template,
+      style: job.style ?? style,
+    });
     if (!result.ok) {
       message.error(result.error);
       return;

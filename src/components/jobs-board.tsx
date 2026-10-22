@@ -45,12 +45,10 @@ import {
   saveJob,
 } from "@/app/dashboard/jobs/actions";
 import { PageHeader } from "@/components/page-header";
-import { DEFAULT_STYLE } from "@/components/resume-style-toolbar";
 import { MAX_RUNNING_JOBS } from "@/lib/ai/defaults";
 import { MAX_JOB_DESCRIPTION } from "@/lib/jobs/fields";
 import { TEMPLATES } from "@/lib/pdf/templates";
-import { usePersistentState } from "@/lib/persistent-state";
-import type { ResumeStyle } from "@/lib/supabase/types";
+import { useProfileStyle } from "@/lib/profile-style";
 
 export type BoardJob = {
   id: string;
@@ -74,14 +72,13 @@ export type BoardJob = {
 };
 
 type Props = {
+  /** Whose saved styles to use — they're kept per person and per profile. */
+  userId: string;
   profiles: Array<{ id: string; name: string }>;
   profileId: string | null;
   openJobId: string | null;
   jobs: BoardJob[];
 };
-
-/** The builder's remembered style — a batch renders in it, so one setting rules both. */
-type Preset = { template: string; style: ResumeStyle };
 
 type Draft = { id: string | null; title: string; company: string; url: string; description: string };
 
@@ -123,7 +120,7 @@ function ResumeTag({ resume }: { resume: BoardJob["resume"] }) {
  * Tick jobs to generate their resumes in a batch (six at once, the rest wait
  * their turn on the server) or to archive them.
  */
-export function JobsBoard({ profiles, profileId, openJobId, jobs }: Props) {
+export function JobsBoard({ userId, profiles, profileId, openJobId, jobs }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
 
@@ -134,8 +131,14 @@ export function JobsBoard({ profiles, profileId, openJobId, jobs }: Props) {
   const [selected, setSelected] = useState<string[]>([]);
   const [regenerate, setRegenerate] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [preset] = usePersistentState<Preset>("tw.resume.style", { template: "banner", style: DEFAULT_STYLE });
-  const [template, setTemplate] = useState<string | null>(null);
+  // The chosen profile's style from the builder — a batch renders in it, so
+  // one setting rules both, profile by profile.
+  const [preset] = useProfileStyle(userId, profileId);
+  // A template picked here is for this profile's batch; another profile
+  // starts from its own.
+  const [picked, setPicked] = useState<{ profileId: string | null; template: string } | null>(null);
+  const template = picked?.profileId === profileId ? picked.template : null;
+  const setTemplate = (next: string) => setPicked({ profileId, template: next });
   const chosenTemplate = template ?? (TEMPLATES.some((t) => t.id === preset.template) ? preset.template : "banner");
 
   const [draft, setDraft] = useState<Draft>(() =>

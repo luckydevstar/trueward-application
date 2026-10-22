@@ -189,6 +189,15 @@ Which templates and accents an account may use is set per account, on the Users
 page, by whoever manages it — a subadmin for their bidders, the super admin for
 a subadmin. Empty means everything.
 
+**The builder remembers a style per profile**, per person, in this browser's
+localStorage (`useProfileStyle` in `src/lib/profile-style.ts`): template,
+accent, font and the rest. Switching candidate switches to theirs; one not
+styled yet starts from the last style used on any profile. Each generation
+also stores the style it was made in, and the builder keeps that in step as
+you restyle an open one — so a resume downloaded from the Chrome extension,
+rendered on the server from that row, looks like the builder's preview, and
+the extension's batches follow the profile's last style.
+
 This is enforced in the UI, not the database: it is a style guideline, and
 treating a cosmetic field as a boundary would mean validating it on every write.
 A stale choice — a saved resume or a remembered preference naming a template the
@@ -637,7 +646,7 @@ all search by number.
 
 Tick jobs, pick the profile and template, and **Generate resumes**: one
 `resume_job` per job, rendered later in the template and style chosen (the
-builder's remembered style). As many as the 6-at-once limit allows start
+builder's remembered style for that profile). As many as the 6-at-once limit allows start
 immediately in `after()`; the rest are `queued`. Jobs already generated for
 that profile are skipped unless **Regenerate** is ticked, and the hourly cap
 counts the waiting ones too.

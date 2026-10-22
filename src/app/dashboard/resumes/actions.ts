@@ -22,9 +22,12 @@ import { openRouterConfigured } from "@/lib/ai/openrouter";
 import { loadGenerationConfig } from "@/lib/ai/settings";
 import { profileSchema } from "@/lib/document/schema";
 import { cleanJob, type JobFields } from "@/lib/jobs/fields";
+import { cleanStyle } from "@/lib/jobs/batch";
 import { findOrCreateJob } from "@/lib/jobs/jobs";
+import { templateSpec } from "@/lib/pdf/templates";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { ResumeStyle } from "@/lib/supabase/types";
 
 export type GenerateResult =
   | {
@@ -162,9 +165,14 @@ export type StartJobResult = { ok: true; job: BuilderJob } | { ok: false; error:
  * many.
  */
 export async function startResumeJob(
-  input:
+  input: (
     | { profileId: string; jobId: string }
-    | { profileId: string; jobDescription: string; company?: string; jobTitle?: string; jobUrl?: string },
+    | { profileId: string; jobDescription: string; company?: string; jobTitle?: string; jobUrl?: string }
+  ) & {
+    /** The builder's style for this profile — kept on the row, so a server render matches the preview. */
+    template?: string | null;
+    style?: ResumeStyle | null;
+  },
 ): Promise<StartJobResult> {
   const actor = await requireActor();
   if (!openRouterConfigured()) {
@@ -229,6 +237,8 @@ export async function startResumeJob(
       team_id: row.team_id,
       created_by: actor.id,
       job_id: jobId,
+      template: templateSpec(input.template ?? "banner").id,
+      style: cleanStyle(input.style),
       started_at: new Date().toISOString(),
     })
     .select("*, job:job_id(id, no, title, company, url, description)")

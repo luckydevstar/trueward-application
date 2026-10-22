@@ -20,7 +20,7 @@ export type BatchResult =
   | { ok: false; error: string };
 
 /** The style fields a PDF is rendered from — anything else in a request is dropped. */
-function cleanStyle(style: ResumeStyle | null | undefined): ResumeStyle | null {
+export function cleanStyle(style: ResumeStyle | null | undefined): ResumeStyle | null {
   if (!style) return null;
   const { fontScale, headerPosition, accent, lineSpacing, justify, header, font } = style;
   return { fontScale, headerPosition, accent, lineSpacing, justify, header, font };

@@ -72,6 +72,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/dashboard/j
 
   return (
     <JobsBoard
+      userId={actor.id}
       profiles={profiles.map((p) => ({ id: p.id, name: p.full_name }))}
       profileId={profile?.id ?? null}
       openJobId={typeof params.job === "string" ? params.job : null}
