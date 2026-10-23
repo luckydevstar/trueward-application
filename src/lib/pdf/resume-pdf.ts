@@ -1,6 +1,7 @@
 import type { jsPDF as JsPdf } from "jspdf";
 
 import {
+  educationYears,
   formatMonthYear,
   renderedExperiences,
   type ResumeDocument,
@@ -595,8 +596,8 @@ export function renderResumePdf(
       advance(main, size * s.lineSpacing * 2);
       on(main);
       write(edu.degree, main.x, main.y, size, { bold: true });
-      if (edu.year) {
-        write(formatMonthYear(edu.year), main.x + main.width, main.y, 8.5 * s.fontScale, {
+      if (edu.year || edu.startYear) {
+        write(educationYears(edu), main.x + main.width, main.y, 8.5 * s.fontScale, {
           color: MUTED,
           align: "right",
         });

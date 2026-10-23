@@ -60,6 +60,7 @@ import {
 import {
   contentSchema,
   fieldErrors,
+  educationYears,
   formatMonthYear,
   monthYearKey,
   resumeDocumentSchema,
@@ -1830,7 +1831,7 @@ function ProfileOnlyPreview({
               <div>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {e.school}
-                  {e.year ? ` · ${formatMonthYear(e.year)}` : ""}
+                  {e.year || e.startYear ? ` · ${educationYears(e)}` : ""}
                 </Typography.Text>
               </div>
             </div>

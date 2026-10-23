@@ -43,6 +43,7 @@ export type EducationValues = {
   school: string;
   degree: string;
   location?: string;
+  startYear?: dayjs.Dayjs | null;
   year?: dayjs.Dayjs | null;
   additionalInfo?: string;
 };
@@ -343,7 +344,7 @@ export function ProfileForm({
                   }}
                 >
                   <Row gutter={12}>
-                    <Col xs={24} sm={9}>
+                    <Col xs={24} sm={8}>
                       <Form.Item
                         name={[field.name, "school"]}
                         label="School"
@@ -352,7 +353,7 @@ export function ProfileForm({
                         <Input />
                       </Form.Item>
                     </Col>
-                    <Col xs={24} sm={9}>
+                    <Col xs={24} sm={7}>
                       <Form.Item
                         name={[field.name, "degree"]}
                         label="Degree"
@@ -361,9 +362,33 @@ export function ProfileForm({
                         <Input placeholder="BSc Computer Science" />
                       </Form.Item>
                     </Col>
-                    <Col xs={12} sm={5}>
-                      <Form.Item name={[field.name, "year"]} label="Year">
+                    <Col xs={10} sm={4}>
+                      <Form.Item
+                        name={[field.name, "startYear"]}
+                        label="Start year"
+                        rules={[{ required: true, message: "When did it start?" }]}
+                      >
                         <DatePicker picker="year" style={{ width: "100%" }} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={10} sm={4}>
+                      <Form.Item
+                        name={[field.name, "year"]}
+                        label="End year"
+                        tooltip="Leave empty while still studying"
+                        dependencies={[["education", field.name, "startYear"]]}
+                        rules={[
+                          ({ getFieldValue }) => ({
+                            validator(_, value: dayjs.Dayjs | null | undefined) {
+                              const start = getFieldValue(["education", field.name, "startYear"]) as dayjs.Dayjs | null | undefined;
+                              return value && start && value.year() < start.year()
+                                ? Promise.reject(new Error("Before the start year"))
+                                : Promise.resolve();
+                            },
+                          }),
+                        ]}
+                      >
+                        <DatePicker picker="year" style={{ width: "100%" }} placeholder="Present" />
                       </Form.Item>
                     </Col>
                     <Col xs={4} sm={1}>

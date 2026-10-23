@@ -52,6 +52,7 @@ export const EXAMPLE_DOCUMENT: ResumeDocument = resumeDocumentSchema.parse({
       {
         school: "Northeastern University",
         degree: "BSc Computer Science",
+        startYear: "2015",
         year: "2019",
         additionalInfo: "Thesis on incremental static regeneration.",
       },

@@ -69,7 +69,8 @@ export function buildMessages(input: {
     education: input.profile.education.map((e) => ({
       school: e.school,
       degree: e.degree,
-      year: monthYearText(e.year),
+      start: monthYearText(e.startYear),
+      end: monthYearText(e.year) ?? (e.startYear ? "present" : null),
       notes: e.additionalInfo ?? null,
     })),
   };

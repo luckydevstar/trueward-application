@@ -342,7 +342,11 @@ export function ProfileDetail({
                       description={
                         <>
                           {e.school}
-                          {e.year ? ` · ${e.year.format("YYYY")}` : ""}
+                          {e.startYear
+                            ? ` · ${e.startYear.format("YYYY")} – ${e.year ? e.year.format("YYYY") : "Present"}`
+                            : e.year
+                              ? ` · ${e.year.format("YYYY")}`
+                              : ""}
                           {e.additionalInfo && (
                             <div style={{ marginTop: 4, whiteSpace: "pre-wrap" }}>
                               <Typography.Text type="secondary">

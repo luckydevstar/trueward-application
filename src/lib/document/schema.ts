@@ -198,14 +198,37 @@ export const employmentSchema = z
     }
   });
 
-export const educationSchema = z.object({
-  school: z.string().min(1),
-  degree: z.string().min(1),
-  year: monthYear.nullish(),
-  location: z.string().nullish(),
-  /** Coursework, honours, thesis — same role as employment's, never rendered. */
-  additionalInfo: z.string().nullish(),
-});
+export const educationSchema = z
+  .object({
+    school: z.string().min(1),
+    degree: z.string().min(1),
+    /** When they started. Asked for on every new entry; older profiles may lack it. */
+    startYear: monthYear.nullish(),
+    /** When they finished — or will. Absent while still studying. */
+    year: monthYear.nullish(),
+    location: z.string().nullish(),
+    /** Coursework, honours, thesis — same role as employment's, never rendered. */
+    additionalInfo: z.string().nullish(),
+  })
+  .superRefine((e, ctx) => {
+    if (e.startYear && e.year && monthYearKey(e.year) < monthYearKey(e.startYear)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["year"],
+        message: `${e.school}: finished ${formatMonthYear(e.year)}, before starting ${formatMonthYear(e.startYear)}`,
+      });
+    }
+  });
+
+/**
+ * An education entry's years as a resume prints them: "2015 – 2019",
+ * "2021 – Present" while still studying, or just "2019" for an entry from
+ * before start years were asked for.
+ */
+export function educationYears(e: { startYear?: MonthYear | null; year?: MonthYear | null }): string {
+  if (e.startYear) return `${formatMonthYear(e.startYear)} – ${formatMonthYear(e.year ?? null, "Present")}`;
+  return formatMonthYear(e.year ?? null);
+}
 
 export const profileSchema = z
   .object({
