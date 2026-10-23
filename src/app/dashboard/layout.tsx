@@ -11,6 +11,7 @@ export default async function DashboardLayout({
       name={actor.name ?? actor.email}
       email={actor.email}
       role={actor.role}
+      financeAccess={actor.financeAccess}
     >
       {children}
     </DashboardShell>

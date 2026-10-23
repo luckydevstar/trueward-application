@@ -1895,3 +1895,18 @@ set test.uid = '00000000-0000-0000-0000-0000000000a1';
 with changed as (update resume_queue_setting set endpoint = 'https://evil.example/' returning 1)
 select 'a subadmin cannot move the runner''s endpoint' as check, count(*) = 0 as expect_true from changed;
 reset role;
+
+\echo ''
+\echo '=== 25. finance access is granted, never taken ==='
+select 'nobody has finance access to start with' as check,
+       count(*) = 0 as expect_true from app_user where finance_access;
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000b1';
+with changed as (update app_user set finance_access = true where id = auth.uid() returning 1)
+select 'a bidder cannot grant it to themselves' as check, count(*) = 0 as expect_true from changed;
+set test.uid = '00000000-0000-0000-0000-00000000000a';
+with changed as (
+  update app_user set finance_access = true where id = '00000000-0000-0000-0000-0000000000b1' returning 1
+)
+select 'nor can their subadmin grant it' as check, count(*) = 0 as expect_true from changed;
+reset role;

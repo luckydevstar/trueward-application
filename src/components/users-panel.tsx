@@ -12,14 +12,16 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { createUser, deleteUser, updateUser } from "@/app/dashboard/users/actions";
+import { createUser, deleteUser, setFinanceAccess, updateUser } from "@/app/dashboard/users/actions";
 import { PageHeader } from "@/components/page-header";
 import { ROLE_META, type UserRole } from "@/lib/roles";
 import { formatDate } from "@/lib/status";
@@ -32,6 +34,8 @@ type Row = {
   createdAt: string;
   allowedTemplates: string[];
   allowedAccents: string[];
+  /** May open Trueward Finance — always true for the super admin. */
+  financeAccess: boolean;
   isSelf: boolean;
   canModify: boolean;
   canEdit: boolean;
@@ -47,6 +51,8 @@ type Props = {
   serviceRoleConfigured: boolean;
   /** The super admin's view: which team each account belongs to. */
   showTeams: boolean;
+  /** The super admin's view: a Finance switch per account. */
+  canGrantFinance: boolean;
   /** Every subadmin, as the candidates to inherit a team being removed. */
   subadmins: Array<{ id: string; label: string }>;
   /** The full style vocabulary, for the per-account allowance pickers. */
@@ -79,10 +85,24 @@ export function UsersPanel({
   subadmins,
   allTemplates,
   allAccents,
+  canGrantFinance,
 }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
   const [form] = Form.useForm<FormValues>();
+  const [financeBusy, setFinanceBusy] = useState<string | null>(null);
+
+  const toggleFinance = async (row: Row, allowed: boolean) => {
+    setFinanceBusy(row.id);
+    const result = await setFinanceAccess(row.id, allowed);
+    setFinanceBusy(null);
+    if (!result.ok) {
+      message.error(result.error);
+      return;
+    }
+    message.success(`${row.name ?? row.email} ${allowed ? "can now view" : "no longer sees"} finance.`);
+    router.refresh();
+  };
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
@@ -231,6 +251,31 @@ export function UsersPanel({
                       ) : (
                         (row.team ?? <Typography.Text type="secondary">—</Typography.Text>)
                       ),
+                  },
+                ]
+              : []),
+            ...(canGrantFinance
+              ? [
+                  {
+                    title: (
+                      <Tooltip title="May open Trueward Finance, read-only. Off until you turn it on.">
+                        <span>Finance</span>
+                      </Tooltip>
+                    ),
+                    key: "finance",
+                    width: 100,
+                    render: (_: unknown, row: Row) => (
+                      <Tooltip title={row.role === "super_admin" ? "The super admin always has access" : undefined}>
+                        <Switch
+                          size="small"
+                          checked={row.financeAccess}
+                          disabled={row.role === "super_admin"}
+                          loading={financeBusy === row.id}
+                          aria-label={`Finance access for ${row.name ?? row.email}`}
+                          onChange={(next) => toggleFinance(row, next)}
+                        />
+                      </Tooltip>
+                    ),
                   },
                 ]
               : []),

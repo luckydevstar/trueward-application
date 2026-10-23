@@ -26,6 +26,8 @@ export type CurrentActor = Actor & {
   /** Null means "use the role default" — see src/lib/style-access.ts. */
   allowedTemplates: string[] | null;
   allowedAccents: string[] | null;
+  /** May open Trueward Finance: granted, or the super admin. */
+  financeAccess: boolean;
 };
 
 export const requireActor = cache(async (): Promise<CurrentActor> => {
@@ -39,11 +41,12 @@ export const requireActor = cache(async (): Promise<CurrentActor> => {
   const userId = auth?.claims?.sub;
   if (!userId) redirect("/login");
 
+  // `*` rather than a column list: finance_access arrives with a schema
+  // update, and naming a column the database doesn't have yet would fail this
+  // read — which signs everyone out — until the SQL is run.
   const { data } = await supabase
     .from("app_user")
-    .select(
-      "id, email, name, role, created_by_id, allowed_templates, allowed_accents",
-    )
+    .select("*")
     .eq("id", userId)
     .single();
 
@@ -61,5 +64,6 @@ export const requireActor = cache(async (): Promise<CurrentActor> => {
     createdById: data.created_by_id,
     allowedTemplates: data.allowed_templates,
     allowedAccents: data.allowed_accents,
+    financeAccess: data.role === "super_admin" || data.finance_access === true,
   };
 });

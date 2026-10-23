@@ -38,6 +38,8 @@ export type AppUserRow = {
    */
   allowed_templates: string[] | null;
   allowed_accents: string[] | null;
+  /** May open Trueward Finance (read-only). The super admin always may. */
+  finance_access: boolean;
   created_at: string;
 };
 
@@ -292,6 +294,8 @@ type Defaulted =
   | "reasoning_tokens"
   | "output"
   | "attempts"
+  // Off until the super admin grants it.
+  | "finance_access"
   // Numbers the database assigns.
   | "no"
   | "no_part"

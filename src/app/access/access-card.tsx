@@ -64,7 +64,7 @@ const LOOK: Record<Props["status"], { icon: ReactNode; tint: string; title: stri
 
 /**
  * The page a browser sees before it is approved. The same file lives in the
- * application and the calendar.
+ * application, the calendar and finance.
  */
 export function AccessCard({ site, status, code, contact }: Props) {
   const router = useRouter();

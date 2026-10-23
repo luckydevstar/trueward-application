@@ -45,7 +45,7 @@ export async function requestActor(request: Request): Promise<{ db: Db; actor: C
 
   const { data } = await db
     .from("app_user")
-    .select("id, email, name, role, created_by_id, allowed_templates, allowed_accents")
+    .select("*") // `*`: see requireActor() on finance_access
     .eq("id", userId)
     .maybeSingle();
   if (!data) return null;
@@ -60,6 +60,7 @@ export async function requestActor(request: Request): Promise<{ db: Db; actor: C
       createdById: data.created_by_id,
       allowedTemplates: data.allowed_templates,
       allowedAccents: data.allowed_accents,
+      financeAccess: data.role === "super_admin" || data.finance_access === true,
     },
   };
 }

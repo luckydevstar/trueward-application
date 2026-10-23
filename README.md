@@ -698,6 +698,17 @@ application's events from `application_interviews()` (in the calendar's
 schema, which reads the application under this app's own rules); the
 event's creator and the super admin can change the outcome from there.
 
+### Finance access
+
+[Trueward Finance](https://github.com/luckydevstar/trueward-finance)
+(`finance.trueward.guru`) tracks the team's money by member and month. Only
+the super admin may open it until they turn on the **Finance** switch for an
+account on the Users page (`app_user.finance_access`, schema part 1), which
+gives read-only access; the finance app's own policies enforce it. Whoever has
+access sees a Finance link in the menu. The switch goes through the users
+actions with the service role, like every other account change — `app_user`
+still has no update policy.
+
 ### Usage
 
 `/dashboard/usage` — what generation has cost, and who spent it, from the
@@ -772,7 +783,9 @@ so it reads this browser's `tw_device` cookie and sends it as the
 device, approved the same way.
 
 `src/lib/gate.ts` and `src/app/access/` are identical copies in the
-application and the calendar — change both. The schema and the reasoning
+application, the calendar and
+[trueward-finance](https://github.com/luckydevstar/trueward-finance) — change
+all three. The schema and the reasoning
 behind it are in trueward-auth's README. Off unless `GATE_ENABLED=true`; the
 other variables are in `.env.example`.
 

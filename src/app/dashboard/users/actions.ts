@@ -220,6 +220,28 @@ export async function updateUser(input: {
  * is an Auth API call. If it fails after the transfer, the old subadmin is
  * left with an empty team — harmless, and the same button finishes the job.
  */
+/**
+ * Turns someone's access to Trueward Finance on or off. The super admin's
+ * call alone — finance shows every member's money — and never their own:
+ * they always have it.
+ */
+export async function setFinanceAccess(userId: string, allowed: boolean): Promise<ActionResult> {
+  const actor = await requireActor();
+  if (actor.role !== "super_admin") return { ok: false, error: "Only the super admin decides who sees finance." };
+  if (userId === actor.id) return { ok: false, error: "The super admin always has finance access." };
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("app_user")
+    .update({ finance_access: allowed })
+    .eq("id", userId)
+    .select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!data?.length) return { ok: false, error: "User not found." };
+  revalidatePath("/dashboard/users");
+  return { ok: true };
+}
+
 export async function deleteUser(
   targetId: string,
   inheritorId?: string,

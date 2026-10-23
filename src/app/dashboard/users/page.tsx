@@ -42,9 +42,8 @@ export default async function UsersPage() {
   const [{ data }, profileTeams] = await Promise.all([
     supabase
       .from("app_user")
-      .select(
-        "id, email, name, role, created_by_id, created_at, allowed_templates, allowed_accents",
-      )
+      // `*`: see requireActor() on finance_access.
+      .select("*")
       .order("created_at"),
     // Only the super admin's view counts profiles per team, for the delete
     // dialog: removing a subadmin should say what it is about to move.
@@ -84,6 +83,7 @@ export default async function UsersPage() {
       createdAt: u.created_at,
       allowedTemplates: u.allowed_templates ?? [],
       allowedAccents: u.allowed_accents ?? [],
+      financeAccess: u.role === "super_admin" || Boolean(u.finance_access),
       isSelf: u.id === actor.id,
       canModify: canModifyUser(actor, target),
       canEdit: canEditUser(actor, target),
@@ -111,6 +111,8 @@ export default async function UsersPage() {
       rows={rows}
       creatableRoles={creatableRoles(actor.role)}
       showTeams={everyTeam}
+      // Who may open Trueward Finance is the super admin's call alone.
+      canGrantFinance={actor.role === "super_admin"}
       subadmins={users
         .filter((u) => u.role === "subadmin")
         .map((u) => ({ id: u.id, label: u.name ?? u.email }))}

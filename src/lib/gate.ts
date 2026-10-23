@@ -3,9 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 /**
  * The device gate: only approved browsers reach this site at all.
  *
- * The same file lives in trueward-application and trueward-calendar — keep
- * them identical. The schema, and the console where devices are approved, are
- * in trueward-auth.
+ * The same file lives in trueward-application, trueward-calendar and
+ * trueward-finance — keep them identical. The schema, and the console where
+ * devices are approved, are in trueward-auth.
  *
  * How it works:
  *

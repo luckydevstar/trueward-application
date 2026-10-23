@@ -793,6 +793,19 @@ create index if not exists job_description_md5_idx on job (created_by, md5(descr
 create unique index if not exists application_no_key on application (no, no_part);
 create index if not exists application_job_idx on application (job_id);
 
+-- --------------------------------------------------------------------------
+-- Finance access
+--
+-- Who may open Trueward Finance (finance.trueward.guru) besides the super
+-- admin: off for everyone until the super admin turns it on, on the Users
+-- page. Read-only access — only the super admin records money there. The
+-- finance schema (trueward-finance/supabase/schema.sql) adds the same column,
+-- so the two can be applied in either order. Changed only through the users
+-- actions with the service role: app_user has no update policy, on purpose.
+-- --------------------------------------------------------------------------
+
+alter table app_user add column if not exists finance_access boolean not null default false;
+
 -- The queue runner: where pg_cron calls each minute, and the secret it proves
 -- itself with. Only the super admin may change the endpoint (a policy in part
 -- 4), so nobody can point the secret somewhere else; nobody at all reads the

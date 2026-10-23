@@ -4,6 +4,7 @@ import {
   AppstoreOutlined,
   BarChartOutlined,
   BlockOutlined,
+  ExportOutlined,
   ExperimentOutlined,
   FileTextOutlined,
   IdcardOutlined,
@@ -13,6 +14,7 @@ import {
   TableOutlined,
   TeamOutlined,
   UserOutlined,
+  WalletOutlined,
 } from "@ant-design/icons";
 import { Avatar, Button, Drawer, Dropdown, Grid, Layout, Menu, Tag, Typography } from "antd";
 import Link from "next/link";
@@ -28,10 +30,12 @@ type Props = {
   name: string;
   email: string;
   role: UserRole;
+  /** Whether to offer the way to Trueward Finance. */
+  financeAccess?: boolean;
   children: ReactNode;
 };
 
-export function DashboardShell({ name, email, role, children }: Props) {
+export function DashboardShell({ name, email, role, financeAccess = false, children }: Props) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -96,6 +100,21 @@ export function DashboardShell({ name, email, role, children }: Props) {
             icon: <BarChartOutlined />,
             label: <Link href="/dashboard/usage">Usage</Link>,
             title: "Usage",
+          },
+        ]
+      : []),
+    // A separate app; the link is offered to whoever may open it.
+    ...(financeAccess
+      ? [
+          {
+            key: "finance",
+            icon: <WalletOutlined />,
+            label: (
+              <a href="https://finance.trueward.guru" target="_blank" rel="noreferrer">
+                Finance <ExportOutlined style={{ fontSize: 11, opacity: 0.6 }} />
+              </a>
+            ),
+            title: "",
           },
         ]
       : []),
