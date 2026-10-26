@@ -701,11 +701,35 @@ policy decides who may mark one — the event's creator, or the super admin.
 Interviews are calendar events. An event in
 [trueward-calendar](https://github.com/luckydevstar/trueward-calendar) is
 linked to an application by its number (type A007) and given an outcome —
-scheduled, passed, failed, cancelled; the event then shows that
+scheduled, passed, failed, follow up, cancelled; the event then shows that
 application's resume, posting and job description. The **Interviews** column in Applications lists each
 application's events from `application_interviews()` (in the calendar's
 schema, which reads the application under this app's own rules); the
 event's creator and the super admin can change the outcome from there.
+
+**Interviews that didn't come from an application** — one scheduled by
+email, say — are added on this page with **Add interview** (subadmins and the
+super admin, who use the calendar; bidders get no button). The form writes a
+`calendar_event` straight from the browser, under the calendar's own
+policies: a calendar (the one named for interviews, if any), the day and
+times in the browser's zone, the company and role, and optionally the
+candidate, the job link, a location or meeting link, notes, an application to
+link, and the outcome. Because it *is* the event, the calendar shows it at
+once, and it stays an interview there without an application.
+
+- Such a row shows its own company, role and candidate (the name is read
+  under `candidate_profile`'s policies), its own job link, and no resume or
+  job description. `application_interviews()` returns it to everyone who can
+  use the calendar and to whoever may use its candidate's profile, so a
+  bidder sees the ones booked for the profiles assigned to them. Linked
+  interviews show their application as before.
+- The event's creator and the super admin can change one (the same form,
+  filled in) or delete it — which takes it off the calendar too. One with
+  files attached is left for the calendar to delete, so the files go with it.
+- The Applications grid lists only linked interviews; one booked on its own
+  has no application to sit beside.
+- The columns come with the calendar's `schema.sql`. Until it is run again
+  the page lists linked interviews as before, and saving says to run it.
 
 ### Finance access
 
@@ -713,7 +737,9 @@ event's creator and the super admin can change the outcome from there.
 (`finance.trueward.guru`) tracks the team's money by member and month. Only
 the super admin may open it until they turn on the **Finance** switch for an
 account on the Users page (`app_user.finance_access`, schema part 1), which
-gives read-only access; the finance app's own policies enforce it. Whoever has
+gives read-only access to **their own part only**: their share of each
+transaction they're in, their own totals and their own bar in the chart, never
+another member's. The finance app's own policies enforce it. Whoever has
 access sees a Finance link in the menu. The switch goes through the users
 actions with the service role, like every other account change — `app_user`
 still has no update policy.

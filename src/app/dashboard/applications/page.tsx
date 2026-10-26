@@ -74,6 +74,9 @@ export default async function ApplicationsPage({ searchParams }: PageProps<"/das
 
   const byApplication: Record<string, Interview[]> = {};
   for (const i of ((interviews.data ?? []) as Interview[])) {
+    // One booked in its own right has no application to sit beside; the
+    // Interviews page lists it.
+    if (!i.application_id) continue;
     (byApplication[i.application_id] ??= []).push(i);
   }
 
