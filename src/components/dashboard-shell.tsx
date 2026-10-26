@@ -4,6 +4,7 @@ import {
   AppstoreOutlined,
   BarChartOutlined,
   BlockOutlined,
+  CalendarOutlined,
   ExportOutlined,
   ExperimentOutlined,
   FileTextOutlined,
@@ -61,6 +62,12 @@ export function DashboardShell({ name, email, role, financeAccess = false, child
       icon: <ProfileOutlined />,
       label: <Link href="/dashboard/applications">Applications</Link>,
       title: "Applications",
+    },
+    {
+      key: "/dashboard/interviews",
+      icon: <CalendarOutlined />,
+      label: <Link href="/dashboard/interviews">Interviews</Link>,
+      title: "Interviews",
     },
     {
       key: "/dashboard/profiles",

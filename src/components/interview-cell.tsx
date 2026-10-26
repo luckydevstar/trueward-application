@@ -4,27 +4,9 @@ import { CalendarOutlined } from "@ant-design/icons";
 import { App, Button, Popover, Select, Tag, Typography } from "antd";
 import { useState } from "react";
 
-import { createClient } from "@/lib/supabase/client";
+import { calendarLink, markInterview, OUTCOME, type Interview, type InterviewOutcome } from "@/lib/interviews";
 
-/** An interview: a calendar event linked to the application (Trueward Calendar). */
-export type Interview = {
-  application_id: string;
-  event_id: string;
-  title: string;
-  starts_at: string;
-  ends_at: string;
-  outcome: "scheduled" | "passed" | "failed" | "cancelled" | null;
-  created_by: string | null;
-};
-
-const OUTCOME: Record<NonNullable<Interview["outcome"]>, { label: string; color: string }> = {
-  scheduled: { label: "Scheduled", color: "blue" },
-  passed: { label: "Passed", color: "green" },
-  failed: { label: "Failed", color: "red" },
-  cancelled: { label: "Cancelled", color: "default" },
-};
-
-const CALENDAR_URL = process.env.NEXT_PUBLIC_CALENDAR_URL ?? "https://calendar.trueward.guru";
+export type { Interview };
 
 /**
  * An application's interviews, in the Applications grid: the latest outcome
@@ -53,16 +35,12 @@ export function InterviewCell({
   const latest = interviews[interviews.length - 1];
   const look = OUTCOME[latest.outcome ?? "scheduled"];
 
-  const mark = async (interview: Interview, outcome: NonNullable<Interview["outcome"]>) => {
+  const mark = async (interview: Interview, outcome: InterviewOutcome) => {
     setSaving(interview.event_id);
-    const { data, error } = await createClient()
-      .from("calendar_event" as never)
-      .update({ interview_outcome: outcome } as never)
-      .eq("id", interview.event_id)
-      .select("id");
+    const problem = await markInterview(interview.event_id, outcome);
     setSaving(null);
-    if (error || !(data as unknown[] | null)?.length) {
-      message.error(error?.message ?? "Only the event's creator or the super admin can mark it.");
+    if (problem) {
+      message.error(problem);
       return;
     }
     setInterviews((all) => all.map((i) => (i.event_id === interview.event_id ? { ...i, outcome } : i)));
@@ -107,7 +85,7 @@ export function InterviewCell({
         );
       })}
       {canOpenCalendar && (
-        <Button size="small" icon={<CalendarOutlined />} href={CALENDAR_URL} target="_blank" rel="noreferrer">
+        <Button size="small" icon={<CalendarOutlined />} href={calendarLink(latest)} target="_blank" rel="noreferrer">
           Open the calendar
         </Button>
       )}

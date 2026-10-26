@@ -689,6 +689,15 @@ returns its file.
 
 ### Interviews
 
+`/dashboard/interviews` is the sheet of them: upcoming, waiting on a follow-up,
+or past, each with its application's number, candidate and time, the
+outcome — scheduled, passed, failed, follow up, cancelled — marked right
+there, and the posting, the resume that was sent, the job description and
+the calendar event a click away. It reads `application_interviews()` and
+writes the outcome on the calendar event (`src/lib/interviews.ts`), so the
+calendar, the Applications grid and this page are one record; the calendar's
+policy decides who may mark one — the event's creator, or the super admin.
+
 Interviews are calendar events. An event in
 [trueward-calendar](https://github.com/luckydevstar/trueward-calendar) is
 linked to an application by its number (type A007) and given an outcome —
