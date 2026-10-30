@@ -4,12 +4,19 @@ import { NextResponse, type NextRequest } from "next/server";
 import { runGate } from "@/lib/gate";
 
 /**
- * Paths the device gate lets through unchecked: the page that explains it, and
+ * Paths the device gate lets through unchecked: the page that explains it,
  * UploadThing's server-to-server callback, which carries no browser cookies
- * and authorizes uploads itself.
+ * and authorizes uploads itself, and the desktop clock's routes, which take an
+ * admin's password instead of an approved device (src/lib/clock.ts).
  */
 const GATE_OPEN = (pathname: string) =>
-  pathname === "/access" || pathname.startsWith("/api/uploadthing") || pathname === QUEUE_RUNNER;
+  pathname === "/access" ||
+  pathname.startsWith("/api/uploadthing") ||
+  pathname === QUEUE_RUNNER ||
+  pathname.startsWith(CLOCK);
+
+/** The desktop clock's sign-in, renewal and assistant. */
+const CLOCK = "/api/clock/";
 
 /**
  * The resume queue runner, which pg_cron calls each minute with a secret only
@@ -19,12 +26,13 @@ const GATE_OPEN = (pathname: string) =>
 const QUEUE_RUNNER = "/api/cron/resume-jobs";
 
 /**
- * Routes that check who is signed in themselves, for the Chrome extension
- * (bearer token) as well as the app (cookies). They answer 401 rather than
- * being redirected to /login — but stay behind the device gate.
+ * Routes that check who is signed in themselves, for the Chrome extension and
+ * the desktop clock (bearer token) as well as the app (cookies). They answer
+ * 401 rather than being redirected to /login — and all but the clock's stay
+ * behind the device gate.
  */
 const SELF_AUTHENTICATED = (pathname: string) =>
-  pathname.startsWith("/api/ext/") || pathname.startsWith("/api/resume-jobs/");
+  pathname.startsWith("/api/ext/") || pathname.startsWith("/api/resume-jobs/") || pathname.startsWith(CLOCK);
 
 /**
  * Runs before every matched request. First the device gate (src/lib/gate.ts):

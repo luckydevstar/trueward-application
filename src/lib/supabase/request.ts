@@ -24,8 +24,12 @@ export async function requestClient(request: Request): Promise<{ db: Db; token: 
   const header = request.headers.get("authorization");
   const token = header?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
   if (!token) return { db: await createClient(), token: null };
+  return { db: tokenClient(token), token };
+}
 
-  const db = createServerClient<Database>(
+/** Supabase as the holder of this access token — RLS reads it like a cookie session. */
+export function tokenClient(token: string): Db {
+  return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -33,7 +37,6 @@ export async function requestClient(request: Request): Promise<{ db: Db; token: 
       global: { headers: { Authorization: `Bearer ${token}` } },
     },
   );
-  return { db, token };
 }
 
 /** The signed-in person behind a request, or null — never a redirect, for API routes. */

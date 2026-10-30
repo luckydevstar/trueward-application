@@ -687,6 +687,28 @@ server, uploads it to UploadThing and attaches it to the new row — the same
 outcome as the builder's button, and the same number. A job already tracked
 returns its file.
 
+### Desktop clock
+
+[trueward-clock](../trueward-clock) is an Electron clock with todos, notes and
+alarms, and an assistant. It signs in with an admin's email and password
+(`/api/clock/login`, then a bearer token) and asks `/api/clock/assistant`,
+which answers with the
+resume builder's model and reasoning (`generation_setting`) through
+`completeText()`. The context is built in `src/lib/assistant.ts` with the
+caller's own client — application counts and the recent ones, older ones
+matching words in the question, `application_interviews()`, and the next two
+weeks of calendar events — so the model sees only what the person could open.
+The todos live on the desktop and come with the question. Each question is
+logged in `resume_generation` as source `assistant`, with its own hourly
+limit; the Usage page shows them under "All".
+
+`/api/clock/*` is outside the device gate (`GATE_OPEN` in `src/proxy.ts`), so
+the clock never needs approving in Trueward Auth. In exchange those routes
+serve admins only — the super admin and subadmins — checked at sign-in, on
+every renewal and on every question (`src/lib/clock.ts`); anyone else's
+session is signed out on the spot with a 403. The data is no wider open for
+it: the token is the admin's own and RLS still decides what it reads.
+
 ### Interviews
 
 `/dashboard/interviews` is the sheet of them: upcoming, waiting on a follow-up,

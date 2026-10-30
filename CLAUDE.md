@@ -186,6 +186,11 @@ only the response contract. Keep it that way: no client-side model calls, and
 the model only ever writes `content`, which is what keeps the split below
 meaningful.
 
+**The desktop clock's routes (`/api/clock/*`) skip the device gate** and take
+an admin's password instead (`src/lib/clock.ts`). Every one of them checks
+`isAdminRole()` — a new clock route must too, or it hands any account a way
+around the gate.
+
 ## The profile / content split
 
 `src/lib/document/schema.ts` splits a resume in two:
