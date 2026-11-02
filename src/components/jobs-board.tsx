@@ -47,7 +47,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { MAX_RUNNING_JOBS } from "@/lib/ai/defaults";
 import { MAX_JOB_DESCRIPTION } from "@/lib/jobs/fields";
-import { TEMPLATES } from "@/lib/pdf/templates";
+import { TEMPLATES, templateSpec } from "@/lib/pdf/templates";
 import { useProfileStyle } from "@/lib/profile-style";
 
 export type BoardJob = {
@@ -237,7 +237,12 @@ export function JobsBoard({ userId, profiles, profileId, openJobId, jobs }: Prop
       profileId,
       jobIds: selected,
       template: chosenTemplate,
-      style: preset.style,
+      // A template picked here, not the profile's own, comes in the header
+      // alignment it was designed in — as picking it in the builder does.
+      style:
+        template && template !== preset.template
+          ? { ...preset.style, headerPosition: templateSpec(template).align ?? preset.style.headerPosition }
+          : preset.style,
       regenerate,
     });
     setGenerating(false);

@@ -6,7 +6,7 @@ import {
   renderedExperiences,
   type ResumeDocument,
 } from "@/lib/document/schema";
-import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
+import { headerSegments, resolveHeaderFields, type HeaderSegment } from "@/lib/resume-header";
 import { pdfFamily, prepareFont, type FontLoader } from "@/lib/pdf/fonts";
 import {
   mix,
@@ -15,7 +15,9 @@ import {
   templateSpec,
   tint,
   type RGB,
+  type SectionId,
   type TemplateSpec,
+  type Tone,
 } from "@/lib/pdf/templates";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
@@ -38,6 +40,13 @@ import type { ResumeStyle } from "@/lib/supabase/types";
 
 const INK: RGB = [30, 41, 59];
 const MUTED: RGB = [100, 116, 139];
+const WHITE: RGB = [255, 255, 255];
+
+/** Where the sections go when a template doesn't say otherwise. */
+const DEFAULT_ORDER: SectionId[] = ["summary", "skills", "experience", "education"];
+
+/** The drawn icons: one per kind of contact detail, and a calendar for dates. */
+type IconKind = HeaderSegment["kind"] | "calendar";
 
 const ACCENTS: Record<string, RGB> = {
   slate: [30, 41, 59],
@@ -119,7 +128,7 @@ export function renderResumePdf(
     // The banner and the wave belong to the first page only. Repeating either
     // on page two reads as a second resume rather than a continuation.
     if (spec.header === "banner" && page === 1) {
-      pdf.setFillColor(...s.accent);
+      pdf.setFillColor(...bannerFill);
       pdf.rect(0, 0, pageWidth, bannerHeight(), "F");
     }
     if (spec.header === "wave" && page === 1) {
@@ -129,6 +138,9 @@ export function renderResumePdf(
 
   const bannerHeight = () =>
     (contactParts.length ? 118 : 96) * Math.max(0.9, s.fontScale);
+
+  /** The banner's colour: the accent, or a deeper shade of it where the template asks. */
+  const bannerFill = spec.fillShade ? shade(s.accent, spec.fillShade) : s.accent;
 
   /** The wave panel: the header's height, and the curve's dip below it. */
   const waveHeight = () => (contactParts.length ? 132 : 108) * Math.max(0.9, s.fontScale);
@@ -191,12 +203,18 @@ export function renderResumePdf(
   };
 
   let lastPage = 1;
+  /** Per page, the lowest point content reached — see the timeline, at the end. */
+  const reach = new Map<number, number>();
+  /** Where the timeline puts a dot: each section heading. */
+  const dots: Array<{ page: number; y: number }> = [];
   paintChrome(1);
 
   /** Moves a flow down, opening or stepping onto a page when it runs out. */
   const advance = (flow: Flow, height: number) => {
     if (flow.y + height <= bottom) return;
 
+    // How far down this page the content reached, for the timeline's line.
+    reach.set(flow.page, Math.max(reach.get(flow.page) ?? 0, flow.y));
     flow.page += 1;
     if (flow.page > lastPage) {
       pdf.addPage();
@@ -249,6 +267,86 @@ export function renderResumePdf(
     });
   };
 
+  /** A colour a template names by role — see `Tone` in templates.ts. */
+  const tone = (t: Tone | undefined, fallback: RGB): RGB =>
+    t === "accent"
+      ? s.accent
+      : t === "ink"
+        ? INK
+        : t === "muted"
+          ? MUTED
+          : t === "highlight"
+            ? (spec.highlight ?? s.accent)
+            : fallback;
+
+  /** How wide text will be drawn, letterspacing included. */
+  const measure = (text: string, size: number, bold = false, space = 0) => {
+    pdf.setFont(s.font, bold ? "bold" : "normal");
+    pdf.setFontSize(size);
+    return pdf.getTextWidth(text) + space * Math.max(0, text.length - 1);
+  };
+
+  /**
+   * Text that may be letterspaced, aligned by hand when it is: jsPDF centres
+   * and right-aligns on the width without its charSpace, so spaced capitals
+   * left to it drift off centre by half their spacing.
+   */
+  const writeSpaced = (
+    text: string,
+    x: number,
+    y: number,
+    size: number,
+    opts: { bold?: boolean; color?: RGB; space?: number; align?: "left" | "center" | "right" } = {},
+  ) => {
+    if (!opts.space) {
+      write(text, x, y, size, { bold: opts.bold, color: opts.color, align: opts.align });
+      return;
+    }
+    const width = measure(text, size, opts.bold, opts.space);
+    const left = opts.align === "center" ? x - width / 2 : opts.align === "right" ? x - width : x;
+    write(text, left, y, size, { bold: opts.bold, color: opts.color, charSpace: opts.space });
+  };
+
+  /**
+   * A small icon, drawn rather than set as a glyph — so the text an
+   * applicant-tracking system extracts is the detail alone, with no stray
+   * symbol characters. Sits on the x-height of text of `size` on baseline `y`;
+   * returns its width. `ground` is the colour behind it, for the pin's hole.
+   */
+  const icon = (kind: IconKind, x: number, y: number, size: number, color: RGB, ground: RGB = WHITE) => {
+    const u = size * 0.92;
+    const cx = x + u / 2;
+    const cy = y - size * 0.33;
+    pdf.setDrawColor(...color);
+    pdf.setFillColor(...color);
+    pdf.setLineWidth(Math.max(0.45, u * 0.075));
+    if (kind === "email") {
+      const w = u * 0.94;
+      const h = u * 0.66;
+      pdf.rect(cx - w / 2, cy - h / 2, w, h, "S");
+      pdf.line(cx - w / 2, cy - h / 2, cx, cy + h * 0.08);
+      pdf.line(cx, cy + h * 0.08, cx + w / 2, cy - h / 2);
+    } else if (kind === "phone") {
+      pdf.roundedRect(cx - u * 0.25, cy - u * 0.47, u * 0.5, u * 0.94, u * 0.09, u * 0.09, "S");
+      pdf.line(cx - u * 0.08, cy + u * 0.33, cx + u * 0.08, cy + u * 0.33);
+    } else if (kind === "location") {
+      pdf.circle(cx, cy - u * 0.13, u * 0.31, "F");
+      pdf.triangle(cx - u * 0.27, cy - u * 0.02, cx + u * 0.27, cy - u * 0.02, cx, cy + u * 0.48, "F");
+      pdf.setFillColor(...ground);
+      pdf.circle(cx, cy - u * 0.13, u * 0.11, "F");
+    } else if (kind === "link") {
+      pdf.circle(cx, cy, u * 0.44, "S");
+      pdf.ellipse(cx, cy, u * 0.18, u * 0.44, "S");
+      pdf.line(cx - u * 0.44, cy, cx + u * 0.44, cy);
+    } else {
+      pdf.rect(cx - u * 0.42, cy - u * 0.34, u * 0.84, u * 0.76, "S");
+      pdf.rect(cx - u * 0.42, cy - u * 0.34, u * 0.84, u * 0.2, "F");
+      pdf.line(cx - u * 0.2, cy - u * 0.48, cx - u * 0.2, cy - u * 0.3);
+      pdf.line(cx + u * 0.2, cy - u * 0.48, cx + u * 0.2, cy - u * 0.3);
+    }
+    return u;
+  };
+
   /**
    * A block of body copy, justified when the style asks for it.
    *
@@ -280,9 +378,10 @@ export function renderResumePdf(
 
   const heading = (flow: Flow, title: string, color = s.accent) => {
     const size = 10 * s.fontScale;
-    // A heading with no room for a line beneath it is a heading stranded at the
-    // foot of a page, so both are reserved together.
-    advance(flow, 34);
+    // A heading with no room beneath it is a heading stranded at the foot of a
+    // page, so it's reserved together with the first two lines of what follows
+    // — the heading alone takes about 34pt, and an entry's first rows another 28.
+    advance(flow, 62);
     flow.y += spec.sectionGap;
     on(flow);
 
@@ -304,50 +403,157 @@ export function renderResumePdf(
       return;
     }
 
-    const label = title.toUpperCase();
-    const spaced = { charSpace: spec.headingSpace };
+    if (spec.heading === "band" || spec.heading === "inline" || spec.heading === "bar") {
+      const label = title.toUpperCase();
+      const spaced = { charSpace: spec.headingSpace };
 
-    /**
-     * The heading on a pale strip of the accent, full width. Darker text than
-     * the accent itself: the accent on its own tint is too close in value to
-     * read comfortably at heading size.
-     */
-    if (spec.heading === "band") {
-      const top = flow.y - size * 0.95 - 4;
-      const height = size + 9;
-      pdf.setFillColor(...tint(color, 0.9));
+      /**
+       * The heading on a pale strip of the accent, full width. Darker text than
+       * the accent itself: the accent on its own tint is too close in value to
+       * read comfortably at heading size.
+       */
+      if (spec.heading === "band") {
+        const top = flow.y - size * 0.95 - 4;
+        const height = size + 9;
+        pdf.setFillColor(...tint(color, 0.9));
+        pdf.rect(flow.x, top, flow.width, height, "F");
+        write(label, flow.x + 8, flow.y, size, { bold: true, color: shade(color, 0.2), ...spaced });
+        flow.y = top + height + 13;
+        return;
+      }
+
+      write(label, flow.x, flow.y, size, { bold: true, color, ...spaced });
+
+      /**
+       * A hairline from the end of the heading to the margin, on the middle of
+       * its capitals: the heading and the rule read as one line, which takes
+       * less height than a rule underneath and still divides the page.
+       */
+      if (spec.heading === "inline") {
+        pdf.setFont(s.font, "bold");
+        pdf.setFontSize(size);
+        const width =
+          pdf.getTextWidth(label) + (spec.headingSpace ?? 0) * Math.max(0, label.length - 1);
+        const lineY = flow.y - size * 0.34;
+        pdf.setDrawColor(...tint(color, 0.6));
+        pdf.setLineWidth(0.7);
+        pdf.line(flow.x + width + 8, lineY, flow.x + flow.width, lineY);
+        flow.y += size * 0.8 + 7;
+        return;
+      }
+
+      // "bar": a short thick stub beneath. It anchors the heading without
+      // drawing a line across the whole column.
+      flow.y += 5;
+      pdf.setFillColor(...color);
+      pdf.rect(flow.x, flow.y, 34, 2.4, "F");
+      flow.y += 12;
+      return;
+    }
+
+    // ---- the headings added with the second set of templates
+    const t = spec.headingText ?? {};
+    const hs = size * (t.scale ?? 1);
+    const label = t.titleCase ? title : title.toUpperCase();
+    const bold = t.weight !== "normal";
+    const ink = tone(t.tone, color);
+    const space = spec.headingSpace;
+    const rule = spec.ruleTone === "pale" ? tint(s.accent, 0.6) : tone(spec.ruleTone, tint(s.accent, 0.6));
+    const capMiddle = flow.y - hs * 0.34;
+
+    // In the left column, level with the first line of what follows.
+    if (spec.layout === "labels") {
+      writeSpaced(label, spec.margin, flow.y, hs, { bold, color: ink, space });
+      return;
+    }
+    if (spec.layout === "timeline") dots.push({ page: flow.page, y: capMiddle });
+
+    // A drawn ">" before the heading, as a shell prompt — not typed, so the
+    // heading an applicant-tracking system reads is the word alone.
+    let x = flow.x;
+    if (t.chevron) {
+      pdf.setDrawColor(...s.accent);
+      pdf.setLineWidth(1.1);
+      pdf.line(x, flow.y - hs * 0.72, x + hs * 0.4, capMiddle);
+      pdf.line(x + hs * 0.4, capMiddle, x, flow.y + hs * 0.02);
+      x += hs * 0.85;
+    }
+
+    if (spec.heading === "rule") {
+      writeSpaced(label, x, flow.y, hs, { bold, color: ink, space });
+      const y = flow.y + hs * 0.45;
+      pdf.setDrawColor(...rule);
+      pdf.setLineWidth(0.6);
+      pdf.line(flow.x, y, flow.x + flow.width, y);
+      flow.y = y + 12;
+      return;
+    }
+
+    if (spec.heading === "center") {
+      const width = measure(label, hs, bold, space);
+      const middle = flow.x + flow.width / 2;
+      writeSpaced(label, middle, flow.y, hs, { bold, color: ink, space, align: "center" });
+      pdf.setDrawColor(...rule);
+      pdf.setLineWidth(0.6);
+      pdf.line(flow.x, capMiddle, middle - width / 2 - 10, capMiddle);
+      pdf.line(middle + width / 2 + 10, capMiddle, flow.x + flow.width, capMiddle);
+      flow.y += hs * 0.8 + 8;
+      return;
+    }
+
+    // Reversed out of a solid band: white on a deep accent, ink on a pale one.
+    if (spec.heading === "fill") {
+      const top = flow.y - hs * 0.95 - 4;
+      const height = hs + 9;
+      pdf.setFillColor(...s.accent);
       pdf.rect(flow.x, top, flow.width, height, "F");
-      write(label, flow.x + 8, flow.y, size, { bold: true, color: shade(color, 0.2), ...spaced });
+      writeSpaced(label, x + 8, flow.y, hs, {
+        bold,
+        color: prefersLightText(s.accent) ? WHITE : INK,
+        space,
+      });
       flow.y = top + height + 13;
       return;
     }
 
-    write(label, flow.x, flow.y, size, { bold: true, color, ...spaced });
-
-    /**
-     * A hairline from the end of the heading to the margin, on the middle of
-     * its capitals: the heading and the rule read as one line, which takes
-     * less height than a rule underneath and still divides the page.
-     */
-    if (spec.heading === "inline") {
-      pdf.setFont(s.font, "bold");
-      pdf.setFontSize(size);
-      const width =
-        pdf.getTextWidth(label) + (spec.headingSpace ?? 0) * Math.max(0, label.length - 1);
-      const lineY = flow.y - size * 0.34;
-      pdf.setDrawColor(...tint(color, 0.6));
-      pdf.setLineWidth(0.7);
-      pdf.line(flow.x + width + 8, lineY, flow.x + flow.width, lineY);
-      flow.y += size * 0.8 + 7;
+    if (spec.heading === "tab") {
+      const padX = 8;
+      const padY = 4;
+      const width = measure(label, hs, bold, space) + padX * 2;
+      const top = flow.y - hs * 0.95 - padY + 1;
+      const height = hs + padY * 2;
+      pdf.setFillColor(...tint(s.accent, 0.84));
+      pdf.rect(x, top, width, height, "F");
+      writeSpaced(label, x + padX, flow.y, hs, { bold, color: tone(t.tone, shade(s.accent, 0.2)), space });
+      pdf.setDrawColor(...rule);
+      pdf.setLineWidth(0.6);
+      pdf.line(x + width, top + height, flow.x + flow.width, top + height);
+      flow.y = top + height + 12;
       return;
     }
 
-    // "bar": a short thick stub beneath. It anchors the heading without
-    // drawing a line across the whole column.
-    flow.y += 5;
-    pdf.setFillColor(...color);
-    pdf.rect(flow.x, flow.y, 34, 2.4, "F");
-    flow.y += 12;
+    if (spec.heading === "dash") {
+      pdf.setDrawColor(...s.accent);
+      pdf.setLineWidth(1.6);
+      pdf.line(x, capMiddle, x + 10, capMiddle);
+      writeSpaced(label, x + 16, flow.y, hs, { bold, color: ink, space });
+      flow.y += hs * 0.8 + 9;
+      return;
+    }
+
+    if (spec.heading === "underline") {
+      writeSpaced(label, x, flow.y, hs, { bold, color: ink, space });
+      const y = flow.y + 5;
+      pdf.setDrawColor(...tone("highlight", s.accent));
+      pdf.setLineWidth(1);
+      pdf.line(x, y, x + 26, y);
+      flow.y = y + 13;
+      return;
+    }
+
+    // "text": the heading alone.
+    writeSpaced(label, x, flow.y, hs, { bold, color: ink, space });
+    flow.y += hs * 0.8 + 9;
   };
 
   const bullet = (flow: Flow, text: string, color = INK, offset = 0) => {
@@ -416,8 +622,131 @@ export function renderResumePdf(
     return lines.length * contactSize * s.lineSpacing;
   };
 
-  const centered = s.headerPosition === "center";
+  /**
+   * The contact details laid out a detail at a time, in rows that break
+   * between details rather than inside one — for templates with icons, and
+   * for the split header's right-aligned block. Each detail is placed by
+   * hand, so its link box is exact even when the details wrap.
+   */
+  const ICON_GAP = 3.5;
+  const contactRows = (width: number, icons: boolean) => {
+    const gap = icons ? 13 : measure(CONTACT_SEP, contactSize);
+    const rows: Array<Array<{ part: HeaderSegment; width: number }>> = [];
+    let row: Array<{ part: HeaderSegment; width: number }> = [];
+    let used = 0;
+    for (const part of contactParts) {
+      const w = (icons ? contactSize * 0.92 + ICON_GAP : 0) + measure(part.text, contactSize);
+      if (row.length && used + gap + w > width) {
+        rows.push(row);
+        row = [];
+        used = 0;
+      }
+      used += (row.length ? gap : 0) + w;
+      row.push({ part, width: w });
+    }
+    if (row.length) rows.push(row);
+    return { rows, gap };
+  };
+
+  const contactBlock = (
+    x: number,
+    y: number,
+    width: number,
+    align: "left" | "center" | "right",
+    color: RGB,
+    icons: boolean,
+    ground: RGB = WHITE,
+  ) => {
+    const { rows, gap } = contactRows(width, icons);
+    const visibleSep = CONTACT_SEP.trim() ? CONTACT_SEP : "";
+    let line = y;
+    for (const row of rows) {
+      const total = row.reduce((sum, item) => sum + item.width, 0) + gap * (row.length - 1);
+      let cursor = align === "center" ? x - total / 2 : align === "right" ? x - total : x;
+      row.forEach(({ part, width: w }, i) => {
+        if (i && visibleSep) write(visibleSep, cursor - gap, line, contactSize, { color });
+        let textX = cursor;
+        if (icons) textX += icon(part.kind, cursor, line, contactSize, color, ground) + ICON_GAP;
+        write(part.text, textX, line, contactSize, { color });
+        if (part.href) {
+          pdf.link(textX, line - contactSize, w - (textX - cursor), contactSize * 1.2, { url: part.href });
+        }
+        cursor += w + gap;
+      });
+      line += contactSize * s.lineSpacing;
+    }
+    return rows.length * contactSize * s.lineSpacing;
+  };
+
+  /** The contact details in the template's way: with icons, or as one line. */
+  const contact = (x: number, y: number, width: number, align: "left" | "center", color: RGB, ground?: RGB) =>
+    spec.icons ? contactBlock(x, y, width, align, color, true, ground) : contactLine(x, y, width, align, color);
+
+  // The split header is left-aligned by design: its right side is the contact.
+  const centered = spec.header !== "split" && s.headerPosition === "center";
   const align = centered ? "center" : "left";
+
+  const nameText = spec.name?.upper ? profile.fullName.toUpperCase() : profile.fullName;
+  const titleText = spec.title?.upper ? content.targetTitle.toUpperCase() : content.targetTitle;
+
+  const drawName = (x: number, y: number, color: RGB) =>
+    writeSpaced(nameText, x, y, nameSize, {
+      bold: spec.name?.weight !== "normal",
+      color: tone(spec.name?.tone, color),
+      space: spec.name?.space,
+      align,
+    });
+
+  /**
+   * The target title. `fallback` and `fallbackBold` are the header's own
+   * defaults — bold accent on a plain header, a pale tint on a filled one —
+   * which a template's `title` overrides.
+   */
+  const drawTitle = (x: number, y: number, fallback: RGB, fallbackBold: boolean) => {
+    const t = spec.title;
+    const color = tone(t?.tone, fallback);
+    const bold = t?.weight ? t.weight === "bold" : fallbackBold;
+    if (!t?.slashes) {
+      writeSpaced(titleText, x, y, titleSize, { bold, color, space: t?.space, align });
+      return;
+    }
+    // Two drawn strokes, "//", then the title — placed together as one run.
+    const mark = titleSize * 1.05;
+    const width = mark + measure(titleText, titleSize, bold, t.space);
+    const start = align === "center" ? x - width / 2 : x;
+    pdf.setDrawColor(...color);
+    pdf.setLineWidth(0.8);
+    for (const offset of [0, titleSize * 0.32]) {
+      pdf.line(start + offset, y + 0.5, start + offset + titleSize * 0.3, y - titleSize * 0.72);
+    }
+    writeSpaced(titleText, start + mark, y, titleSize, { bold, color, space: t.space });
+  };
+
+  /** A short line–diamond–line under the title, in the template's highlight. */
+  const ornament = (middle: number, y: number) => {
+    const c = tone("highlight", s.accent);
+    pdf.setDrawColor(...c);
+    pdf.setFillColor(...c);
+    pdf.setLineWidth(0.6);
+    pdf.line(middle - 36, y, middle - 7, y);
+    pdf.line(middle + 7, y, middle + 36, y);
+    const d = 3;
+    pdf.triangle(middle - d, y, middle, y - d, middle + d, y, "F");
+    pdf.triangle(middle - d, y, middle, y + d, middle + d, y, "F");
+  };
+
+  /** The header rule — doubled, in ink or the accent, as the template says. Returns its height. */
+  const headerRules = (y: number) => {
+    const weight = spec.headerRule ?? 0;
+    pdf.setDrawColor(...tone(spec.headerRuleTone, s.accent));
+    pdf.setLineWidth(weight);
+    pdf.line(spec.margin, y, pageWidth - spec.margin, y);
+    if (!spec.headerRuleDouble) return 0;
+    const second = y + weight + 1.8;
+    pdf.setLineWidth(Math.max(0.5, weight * 0.4));
+    pdf.line(spec.margin, second, pageWidth - spec.margin, second);
+    return second - y;
+  };
 
   if (spec.header === "banner" || spec.header === "wave") {
     /**
@@ -425,18 +754,18 @@ export function renderResumePdf(
      * accent itself; the wave is a deeper gradient of it, so both take white
      * text — and a pale accent on the banner takes ink instead.
      */
-    const fill = spec.header === "wave" ? shade(s.accent, 0.3) : s.accent;
+    const fill = spec.header === "wave" ? shade(s.accent, 0.3) : bannerFill;
     const light = prefersLightText(fill);
     const reversed: RGB = light ? [255, 255, 255] : INK;
     const soft = light ? tint(s.accent, spec.header === "wave" ? 0.82 : 0.78) : shade(s.accent, 0.45);
     const anchor = centered ? pageWidth / 2 : spec.margin;
 
     let y = spec.margin + nameSize * 0.4;
-    write(profile.fullName, anchor, y, nameSize, { bold: true, color: reversed, align });
+    drawName(anchor, y, reversed);
     y += nameSize * 0.95;
-    write(content.targetTitle, anchor, y, titleSize, { color: soft, align });
+    drawTitle(anchor, y, soft, false);
     y += titleSize * 1.5;
-    contactLine(anchor, y, pageWidth - spec.margin * 2, align, soft);
+    contact(anchor, y, pageWidth - spec.margin * 2, align, soft, fill);
 
     // The first section heading adds its own sectionGap on top of this, so the
     // offset here is deliberately less than a full margin.
@@ -444,6 +773,55 @@ export function renderResumePdf(
       spec.header === "wave"
         ? waveHeight() + waveDip() + spec.margin * 0.25
         : bannerHeight() + spec.margin * 0.45;
+  } else if (spec.header === "card") {
+    /**
+     * A rounded panel of the accent inside the margins, the header reversed
+     * out of it. Laid out first and painted before any text, since jsPDF has
+     * no z-order: the panel has to exist under the words, not over them.
+     */
+    const pad = 18;
+    const inner = main.width - pad * 2;
+    const fill = shade(s.accent, spec.fillShade ?? 0.45);
+    const light = prefersLightText(fill);
+    const reversed: RGB = light ? WHITE : INK;
+    const soft = light ? tint(s.accent, 0.72) : shade(s.accent, 0.45);
+    const anchor = centered ? pageWidth / 2 : spec.margin + pad;
+
+    const top = main.y;
+    const nameY = top + pad + nameSize * 0.72;
+    const titleY = nameY + titleSize * 1.55;
+    const contactY = titleY + titleSize * 1.5;
+    const rows = contactParts.length
+      ? spec.icons
+        ? contactRows(inner, true).rows.length
+        : wrap(contactParts.map((p) => p.text).join(CONTACT_SEP), contactSize, inner).length
+      : 0;
+    const end = (rows ? contactY + (rows - 1) * contactSize * s.lineSpacing + contactSize * 0.3 : titleY) + pad;
+
+    pdf.setFillColor(...fill);
+    pdf.roundedRect(spec.margin, top, main.width, end - top, 6, 6, "F");
+    drawName(anchor, nameY, reversed);
+    drawTitle(anchor, titleY, soft, false);
+    contact(anchor, contactY, inner, align, soft, fill);
+    main.y = end + 2;
+  } else if (spec.header === "split") {
+    /**
+     * Name and title on the left, the contact details stacked against the
+     * right margin, a rule under both. The two columns are as tall as the
+     * taller of them.
+     */
+    const right = pageWidth - spec.margin;
+    const top = main.y;
+    drawName(spec.margin, top + nameSize * 0.3, INK);
+    let left = top + nameSize * 1.05;
+    drawTitle(spec.margin, left, MUTED, false);
+    left += titleSize * 0.6;
+    const contactWidth = main.width * 0.46;
+    const height = contactBlock(right, top - contactSize * 0.2, contactWidth, "right", MUTED, Boolean(spec.icons));
+    main.y = Math.max(left, top - contactSize * 0.2 + height - contactSize * s.lineSpacing + contactSize * 0.6) + 8;
+    if (spec.headerRule) {
+      main.y += headerRules(main.y) + 2;
+    }
   } else {
     /**
      * Name in ink, the role in the accent, contact muted. A left-aligned header
@@ -454,13 +832,31 @@ export function renderResumePdf(
     const bar = Boolean(spec.headerBar) && !centered;
     const anchor = centered ? pageWidth / 2 : spec.margin + (bar ? 14 : 0);
     const width = main.width - (bar ? 14 : 0);
+
+    // A bar of the accent along the top of the page, above the name.
+    if (spec.topBar) {
+      pdf.setFillColor(...s.accent);
+      pdf.rect(spec.margin, spec.margin - 22, main.width, spec.topBar, "F");
+      main.y += spec.topBar;
+    }
     const top = main.y;
 
-    write(profile.fullName, anchor, main.y + nameSize * 0.3, nameSize, { bold: true, align });
+    drawName(anchor, main.y + nameSize * 0.3, INK);
     main.y += nameSize * 1.05;
-    write(content.targetTitle, anchor, main.y, titleSize, { bold: true, color: s.accent, align });
+    drawTitle(anchor, main.y, s.accent, true);
     main.y += titleSize * 1.3;
-    main.y += contactLine(anchor, main.y, width, align, MUTED);
+
+    if (spec.ornament) {
+      ornament(centered ? pageWidth / 2 : anchor + 36, main.y - titleSize * 0.1);
+      main.y += 13;
+    }
+    // A rule between the title and the contact line (Classic).
+    if (spec.headerRule && spec.headerRuleUnderTitle) {
+      const y = main.y - titleSize * 0.55;
+      main.y = y + headerRules(y) + contactSize * 1.9;
+    }
+
+    main.y += contact(anchor, main.y, width, align, MUTED);
 
     if (bar) {
       pdf.setFillColor(...s.accent);
@@ -469,21 +865,34 @@ export function renderResumePdf(
 
     // A rule closing the header, so the block reads as a masthead rather than
     // as the first three lines of the document.
-    if (spec.headerRule) {
+    if (spec.headerRule && !spec.headerRuleUnderTitle) {
       main.y += 4;
-      pdf.setDrawColor(...s.accent);
-      pdf.setLineWidth(spec.headerRule);
-      pdf.line(spec.margin, main.y, pageWidth - spec.margin, main.y);
+      main.y += headerRules(main.y);
       main.y += 2;
     }
   }
 
   // -------------------------------------------------------- main column
 
-  if (content.summary) {
+  /**
+   * Two layouts narrow the column the sections flow in: one for the section
+   * names in a margin of their own (labels), one for the line and dots down
+   * the left (timeline).
+   */
+  if (spec.layout === "labels") {
+    main.x += 96;
+    main.width -= 96;
+  }
+  if (spec.layout === "timeline") {
+    main.x += 22;
+    main.width -= 22;
+  }
+
+  const summary = () => {
+    if (!content.summary) return;
     heading(main, "Summary");
     block(main, wrap(content.summary, 9.5 * s.fontScale, main.width), 9.5 * s.fontScale);
-  }
+  };
 
   /**
    * Skills, one category at a time, each opening with an accent dot and its
@@ -492,11 +901,18 @@ export function renderResumePdf(
    *
    * inline  "• Languages: Go, TypeScript, …", wrapping under the name
    * grid    the name in a column of its own, its skills beside it
+   * tags    every skill in its own box or underlined, in rows
+   * flow    every skill in one paragraph, " • " between them
+   * columns every skill in a grid of columns, each with a dot
+   *
+   * The last three drop the categories: the designs they come from list
+   * skills, not groups of them.
    */
   const skills = (flow: Flow) => {
     const size = 9 * s.fontScale;
     const lineHeight = size * s.lineSpacing;
     const dotGap = 9;
+    const all = content.skills.flatMap((g) => g.items);
 
     if (spec.skills === "grid") {
       // As wide as the longest category name needs, within reason: short
@@ -520,8 +936,65 @@ export function renderResumePdf(
       return;
     }
 
-    const x = flow.x + dotGap;
-    const width = flow.width - dotGap;
+    if (spec.skills === "flow") {
+      block(flow, wrap(all.join("  •  "), size, flow.width), size);
+      return;
+    }
+
+    if (spec.skills === "tags") {
+      const boxed = spec.tags !== "underline";
+      const padX = boxed ? 6 : 0;
+      const gapX = boxed ? 6 : 13;
+      const rowHeight = size + (boxed ? 11 : 10);
+      let x = flow.x;
+      advance(flow, rowHeight);
+      on(flow);
+      for (const item of all) {
+        const w = Math.min(measure(item, size) + padX * 2, flow.width);
+        if (x > flow.x && x + w > flow.x + flow.width) {
+          x = flow.x;
+          flow.y += rowHeight;
+          advance(flow, rowHeight);
+          on(flow);
+        }
+        if (boxed) {
+          pdf.setDrawColor(...tint(s.accent, 0.55));
+          pdf.setLineWidth(0.6);
+          pdf.roundedRect(x, flow.y - size * 0.85 - 2.5, w, size + 5, 2, 2, "S");
+        } else {
+          pdf.setDrawColor(...tint(s.accent, 0.35));
+          pdf.setLineWidth(0.8);
+          pdf.line(x, flow.y + 3, x + w, flow.y + 3);
+        }
+        write(item, x + padX, flow.y, size);
+        x += w + gapX;
+      }
+      flow.y += lineHeight + 2;
+      return;
+    }
+
+    if (spec.skills === "columns") {
+      const cols = flow.width > 420 ? 4 : 3;
+      const colWidth = flow.width / cols;
+      for (let i = 0; i < all.length; i += cols) {
+        const row = all.slice(i, i + cols).map((item) => wrap(item, size, colWidth - dotGap - 6));
+        const height = Math.max(...row.map((lines) => lines.length)) * lineHeight;
+        advance(flow, height);
+        on(flow);
+        row.forEach((lines, j) => {
+          const x = flow.x + j * colWidth;
+          dot(x + 2.2, flow.y, size, s.accent, 1.3);
+          write(lines, x + dotGap, flow.y, size);
+        });
+        flow.y += height + 2;
+      }
+      return;
+    }
+
+    // inline — with or without the accent dot before each category.
+    const dotted = spec.skillDots !== false;
+    const x = flow.x + (dotted ? dotGap : 0);
+    const width = flow.width - (dotted ? dotGap : 0);
     for (const group of content.skills) {
       const label = `${group.name}: `;
       pdf.setFont(s.font, "bold");
@@ -532,13 +1005,13 @@ export function renderResumePdf(
       // under it. The 0.35 floor stops a long category name squeezing the
       // first line to a few characters.
       const firstWidth = Math.max(width - labelWidth, width * 0.35);
-      const all = wrap(group.items.join(", "), size, firstWidth);
-      const first = all.shift() ?? "";
-      const rest = all.length ? wrap(all.join(" "), size, width) : [];
+      const items = wrap(group.items.join(", "), size, firstWidth);
+      const first = items.shift() ?? "";
+      const rest = items.length ? wrap(items.join(" "), size, width) : [];
 
       advance(flow, (1 + rest.length) * lineHeight);
       on(flow);
-      dot(flow.x + 2.2, flow.y, size, s.accent, 1.5);
+      if (dotted) dot(flow.x + 2.2, flow.y, size, s.accent, 1.5);
       write(label, x, flow.y, size, { bold: true });
       write(first, x + labelWidth, flow.y, size);
       flow.y += lineHeight;
@@ -550,54 +1023,146 @@ export function renderResumePdf(
     }
   };
 
-  if (content.skills.length) {
+  const skillSection = () => {
+    if (!content.skills.length) return;
     heading(main, "Skills");
     skills(main);
-  }
+  };
 
-  if (experiences.length) {
+  // ------------------------------------------------------------- entries
+
+  const companyColor = tone(spec.companyTone, s.accent);
+  const entry = spec.entry ?? "role";
+  /** The left column a `dates` entry keeps its dates and place in. */
+  const DATE_COLUMN = 96;
+  /** Where a `dates` entry's left column ends, so the next entry clears it. */
+  let floor: { page: number; y: number } | null = null;
+  const clearFloor = () => {
+    if (floor && floor.page === main.page) main.y = Math.max(main.y, floor.y);
+    floor = null;
+  };
+
+  /**
+   * Dates and place on one line: each after its icon where the template
+   * draws them, otherwise joined with a middle dot.
+   */
+  const metaLine = (x: number, y: number, size: number, parts: Array<{ kind: IconKind; text?: string | null }>) => {
+    const present = parts.filter((p): p is { kind: IconKind; text: string } => Boolean(p.text));
+    if (!spec.icons) {
+      write(present.map((p) => p.text).join(" · "), x, y, size, { color: MUTED });
+      return;
+    }
+    let cursor = x;
+    for (const p of present) {
+      cursor += icon(p.kind, cursor, y, size, MUTED) + ICON_GAP;
+      write(p.text, cursor, y, size, { color: MUTED });
+      cursor += measure(p.text, size) + 14;
+    }
+  };
+
+  /**
+   * One job or school's heading lines, in the template's arrangement. `head`
+   * is the bold line (the role, or the degree), `org` the company or school.
+   * Returns the indent its bullets take — a `dates` entry keeps them clear of
+   * its date column.
+   */
+  const entryHead = (head: string, org: string, place: string | null | undefined, period: string) => {
+    const headSize = 10 * s.fontScale;
+    const metaSize = 8.5 * s.fontScale;
+    const right = main.x + main.width;
+
+    if (entry === "company") {
+      advance(main, (headSize + metaSize) * s.lineSpacing + 2);
+      on(main);
+      write(org, main.x, main.y, headSize, { bold: true });
+      if (place) write(place, right, main.y, metaSize, { color: MUTED, align: "right" });
+      main.y += headSize * s.lineSpacing;
+      write(head, main.x, main.y, metaSize + 0.5);
+      write(period, right, main.y, metaSize, { color: MUTED, align: "right" });
+      main.y += metaSize * s.lineSpacing + 2;
+      return 0;
+    }
+
+    if (entry === "stacked") {
+      advance(main, (headSize + metaSize * 2) * s.lineSpacing + 2);
+      on(main);
+      write(head, main.x, main.y, headSize, { bold: true });
+      main.y += headSize * s.lineSpacing;
+      write(org, main.x, main.y, metaSize + 0.5, { bold: true, color: companyColor });
+      main.y += (metaSize + 0.5) * s.lineSpacing;
+      metaLine(main.x, main.y, metaSize, [
+        { kind: "calendar", text: period },
+        { kind: "location", text: place },
+      ]);
+      main.y += metaSize * s.lineSpacing + 2;
+      return 0;
+    }
+
+    if (entry === "dates") {
+      // Wrapped inside the column: "June 2019 – February 2022" is wider than
+      // it, and would otherwise run into the role beside it.
+      const column = [
+        ...wrap(period, metaSize, DATE_COLUMN - 10),
+        ...(place ? wrap(place, metaSize, DATE_COLUMN - 10) : []),
+      ];
+      const columnHeight = column.length * metaSize * s.lineSpacing;
+      advance(main, Math.max((headSize + metaSize) * s.lineSpacing + 2, columnHeight));
+      on(main);
+      write(column, main.x, main.y, metaSize, { color: MUTED });
+      // The next entry starts below the column even if this one is shorter.
+      floor = { page: main.page, y: main.y + columnHeight };
+      write(head, main.x + DATE_COLUMN, main.y, headSize, { bold: true });
+      main.y += headSize * s.lineSpacing;
+      write(org, main.x + DATE_COLUMN, main.y, metaSize + 0.5, { bold: true, color: companyColor });
+      main.y += (metaSize + 0.5) * s.lineSpacing + 2;
+      return DATE_COLUMN;
+    }
+
+    // "role": the original arrangement, unchanged.
+    advance(main, (headSize + metaSize) * s.lineSpacing);
+    on(main);
+    // Right-aligned on the title's baseline, so a role and its period read
+    // as one row rather than two stacked lines.
+    write(period, right, main.y, metaSize, { color: MUTED, align: "right" });
+    write(head, main.x, main.y, headSize, { bold: true });
+    main.y += headSize * s.lineSpacing;
+    write([org, place].filter(Boolean).join(" · "), main.x, main.y, metaSize, { color: companyColor });
+    main.y += metaSize * s.lineSpacing + 2;
+    return 0;
+  };
+
+  const experience = () => {
+    if (!experiences.length) return;
     heading(main, "Experience");
     for (const { employment, title, bullets } of experiences) {
-      const headSize = 10 * s.fontScale;
-      const metaSize = 8.5 * s.fontScale;
-
-      advance(main, (headSize + metaSize) * s.lineSpacing);
-      on(main);
-
       const period = `${formatMonthYear(employment.startDate)} – ${formatMonthYear(
         employment.endDate ?? null,
         "Present",
       )}`;
-      // Right-aligned on the title's baseline, so a role and its period read
-      // as one row rather than two stacked lines.
-      write(period, main.x + main.width, main.y, metaSize, { color: MUTED, align: "right" });
-
-      write(title, main.x, main.y, headSize, { bold: true });
-      main.y += headSize * s.lineSpacing;
-
-      write(
-        [employment.company, employment.location].filter(Boolean).join(" · "),
-        main.x,
-        main.y,
-        metaSize,
-        { color: s.accent },
-      );
-      main.y += metaSize * s.lineSpacing + 2;
-
-      for (const b of bullets) bullet(main, b.text, INK);
+      const indent = entryHead(title, employment.company, employment.location, period);
+      for (const b of bullets) bullet(main, b.text, INK, indent);
+      clearFloor();
       main.y += 5;
     }
-  }
+  };
 
-  if (profile.education.length) {
+  const education = () => {
+    if (!profile.education.length) return;
     heading(main, "Education");
     for (const edu of profile.education) {
+      const years = edu.year || edu.startYear ? educationYears(edu) : "";
+      if (entry !== "role") {
+        entryHead(edu.degree, edu.school, edu.location, years);
+        clearFloor();
+        main.y += 3;
+        continue;
+      }
       const size = 9.5 * s.fontScale;
       advance(main, size * s.lineSpacing * 2);
       on(main);
       write(edu.degree, main.x, main.y, size, { bold: true });
-      if (edu.year || edu.startYear) {
-        write(educationYears(edu), main.x + main.width, main.y, 8.5 * s.fontScale, {
+      if (years) {
+        write(years, main.x + main.width, main.y, 8.5 * s.fontScale, {
           color: MUTED,
           align: "right",
         });
@@ -611,6 +1176,41 @@ export function renderResumePdf(
         { color: MUTED },
       );
       main.y += 8.5 * s.fontScale * s.lineSpacing + 2;
+    }
+  };
+
+  const sections: Record<SectionId, () => void> = {
+    summary,
+    skills: skillSection,
+    experience,
+    education,
+  };
+  for (const id of spec.order ?? DEFAULT_ORDER) sections[id]();
+
+  /**
+   * The timeline: a line down the left of every page the sections reach, and
+   * a dot at each heading. Drawn last because the line's length isn't known
+   * until the content has flowed; it sits in its own margin, so nothing it
+   * crosses. The dots go on after the line so they sit on top of it.
+   */
+  if (spec.layout === "timeline" && dots.length) {
+    reach.set(main.page, Math.max(reach.get(main.page) ?? 0, main.y));
+    const x = spec.margin + 5;
+    for (let page = dots[0].page; page <= lastPage; page += 1) {
+      const top = page === dots[0].page ? dots[0].y : spec.margin - 12;
+      const end = (reach.get(page) ?? bottom) - 8;
+      if (end <= top) continue;
+      pdf.setPage(page);
+      pdf.setDrawColor(...s.accent);
+      pdf.setLineWidth(1);
+      pdf.line(x, top, x, end);
+    }
+    for (const d of dots) {
+      pdf.setPage(d.page);
+      pdf.setFillColor(...WHITE);
+      pdf.circle(x, d.y, 5, "F");
+      pdf.setFillColor(...s.accent);
+      pdf.circle(x, d.y, 3.4, "F");
     }
   }
 

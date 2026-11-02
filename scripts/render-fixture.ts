@@ -35,7 +35,12 @@ const fromDisk = async (file: string) =>
 const runs: Array<{ name: string; template: string; style: ResumeStyle }> = TEMPLATES.map((t) => ({
   name: t.id,
   template: t.id,
-  style: { fontScale: 100, headerPosition: t.id === "engineer" || t.id === "signal" ? "left" : "center", accent: "blue" },
+  // Each in the alignment it's designed for, as picking it in the builder sets.
+  style: {
+    fontScale: 100,
+    headerPosition: t.align ?? (t.id === "engineer" || t.id === "signal" ? "left" : "center"),
+    accent: "blue",
+  },
 }));
 if (args.includes("--fonts")) {
   for (const font of FONTS) {

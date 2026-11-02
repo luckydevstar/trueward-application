@@ -75,7 +75,7 @@ import {
 } from "@/lib/pdf/resume-pdf";
 import { applicationNo, jobNo } from "@/lib/numbers";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
-import type { TemplateSpec } from "@/lib/pdf/templates";
+import { templateSpec, type TemplateSpec } from "@/lib/pdf/templates";
 import { usePersistentState } from "@/lib/persistent-state";
 import { DEFAULT_PRESET, useProfileStyle } from "@/lib/profile-style";
 import { coerceChoice } from "@/lib/style-access";
@@ -331,7 +331,16 @@ export function ResumeBuilder({
     }),
     [preset.style, accents],
   );
-  const setTemplate = (next: string) => setPreset((p) => ({ ...p, template: next }));
+  /**
+   * Picking a template also sets the header alignment it was designed in —
+   * Split, Margin and the like read wrong centred — and the toggle still
+   * moves it afterwards. Templates that don't name one leave it alone.
+   */
+  const setTemplate = (next: string) =>
+    setPreset((p) => {
+      const align = templateSpec(next).align;
+      return { ...p, template: next, style: align ? { ...p.style, headerPosition: align } : p.style };
+    });
   const setStyle = (next: ResumeStyle | ((previous: ResumeStyle) => ResumeStyle)) =>
     setPreset((p) => ({
       ...p,

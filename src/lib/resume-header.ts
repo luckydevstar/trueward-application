@@ -79,27 +79,38 @@ export function composeLocation(
   return contact.location?.trim() || null;
 }
 
+/**
+ * One contact detail as the header prints it. `kind` picks the icon for
+ * templates that draw one beside each detail.
+ */
+export type HeaderSegment = {
+  text: string;
+  href?: string;
+  kind: "email" | "phone" | "location" | "link";
+};
+
 /** The header's contact segments, in print order, with links kept clickable. */
 export function headerSegments(
   contact: Contact,
   fields: HeaderFields,
-): Array<{ text: string; href?: string }> {
-  const segments: Array<{ text: string; href?: string }> = [];
+): HeaderSegment[] {
+  const segments: HeaderSegment[] = [];
 
   if (fields.email && contact.email?.trim()) {
-    segments.push({ text: contact.email.trim() });
+    segments.push({ text: contact.email.trim(), kind: "email" });
   }
   if (fields.phone && contact.phone?.trim()) {
-    segments.push({ text: contact.phone.trim() });
+    segments.push({ text: contact.phone.trim(), kind: "phone" });
   }
 
   const location = composeLocation(contact, fields);
-  if (location) segments.push({ text: location });
+  if (location) segments.push({ text: location, kind: "location" });
 
   if (fields.links) {
     for (const link of contact.links) {
       if (link.url?.trim()) {
         segments.push({
+          kind: "link",
           text: displayUrl(link.url),
           // Stored links are normalised on save, but a document written before
           // that could still hold a bare host — an annotation without a scheme

@@ -117,9 +117,8 @@ base-14 font — so nothing is embedded and the output stays selectable.
 The tradeoff is real: layout is manual coordinates, not CSS. No flexbox, no
 `page-break-inside`, no widow control. Text flows through `Flow` cursors — a
 column with its own vertical position *and page* — which is the entire
-pagination strategy, and what makes the two-column sidebar template possible at
-all: the columns fill independently, so the sidebar can run onto page two while
-the main column is still on page one.
+pagination strategy. A section heading is kept with the first two lines of what
+follows it, so none is stranded at the foot of a page.
 
 `npm run render:fixture` runs the same code under Node and writes one PDF per
 template, so a layout change can be checked without clicking through the UI.
@@ -134,56 +133,68 @@ It is still jsPDF, not a browser: no binary, no cold boot worth the name.
 
 ### Templates
 
-`src/lib/pdf/templates.ts` holds the specs. A template is a set of structural
-axes, not a palette — the accent colour is a separate control, and every
-template can be drawn in any of them. What a spec varies: the typeface
-(Helvetica or Times, both PDF base-14 so nothing embeds), the header treatment
-(plain / filled banner / coloured column / curved wash), how a section heading
-is drawn (hairline under, hairline over, accent bar, filled chip, letterspaced
-caps alone, or set out in the date gutter), whether dates sit right-aligned or
-in a left column, letterspacing, dividers, margins and spacing.
+`src/lib/pdf/templates.ts` holds the specs. A template is a choice of options
+the renderer knows how to draw, not a palette: the accent is a separate
+control, and every template can be drawn in any accent and any font. What a
+spec chooses:
 
-| | |
+- **Header:** plain text, a full-width banner, a curved gradient panel (wave),
+  a rounded card inside the margins, or split (name left, contact right). On
+  top of that: the name in capitals or letterspaced or in the accent, the
+  title's case, spacing and colour, a rule (single or double, ink or accent), a
+  bar along the top, and an ornament.
+- **Section headings:** a filled chip, a short bar, an inline hairline, a pale
+  band, a hairline beneath, centred between hairlines, a solid band, a pale
+  tab, a leading dash, a short underline, or the word alone. Their case,
+  weight, colour and size are set by the template too.
+- **Entries:** role first (company and place below); company first (role and
+  dates on the second row); stacked (role, company, then dates and place); or
+  dates and place in a left column.
+- **Skills:** by category inline or in a grid, or as tags, one flowing list,
+  or columns.
+- **Layout:** one column, the section names in a left margin, or a timeline
+  line with a dot at each heading. A template can also reorder the sections.
+- **Icons:** small drawn icons beside the contact details and the dates and
+  places. They're vector shapes, not glyphs, so the text an applicant-tracking
+  system extracts has no stray symbols (`pdftotext` shows the details alone);
+  the `>` and `//` marks some templates draw are shapes for the same reason.
+
+Every template is one column, with no photo.
+
+| Template | What sets it apart |
 | --- | --- |
-| Classic | Plain header, hairline rules |
-| Modern | Accent name, heavier section bars |
-| Compact | Tighter margins, for a long history |
 | Banner | Full-width colour block behind the name |
-| Sidebar | Coloured column carrying contact, skills, education |
-| Wave | Gradient wash over the top third, curving into the page |
-| Executive | Serif, name in letterspaced caps, rule under the header |
-| Academic | Serif, rule *above* each section, generous spacing |
-| Editorial | Large name, heavy accent rule, roles split by hairlines |
-| Ledger | Dates in a 96pt left column, headings hanging in it |
-| Minimal | No rules anywhere; whitespace and letterspacing only |
+| Engineer | Hairlines beside headings, skills in a grid |
+| Signal | Accent bar beside the name, tinted section strips |
+| Wave | Deep gradient header panel curving into the page |
+| Classic | Centred capitals over a double rule; headings centred between hairlines |
+| Minimal | Quiet title-case headings over hairlines, company first |
+| Scholar | Centred, contact icons, skills after experience |
+| Counsel | Letterspaced name and title, formal headings |
+| Elegant | Serif throughout, light large name, small letterspaced headings |
+| Executive | Serif, gold title and ornament, gold-underlined headings |
+| Banded | Serif capitals; sections open on a solid accent band |
+| Clarity | Left-aligned, icons, company in the accent |
+| Centered | Centred header, skills in columns, stacked entries |
+| Topline | Accent bar along the top edge |
+| Modern | Name and headings in the accent, skills as tags |
+| Accent | Letterspaced accent title, small headings after a dash |
+| Clinical | Centred name in the accent, accent rules |
+| Split | Name left, contact stacked right, heavy rule |
+| Consultant | Headings on pale tabs, dates in a column of their own |
+| Margin | Section names in a left margin |
+| Timeline | A line down the left with a dot at every section |
+| Terminal | Dark rounded header card, code-style headings and tags |
+| Prestige | Deep banner, gold letterspaced title, serif |
 
-The five after Wave are single-column and deliberately quiet — the ones you
-send to a firm that would read Banner as a poster. They differ structurally, not
-by colour: Executive and Academic are the two serifs and are still distinguished
-by where the rule falls and whether the name is in caps; Ledger moves the dates
-out of the text block entirely, which changes the measure of every line beside
-it; Minimal draws no rules at all.
+A template can name the header alignment it was designed in (`align`).
+Picking it in the builder, or for a batch on the Jobs page, sets the header
+toggle to that; the toggle still moves it afterwards.
 
-**Wave is worth a note.** The panel is a *backdrop*, not a container: the
-header, summary, skills and first experiences all flow across it, and the curve
-passes behind them. That is why it is a pale wash rather than a saturated
-block — content sitting on it is ordinary ink text, and a strong fill would
-force that text to be reversed, so any paragraph straddling the curve would
-change colour mid-sentence.
-
-The top tint is set to `0.65`, as saturated as it can go while staying
-comfortably readable. Measured contrast of ink against it: slate 6.9, rose 8.0,
-plum 8.1, rust 8.2, blue 8.3, emerald 8.7 — WCAG AA wants 4.5 for body text and
-AAA wants 7, so every accent clears AA with room and all but slate clear AAA.
-
-PDF has real gradients — axial shading dictionaries — but jsPDF's public API
-exposes no way to build one, so it is approximated with a stack of thin bands,
-one per point of height, each overlapping the next by half a point so no
-hairline seam shows between them. The curved edge is a single symmetric bezier
-used as a *clip path*, not a white mask: a mask would only be invisible against
-a white page and would surface as a pale slab the moment anything sat behind
-it. It costs ~300 fill operations, which is why that file is roughly 4 KB
-larger than the others, and it paints on page one only.
+Options added after the first four are all optional, and leaving one out keeps
+the original behaviour, so Banner, Engineer, Signal and Wave draw exactly as
+they did. `npm run render:fixture` renders every template (each in its own
+alignment) so a change can be compared page by page.
 
 Which templates and accents an account may use is set per account, on the Users
 page, by whoever manages it — a subadmin for their bidders, the super admin for

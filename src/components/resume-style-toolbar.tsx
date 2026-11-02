@@ -95,23 +95,23 @@ export function ResumeStyleToolbar({
           value={template}
           onChange={onTemplateChange}
           style={{ width: 150 }}
-          // A dropdown rather than a segmented control: five templates with a
-          // sentence each don't fit on one strip, and the hint is what makes
-          // them choosable without rendering each in turn.
-          optionLabelProp="label"
-          options={templates.map((t) => ({
-            value: t.id,
-            label: t.label,
-            title: t.hint,
-            children: (
-              <div>
-                <div>{t.label}</div>
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  {t.hint}
-                </Typography.Text>
-              </div>
-            ),
-          }))}
+          // A dropdown rather than a segmented control: two dozen templates
+          // with a sentence each don't fit on one strip, and the hint is what
+          // makes them choosable without rendering each in turn. Searchable by
+          // name or hint ("serif", "icons", "timeline"), and wide enough for
+          // the hint to read as a sentence.
+          popupMatchSelectWidth={340}
+          listHeight={420}
+          showSearch={{ optionFilterProp: ["label", "title"] }}
+          options={templates.map((t) => ({ value: t.id, label: t.label, title: t.hint }))}
+          optionRender={(option) => (
+            <div style={{ whiteSpace: "normal", lineHeight: 1.35, padding: "2px 0" }}>
+              <div>{option.label}</div>
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                {option.data.title}
+              </Typography.Text>
+            </div>
+          )}
         />
       </Field>
 
