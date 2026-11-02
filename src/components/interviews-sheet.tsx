@@ -1,47 +1,32 @@
 "use client";
 
 import {
-  CalendarOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
-  EnvironmentOutlined,
   ExportOutlined,
   FilePdfOutlined,
   FileTextOutlined,
+  MoreOutlined,
   PlusOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
-import {
-  App,
-  Button,
-  Card,
-  Empty,
-  Input,
-  Popconfirm,
-  Popover,
-  Segmented,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-} from "antd";
+import { App, Button, Card, Dropdown, Empty, Input, Modal, Select, Table, Tag, Tooltip } from "antd";
+import type { MenuProps } from "antd";
 import dayjs from "dayjs";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { InterviewForm, type Booking } from "@/components/interview-form";
 import { PageHeader } from "@/components/page-header";
 import {
   calendarLink,
   deleteInterview,
-  INTERVIEW_OUTCOMES,
+  INTERVIEW_STATUSES,
   markInterview,
-  OUTCOME,
+  STATUS,
   type Interview,
-  type InterviewOutcome,
+  type InterviewStatus,
 } from "@/lib/interviews";
 import { applicationNo } from "@/lib/numbers";
 import { applyOverlay, resolveOverlay, type Overlay } from "@/lib/overlay";
@@ -49,8 +34,8 @@ import { createClient } from "@/lib/supabase/client";
 
 export type InterviewRow = Interview & {
   /**
-   * The application it was linked to. Null for an interview booked in its
-   * own right, which says what it is for itself (the interview_* fields).
+   * The application it was linked to. Null for one that wasn't — scheduled
+   * by email, say — which says what it is for itself (the interview_* fields).
    */
   application: {
     id: string;
@@ -66,8 +51,8 @@ export type InterviewRow = Interview & {
     profileId: string | null;
   } | null;
   /**
-   * The candidate's name — the application's, or the profile one booked in
-   * its own right names — when this person may read it.
+   * The candidate's name — the application's, or the profile the interview
+   * names — when this person may read it.
    */
   candidate: string | null;
   /** The calendar the event is on, for the rows this person may change. */
@@ -76,99 +61,47 @@ export type InterviewRow = Interview & {
   canMark: boolean;
 };
 
-type View = "upcoming" | "follow_up" | "past" | "all";
-
 /** A location that's a link — a video call — opens; anything else is just shown. */
 const isLink = (value: string) => /^https?:\/\//i.test(value.trim());
 
-/** What an interview is for: its application's company and role, or its own. */
-const about = (r: InterviewRow) =>
-  r.application
-    ? { company: r.application.company, role: r.application.title }
-    : { company: r.interview_company ?? "", role: r.interview_role ?? "" };
+/**
+ * What an interview is for: its own company and role, or its application's
+ * where it leaves them empty.
+ */
+const about = (r: InterviewRow) => ({
+  company: r.interview_company || r.application?.company || "",
+  role: r.interview_role || r.application?.title || "",
+});
 
-/** Why an interview booked in its own right has no resume or job description. */
-const NO_APPLICATION = "Booked without an application";
-
-/** The job description, fetched when asked for — the list doesn't carry them. */
-function DescriptionButton({ jobId }: { jobId: string | null }) {
-  const { message } = App.useApp();
-  const [text, setText] = useState<string | null | undefined>(undefined);
-
-  if (!jobId) {
-    return (
-      <Tooltip title="Recorded without a job description">
-        <Button size="small" icon={<FileTextOutlined />} disabled>
-          JD
-        </Button>
-      </Tooltip>
-    );
-  }
-
-  const load = async (open: boolean) => {
-    if (!open || text !== undefined) return;
-    const { data } = await createClient().from("job").select("description").eq("id", jobId).maybeSingle();
-    setText(data?.description ?? null);
-  };
-
-  return (
-    <Popover
-      trigger="click"
-      placement="bottomRight"
-      onOpenChange={load}
-      title={
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span>Job description</span>
-          {text && (
-            <Button
-              size="small"
-              type="text"
-              icon={<CopyOutlined />}
-              aria-label="Copy the job description"
-              onClick={() => {
-                void navigator.clipboard.writeText(text);
-                message.success("Copied.");
-              }}
-            />
-          )}
-        </div>
-      }
-      content={
-        <div style={{ width: 460, maxWidth: "80vw", maxHeight: 360, overflow: "auto", whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.55 }}>
-          {text === undefined ? "Loading…" : (text ?? "It isn't there any more.")}
-        </div>
-      }
-    >
-      <Button size="small" icon={<FileTextOutlined />}>
-        JD
-      </Button>
-    </Popover>
-  );
-}
+/** Clicks on these act for themselves, not for the row they sit in. */
+const OWN_CLICK = "a, button, input, .ant-select, .ant-dropdown-trigger";
 
 /**
- * Every interview, as a sheet: when, for which application (or company and
- * role, for one booked in its own right) and candidate, and how it went —
- * marked right here (passed, follow up, …) and saved on the calendar event,
- * so the calendar shows the same. The posting, the resume that was sent and
- * the job description are one click away.
+ * Every interview on one sheet — no tabs, newest first — one line a row:
+ * date, time, role, company, interviewer, location, who handles it, and its
+ * status, marked right here and saved on the calendar event, so the calendar
+ * labels the slot the same.
  *
- * The calendar's users (`booking`) add interviews here too — one scheduled by
- * email, with no application behind it — and change or delete the ones they
- * may: their own, or anyone's for the super admin.
+ * A row opens its slot on the calendar; the calendar's "Open on the
+ * Interviews page" comes back to the row (`focus`), scrolled to and lit. The
+ * posting, the resume that was sent, the job description, and changing or
+ * deleting the interview are in the menu at the end of the row.
  */
 export function InterviewsSheet({
   rows: initial,
   canOpenCalendar,
   booking,
+  focus,
 }: {
   rows: InterviewRow[];
   canOpenCalendar: boolean;
   /** Null for a bidder, who can't use the calendar and so books nothing. */
   booking: Booking | null;
+  /** The interview to show — from the calendar's link back to this page. */
+  focus: string | null;
 }) {
   const router = useRouter();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   /*
    * This session's marks and deletes over the server's rows, dropped as soon
    * as router.refresh() brings new ones — see src/lib/overlay.ts. useState
@@ -178,9 +111,9 @@ export function InterviewsSheet({
   const rows = resolveOverlay(overlay, initial);
   const change = (next: (current: readonly InterviewRow[]) => readonly InterviewRow[]) =>
     setOverlay((previous) => applyOverlay(previous, initial, next));
-  const [view, setView] = useState<View>("upcoming");
   const [query, setQuery] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
+  const [description, setDescription] = useState<{ jobId: string; text: string | null | undefined } | null>(null);
 
   // The form is mounted while it's showing, and dropped once it has closed.
   // Counted, so reopening one before the last has finished closing still
@@ -192,84 +125,122 @@ export function InterviewsSheet({
     setFormOpen(true);
   };
 
-  // Today's interviews count as upcoming until the day is over.
-  const [todayStart] = useState(() => dayjs().startOf("day").valueOf());
-  const isUpcoming = (r: InterviewRow) => Date.parse(r.ends_at) >= todayStart;
-
-  const counts = useMemo(
-    () => ({
-      upcoming: rows.filter(isUpcoming).length,
-      follow_up: rows.filter((r) => r.outcome === "follow_up").length,
-      past: rows.filter((r) => !isUpcoming(r)).length,
-      all: rows.length,
-    }),
-    // isUpcoming reads todayStart, fixed for the page's life.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows],
-  );
-
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     const number = q.replace(/^a0*/, "");
-    const list = rows.filter((r) => {
-      if (view === "upcoming" && !isUpcoming(r)) return false;
-      if (view === "past" && isUpcoming(r)) return false;
-      if (view === "follow_up" && r.outcome !== "follow_up") return false;
-      if (!q) return true;
-      const { company, role } = about(r);
-      return (
-        (r.application !== null && String(r.application.no) === number.split("-")[0]) ||
-        company.toLowerCase().includes(q) ||
-        role.toLowerCase().includes(q) ||
-        (r.candidate ?? "").toLowerCase().includes(q) ||
-        r.title.toLowerCase().includes(q)
-      );
-    });
-    // Soonest first for what's coming; most recent first for the rest.
-    return list.sort((x, y) =>
-      view === "upcoming" ? x.starts_at.localeCompare(y.starts_at) : y.starts_at.localeCompare(x.starts_at),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, view, query]);
+    return rows
+      .filter((r) => {
+        if (!q) return true;
+        const { company, role } = about(r);
+        return (
+          (r.application !== null && String(r.application.no) === number.split("-")[0]) ||
+          [company, role, r.interviewer, r.handler, r.location, r.candidate, r.title].some((field) =>
+            (field ?? "").toLowerCase().includes(q),
+          )
+        );
+      })
+      .sort((x, y) => y.starts_at.localeCompare(x.starts_at));
+  }, [rows, query]);
 
-  const mark = async (row: InterviewRow, outcome: InterviewOutcome) => {
+  // Arrived from the calendar: bring that row into view. Once, on arrival.
+  useEffect(() => {
+    if (!focus) return;
+    const row = document.querySelector(`tr[data-row-key="${CSS.escape(focus)}"]`);
+    if (row) row.scrollIntoView({ block: "center" });
+    else message.info("That interview isn't on your sheet — it may have been deleted, or belong to another team.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const mark = async (row: InterviewRow, status: InterviewStatus) => {
     setSaving(row.event_id);
-    const problem = await markInterview(row.event_id, outcome);
+    const problem = await markInterview(row.event_id, status);
     setSaving(null);
     if (problem) {
       message.error(problem);
       return;
     }
-    change((all) => all.map((r) => (r.event_id === row.event_id ? { ...r, outcome } : r)));
+    change((all) => all.map((r) => (r.event_id === row.event_id ? { ...r, status } : r)));
     const name = row.application
       ? applicationNo(row.application.no, row.application.part)
       : about(row).company || "The interview";
-    message.success(`${name} marked ${OUTCOME[outcome].label.toLowerCase()}.`);
+    message.success(`${name} marked ${STATUS[status].label.toLowerCase()}.`);
   };
 
   /** Deletes the event itself — the calendar's policy decides who may. */
-  const remove = async (row: InterviewRow) => {
-    const problem = await deleteInterview(row.event_id);
-    if (problem) {
-      message.error(problem);
-      return;
-    }
-    change((all) => all.filter((r) => r.event_id !== row.event_id));
-    message.success("Interview deleted — it's off the calendar too.");
-    router.refresh();
+  const remove = (row: InterviewRow) =>
+    modal.confirm({
+      title: "Delete this interview?",
+      content: "It's an event, so it comes off the calendar too.",
+      okText: "Delete",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const problem = await deleteInterview(row.event_id);
+        if (problem) {
+          message.error(problem);
+          return;
+        }
+        change((all) => all.filter((r) => r.event_id !== row.event_id));
+        message.success("Interview deleted — it's off the calendar too.");
+        router.refresh();
+      },
+    });
+
+  /** The job description, fetched when asked for — the list doesn't carry them. */
+  const showDescription = async (jobId: string) => {
+    setDescription({ jobId, text: undefined });
+    const { data } = await createClient().from("job").select("description").eq("id", jobId).maybeSingle();
+    setDescription((d) => (d?.jobId === jobId ? { jobId, text: data?.description ?? null } : d));
   };
+
+  /** What the menu at the end of a row offers: what the interview came with, and changing it. */
+  const menu = (r: InterviewRow): MenuProps["items"] => {
+    const posting = r.application?.jobUrl ?? (r.interview_job_url && isLink(r.interview_job_url) ? r.interview_job_url.trim() : null);
+    const open = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
+    return [
+      {
+        key: "posting",
+        icon: <ExportOutlined />,
+        label: "Posting",
+        disabled: !posting,
+        onClick: () => posting && open(posting),
+      },
+      {
+        key: "resume",
+        icon: <FilePdfOutlined />,
+        label: r.application?.resumeUrl ? "Resume" : "Resume — none sent",
+        disabled: !r.application?.resumeUrl,
+        onClick: () => r.application?.resumeUrl && open(r.application.resumeUrl),
+      },
+      {
+        key: "jd",
+        icon: <FileTextOutlined />,
+        label: r.application?.jobId ? "Job description" : "Job description — none",
+        disabled: !r.application?.jobId,
+        onClick: () => r.application?.jobId && void showDescription(r.application.jobId),
+      },
+      ...(booking && r.canMark
+        ? [
+            { type: "divider" as const },
+            { key: "edit", icon: <EditOutlined />, label: "Change it", onClick: () => openForm(r) },
+            { key: "delete", icon: <DeleteOutlined />, label: "Delete", danger: true, onClick: () => remove(r) },
+          ]
+        : []),
+    ];
+  };
+
+  const today = dayjs();
 
   return (
     <>
       <PageHeader
         title="Interviews"
-        description="From the calendar — every interview, linked to an application or booked here. Mark how it went here; the calendar shows the same."
+        description="Every interview on the calendar, newest first. Click a row to open its slot on the calendar; mark the status here and the calendar shows the same."
         extra={
           <>
             <Input
               allowClear
               prefix={<SearchOutlined />}
-              placeholder="A007, company, role or candidate"
+              placeholder="A007, company, role, interviewer…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               style={{ width: 280, maxWidth: "100%" }}
@@ -291,25 +262,33 @@ export function InterviewsSheet({
       />
 
       <Card variant="borderless" styles={{ body: { padding: 0 } }}>
-        <div style={{ padding: "14px 16px" }}>
-          <Segmented<View>
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "upcoming", label: `Upcoming · ${counts.upcoming}` },
-              { value: "follow_up", label: `Follow up · ${counts.follow_up}` },
-              { value: "past", label: `Past · ${counts.past}` },
-              { value: "all", label: `All · ${counts.all}` },
-            ]}
-          />
-        </div>
         <Table<InterviewRow>
+          className="tw-sheet"
           rowKey="event_id"
           size="middle"
+          tableLayout="fixed"
           dataSource={shown}
-          pagination={shown.length > 50 ? { pageSize: 50, showSizeChanger: false } : false}
-          scroll={{ x: 1000 }}
-          rowClassName={(r) => (dayjs(r.starts_at).isSame(dayjs(), "day") ? "tw-today" : "")}
+          pagination={false}
+          sticky
+          scroll={{ x: 1180 }}
+          rowClassName={(r) =>
+            [
+              r.event_id === focus ? "tw-focus" : "",
+              dayjs(r.starts_at).isSame(today, "day") ? "tw-today" : "",
+              canOpenCalendar ? "tw-link" : "",
+            ].join(" ")
+          }
+          onRow={(r) => ({
+            onClick: (e) => {
+              if (!canOpenCalendar) return;
+              // A click inside the row's own controls — or one bubbling up
+              // from a dropdown, which React passes through its portal — is
+              // the control's, not a request to leave for the calendar.
+              const target = e.target as HTMLElement;
+              if (!e.currentTarget.contains(target) || target.closest(OWN_CLICK)) return;
+              window.open(calendarLink(r), "_blank", "noopener,noreferrer");
+            },
+          })}
           locale={{
             emptyText: (
               <Empty
@@ -317,218 +296,146 @@ export function InterviewsSheet({
                 description={
                   query
                     ? "Nothing matches that."
-                    : view === "upcoming"
-                      ? booking
-                        ? "No interviews coming up. Add one, or link an event to an application on the calendar, and it shows here."
-                        : "No interviews coming up. Link an event to an application on the calendar and it shows here."
-                      : view === "follow_up"
-                        ? "Nothing waiting on a follow-up."
-                        : "No interviews yet."
+                    : booking
+                      ? "No interviews yet. Add one here, or make an event an interview on the calendar."
+                      : "No interviews yet."
                 }
               />
             ),
           }}
           columns={[
             {
-              title: "When",
-              key: "when",
-              width: 190,
-              render: (_, r) => {
-                const start = dayjs(r.starts_at);
-                const days = start.startOf("day").diff(dayjs().startOf("day"), "day");
-                const relative =
-                  days === 0 ? "Today" : days === 1 ? "Tomorrow" : days > 1 && days < 7 ? `In ${days} days` : null;
-                return (
-                  <div style={{ lineHeight: 1.35 }}>
-                    <div style={{ fontWeight: 600 }}>
-                      {start.format("ddd, MMM D")}
-                      {relative && (
-                        <Tag color={days === 0 ? "purple" : "default"} bordered={false} style={{ marginInlineStart: 6 }}>
-                          {relative}
-                        </Tag>
-                      )}
-                    </div>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {r.all_day ? "All day" : `${start.format("h:mm A")} – ${dayjs(r.ends_at).format("h:mm A")}`}
-                    </Typography.Text>
-                  </div>
-                );
-              },
+              title: "Date",
+              key: "date",
+              width: 120,
+              render: (_, r) => <span style={{ fontWeight: 600 }}>{dayjs(r.starts_at).format("ddd, MMM D")}</span>,
             },
             {
-              title: "Application",
-              key: "application",
+              title: "Time",
+              key: "time",
+              width: 150,
+              render: (_, r) =>
+                r.all_day ? "All day" : `${dayjs(r.starts_at).format("h:mm A")} – ${dayjs(r.ends_at).format("h:mm A")}`,
+            },
+            {
+              title: "Role",
+              key: "role",
+              ellipsis: true,
               render: (_, r) => (
-                <div style={{ lineHeight: 1.35, minWidth: 0 }}>
-                  <div>
-                    {r.application ? (
-                      <span className="tw-num" style={{ fontWeight: 600, marginInlineEnd: 6 }}>
+                <Tooltip
+                  title={[
+                    r.application ? applicationNo(r.application.no, r.application.part) : null,
+                    r.candidate ?? (r.interview_profile_id ? "A candidate on another team" : null),
+                    r.title,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                >
+                  <span>
+                    {r.application && (
+                      <span className="tw-num" style={{ color: "#64748b", marginInlineEnd: 6 }}>
                         {applicationNo(r.application.no, r.application.part)}
                       </span>
-                    ) : (
-                      <Tooltip title={`${NO_APPLICATION} — by email, say`}>
-                        <Tag bordered={false} style={{ marginInlineEnd: 6 }}>
-                          No application
-                        </Tag>
-                      </Tooltip>
                     )}
-                    {[about(r).role, about(r).company].filter(Boolean).join(" — ") || r.title || "Interview"}
-                  </div>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {r.candidate ?? (r.interview_profile_id ? "A candidate on another team" : "No profile")}
-                    {r.title ? ` · ${r.title}` : ""}
-                  </Typography.Text>
-                  {r.location && (
-                    <div style={{ fontSize: 12 }}>
-                      <EnvironmentOutlined style={{ color: "#94a3b8", marginInlineEnd: 4 }} />
-                      {isLink(r.location) ? (
-                        <a href={r.location.trim()} target="_blank" rel="noreferrer">
-                          Join the call
-                        </a>
-                      ) : (
-                        <Typography.Text type="secondary">{r.location}</Typography.Text>
-                      )}
-                    </div>
-                  )}
-                </div>
+                    {about(r).role || r.title || "—"}
+                  </span>
+                </Tooltip>
               ),
             },
+            { title: "Company", key: "company", width: 170, ellipsis: true, render: (_, r) => about(r).company || "—" },
+            { title: "Interviewer", key: "interviewer", width: 150, ellipsis: true, render: (_, r) => r.interviewer || "—" },
             {
-              title: "Outcome",
-              key: "outcome",
-              width: 170,
+              title: "Location",
+              key: "location",
+              width: 160,
+              ellipsis: true,
+              render: (_, r) =>
+                !r.location ? (
+                  "—"
+                ) : isLink(r.location) ? (
+                  <a href={r.location.trim()} target="_blank" rel="noreferrer" title={r.location}>
+                    Join the call
+                  </a>
+                ) : (
+                  <span title={r.location}>{r.location}</span>
+                ),
+            },
+            { title: "Handler", key: "handler", width: 130, ellipsis: true, render: (_, r) => r.handler || "—" },
+            {
+              title: "Status",
+              key: "status",
+              width: 128,
               render: (_, r) => {
-                const value = r.outcome ?? "scheduled";
+                const value = r.status ?? "pending";
                 return r.canMark ? (
-                  <Select<InterviewOutcome>
+                  <Select<InterviewStatus>
                     size="small"
+                    variant="borderless"
                     value={value}
                     loading={saving === r.event_id}
                     onChange={(next) => mark(r, next)}
-                    style={{ width: 150 }}
-                    aria-label="Outcome"
-                    options={INTERVIEW_OUTCOMES.map((o) => ({
+                    style={{ width: 108 }}
+                    aria-label="Status"
+                    options={INTERVIEW_STATUSES.map((o) => ({
                       value: o,
                       label: (
-                        <Tag color={OUTCOME[o].color} bordered={false} style={{ margin: 0 }}>
-                          {OUTCOME[o].label}
+                        <Tag color={STATUS[o].color} bordered={false} style={{ margin: 0 }}>
+                          {STATUS[o].label}
                         </Tag>
                       ),
                     }))}
                   />
                 ) : (
-                  <Tooltip title="Marked by whoever scheduled it, or the super admin">
-                    <Tag color={OUTCOME[value].color} bordered={false}>
-                      {OUTCOME[value].label}
+                  <Tooltip title="Marked by whoever booked it, or the super admin">
+                    <Tag color={STATUS[value].color} bordered={false}>
+                      {STATUS[value].label}
                     </Tag>
                   </Tooltip>
                 );
               },
             },
             {
-              title: "Open",
-              key: "links",
-              width: 330,
+              title: "",
+              key: "more",
+              width: 48,
               render: (_, r) => (
-                <Space size={6} wrap>
-                  {r.application ? (
-                    <>
-                      <Button size="small" icon={<ExportOutlined />} href={r.application.jobUrl} target="_blank" rel="noreferrer">
-                        Posting
-                      </Button>
-                      {r.application.resumeUrl ? (
-                        <Tooltip title={r.application.resumeName ?? undefined}>
-                          <Button size="small" icon={<FilePdfOutlined />} href={r.application.resumeUrl} target="_blank" rel="noreferrer">
-                            Resume
-                          </Button>
-                        </Tooltip>
-                      ) : (
-                        <Tooltip title="No resume attached to this application">
-                          <Button size="small" icon={<FilePdfOutlined />} disabled>
-                            Resume
-                          </Button>
-                        </Tooltip>
-                      )}
-                      <DescriptionButton jobId={r.application.jobId} />
-                    </>
-                  ) : (
-                    // Booked in its own right: its own job link, and no application to
-                    // have sent a resume or carried a job description.
-                    <>
-                      {r.interview_job_url && isLink(r.interview_job_url) ? (
-                        <Button size="small" icon={<ExportOutlined />} href={r.interview_job_url.trim()} target="_blank" rel="noreferrer">
-                          Posting
-                        </Button>
-                      ) : (
-                        <Tooltip title="Booked without a job link">
-                          <Button size="small" icon={<ExportOutlined />} disabled>
-                            Posting
-                          </Button>
-                        </Tooltip>
-                      )}
-                      <Tooltip title={`${NO_APPLICATION}, so no resume was sent with it`}>
-                        <Button size="small" icon={<FilePdfOutlined />} disabled>
-                          Resume
-                        </Button>
-                      </Tooltip>
-                      <Tooltip title={`${NO_APPLICATION}, so there's no job description`}>
-                        <Button size="small" icon={<FileTextOutlined />} disabled>
-                          JD
-                        </Button>
-                      </Tooltip>
-                    </>
-                  )}
-                  {canOpenCalendar && (
-                    <Tooltip title="Open it on the calendar">
-                      <Button
-                        size="small"
-                        type="text"
-                        icon={<CalendarOutlined />}
-                        aria-label="Open it on the calendar"
-                        href={calendarLink(r)}
-                        target="_blank"
-                        rel="noreferrer"
-                      />
-                    </Tooltip>
-                  )}
-                </Space>
+                <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items: menu(r) }}>
+                  <Button type="text" size="small" icon={<MoreOutlined />} aria-label="More for this interview" />
+                </Dropdown>
               ),
             },
-            // Change and delete, for the rows whose event this person may change.
-            ...(booking
-              ? [
-                  {
-                    title: "",
-                    key: "actions",
-                    width: 84,
-                    render: (_: unknown, r: InterviewRow) =>
-                      r.canMark && (
-                        <Space size={0}>
-                          <Tooltip title="Change it">
-                            <Button
-                              type="text"
-                              icon={<EditOutlined />}
-                              aria-label="Change this interview"
-                              onClick={() => openForm(r)}
-                            />
-                          </Tooltip>
-                          <Popconfirm
-                            title="Delete this interview?"
-                            description="It's an event, so it comes off the calendar too."
-                            okText="Delete"
-                            okButtonProps={{ danger: true }}
-                            onConfirm={() => remove(r)}
-                          >
-                            <Button type="text" danger icon={<DeleteOutlined />} aria-label="Delete this interview" />
-                          </Popconfirm>
-                        </Space>
-                      ),
-                  },
-                ]
-              : []),
           ]}
         />
       </Card>
+
+      <Modal
+        open={description !== null}
+        title="Job description"
+        footer={null}
+        width={620}
+        onCancel={() => setDescription(null)}
+      >
+        <div style={{ position: "relative" }}>
+          {description?.text && (
+            <Tooltip title="Copy">
+              <Button
+                size="small"
+                type="text"
+                icon={<CopyOutlined />}
+                aria-label="Copy the job description"
+                style={{ position: "absolute", top: 0, right: 0 }}
+                onClick={() => {
+                  void navigator.clipboard.writeText(description.text!);
+                  message.success("Copied.");
+                }}
+              />
+            </Tooltip>
+          )}
+          <div style={{ maxHeight: "60vh", overflow: "auto", whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.55, paddingRight: 28 }}>
+            {description?.text === undefined ? "Loading…" : (description.text ?? "It isn't there any more.")}
+          </div>
+        </div>
+      </Modal>
 
       {booking && formFor && (
         <InterviewForm
@@ -545,7 +452,14 @@ export function InterviewsSheet({
         />
       )}
 
-      <style>{`.tw-today > td { background: #faf5ff !important; }`}</style>
+      <style>{`
+        /* One line a row, so every row is the same height. */
+        .tw-sheet td { white-space: nowrap; }
+        .tw-sheet .tw-link { cursor: pointer; }
+        .tw-today > td { background: #faf5ff !important; }
+        .tw-focus > td { background: #fef9c3 !important; }
+        .tw-focus > td:first-child { box-shadow: inset 3px 0 0 #eab308; }
+      `}</style>
     </>
   );
 }

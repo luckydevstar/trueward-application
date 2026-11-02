@@ -24,18 +24,21 @@ type ApplicationBits = {
 };
 
 /**
- * Every interview on Trueward Calendar this person can see —
+ * Every interview-type event on Trueward Calendar this person can see —
  * application_interviews() decides: one linked to an application by the
  * application's own rules, with its posting, resume and job description to
- * hand; one booked in its own right (by email, say) for the calendar's users
- * and whoever works its candidate. Outcomes are marked on the calendar event
+ * hand; any other (scheduled by email, say) for the calendar's users and
+ * whoever works its candidate. Statuses are marked on the calendar event
  * itself, so the calendar and this page are the same record.
  *
  * The calendar's users — subadmins and the super admin — also book
  * interviews here, onto one of its calendars. Bidders can't use the
  * calendar, so they get no form.
  */
-export default async function InterviewsPage() {
+export default async function InterviewsPage({ searchParams }: PageProps<"/dashboard/interviews">) {
+  // `?event=` — the calendar's link back to one interview's row.
+  const params = await searchParams;
+  const focus = typeof params.event === "string" ? params.event : null;
   const actor = await requireActor();
   const supabase = await createClient();
   const books = isAdminRole(actor.role);
@@ -133,6 +136,7 @@ export default async function InterviewsPage() {
   return (
     <InterviewsSheet
       rows={rows}
+      focus={focus}
       canOpenCalendar={isAdminRole(actor.role)}
       booking={
         books

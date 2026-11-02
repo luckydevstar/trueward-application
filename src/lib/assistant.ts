@@ -33,7 +33,7 @@ Answer plain questions — general knowledge, writing, quick sums, dates — as 
 
 For questions about the person's todos, alarms, applications, interviews or calendar, use only the "Your data" message. It is everything you know about their work; it is current as of the time it states. If it doesn't hold the answer, say so plainly rather than guess, and say where they could look (the Applications or Interviews page in Trueward Guru).
 
-Applications are numbered like A007 (A007-2 for a second candidate on the same job). Statuses are applied, viewed, interviewing, offer and rejected. Interview outcomes are scheduled, passed, failed, follow up and cancelled.
+Applications are numbered like A007 (A007-2 for a second candidate on the same job). Statuses are applied, viewed, interviewing, offer and rejected. Interview statuses are pending, done, pass and fail.
 
 Keep answers short and direct: a sentence or two, or a brief list. Use **bold** sparingly and "-" for lists. Write dates and times as the person would read them, in their time zone.`;
 
@@ -287,7 +287,7 @@ async function workContext(db: Db, actor: CurrentActor, input: AssistantInput, z
       db
         .from("calendar_event" as never)
         .select("title, starts_at, ends_at, all_day, location, rrule, calendar:calendar_source(name)")
-        .is("interview_outcome" as never, null)
+        .neq("event_type" as never, "interview")
         .is("recurrence_id" as never, null)
         .or(
           `and(rrule.is.null,ends_at.gte.${todayStart},starts_at.lt.${new Date(now.getTime() + CALENDAR_DAYS * 86_400_000).toISOString()}),rrule.not.is.null`,
@@ -401,7 +401,8 @@ async function workContext(db: Db, actor: CurrentActor, input: AssistantInput, z
     return [
       `- ${i.all_day ? when.day(i.starts_at) : when.at(i.starts_at)}`,
       what,
-      (i.outcome ?? "scheduled").replace("_", " "),
+      i.status ?? "pending",
+      i.interviewer ? `interviewer ${clip(i.interviewer, 80)}` : null,
       i.location ? `at ${clip(i.location, 100)}` : null,
       i.description ? `notes: ${clip(i.description, 200)}` : null,
     ]

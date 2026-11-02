@@ -724,23 +724,28 @@ it: the token is the admin's own and RLS still decides what it reads.
 
 ### Interviews
 
-`/dashboard/interviews` is the sheet of them: upcoming, waiting on a follow-up,
-or past, each with its application's number, candidate and time, the
-outcome — scheduled, passed, failed, follow up, cancelled — marked right
-there, and the posting, the resume that was sent, the job description and
-the calendar event a click away. It reads `application_interviews()` and
-writes the outcome on the calendar event (`src/lib/interviews.ts`), so the
-calendar, the Applications grid and this page are one record; the calendar's
-policy decides who may mark one — the event's creator, or the super admin.
+`/dashboard/interviews` is the sheet of them, all on one list, newest first,
+one line a row: date, time, role, company, interviewer, location, handler
+(whoever booked it) and status — pending, done, pass or fail — marked right
+there. A row opens its slot on the calendar; the calendar's **Open on the
+Interviews page** comes back to the row (`?event=<id>`), scrolled to and lit.
+The posting, the resume that was sent, the job description, and changing or
+deleting the interview are in the menu at the end of each row. It reads
+`application_interviews()` and writes the status on the calendar event
+(`src/lib/interviews.ts`), so the calendar, the Applications grid and this
+page are one record; the calendar's policy decides who may mark one — the
+event's creator, or the super admin.
 
-Interviews are calendar events. An event in
-[trueward-calendar](https://github.com/luckydevstar/trueward-calendar) is
-linked to an application by its number (type A007) and given an outcome —
-scheduled, passed, failed, follow up, cancelled; the event then shows that
-application's resume, posting and job description. The **Interviews** column in Applications lists each
-application's events from `application_interviews()` (in the calendar's
-schema, which reads the application under this app's own rules); the
-event's creator and the super admin can change the outcome from there.
+Interviews are calendar events of the **interview** type. In
+[trueward-calendar](https://github.com/luckydevstar/trueward-calendar), an
+event's type is chosen under its title, and an interview may be linked to an
+application by its number (type A007); the event then shows that
+application's resume, posting and job description. The **Interviews** column
+in Applications lists each application's interviews from
+`application_interviews()` (in the calendar's schema, which reads the
+application under this app's own rules); the event's creator and the super
+admin can change the status from there. On the calendar, a past event wears
+its status as a label.
 
 **Interviews that didn't come from an application** — one scheduled by
 email, say — are added on this page with **Add interview** (subadmins and the
@@ -749,8 +754,8 @@ super admin, who use the calendar; bidders get no button). The form writes a
 policies: a calendar (the one named for interviews, if any), the day and
 times in the browser's zone, the company and role, and optionally the
 candidate, the job link, a location or meeting link, notes, an application to
-link, and the outcome. Because it *is* the event, the calendar shows it at
-once, and it stays an interview there without an application.
+link, the interviewer, and the status. Because it *is* the event, the
+calendar shows it at once, as an interview, with or without an application.
 
 - Such a row shows its own company, role and candidate (the name is read
   under `candidate_profile`'s policies), its own job link, and no resume or

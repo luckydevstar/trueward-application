@@ -1779,7 +1779,9 @@ begin
   delete from job where id = '00000000-0000-0000-0000-00000000ac04';
   raise exception 'FAIL: a job with applications was deleted';
 exception
-  when foreign_key_violation then
+  -- A RESTRICT key reports restrict_violation on newer PostgreSQL, and
+  -- foreign_key_violation on older; either means the job was kept.
+  when foreign_key_violation or restrict_violation then
     raise notice 'PASS: a job with applications is kept for its description';
 end $$;
 with changed as (

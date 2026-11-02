@@ -7,15 +7,19 @@ export const metadata = { title: "Overview" };
 
 const WEEK_MS = 7 * 86_400_000;
 
-type InterviewRow = { title: string; starts_at: string; outcome: string | null };
+type InterviewRow = { title: string; starts_at: string; status: string | null };
 
-/** The next seven days' interviews, soonest first — cancelled ones aren't coming. */
+/**
+ * The next seven days' interviews, soonest first. Only pending ones: one
+ * still to come but already marked done was called off — a cancellation is
+ * recorded as done.
+ */
 function interviewsThisWeek(rows: InterviewRow[]) {
   const now = Date.now();
   return rows
     .filter((i) => {
       const at = Date.parse(i.starts_at);
-      return at >= now && at < now + WEEK_MS && i.outcome !== "cancelled";
+      return at >= now && at < now + WEEK_MS && (i.status ?? "pending") === "pending";
     })
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
     .map((i) => ({ title: i.title, startsAt: i.starts_at }));

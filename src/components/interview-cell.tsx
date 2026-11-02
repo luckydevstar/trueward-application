@@ -4,15 +4,15 @@ import { CalendarOutlined } from "@ant-design/icons";
 import { App, Button, Popover, Select, Tag, Typography } from "antd";
 import { useState } from "react";
 
-import { calendarLink, markInterview, OUTCOME, type Interview, type InterviewOutcome } from "@/lib/interviews";
+import { calendarLink, markInterview, STATUS, type Interview, type InterviewStatus } from "@/lib/interviews";
 
 export type { Interview };
 
 /**
- * An application's interviews, in the Applications grid: the latest outcome
+ * An application's interviews, in the Applications grid: the latest status
  * and how many, opening onto the list. Whoever may change the calendar event
  * (its creator, or the super admin — the calendar's own rule) can mark the
- * outcome here too; everyone else reads it.
+ * status here too; everyone else reads it.
  */
 export function InterviewCell({
   interviews: initial,
@@ -33,24 +33,24 @@ export function InterviewCell({
   if (!interviews.length) return <Typography.Text type="secondary">—</Typography.Text>;
 
   const latest = interviews[interviews.length - 1];
-  const look = OUTCOME[latest.outcome ?? "scheduled"];
+  const look = STATUS[latest.status ?? "pending"];
 
-  const mark = async (interview: Interview, outcome: InterviewOutcome) => {
+  const mark = async (interview: Interview, status: InterviewStatus) => {
     setSaving(interview.event_id);
-    const problem = await markInterview(interview.event_id, outcome);
+    const problem = await markInterview(interview.event_id, status);
     setSaving(null);
     if (problem) {
       message.error(problem);
       return;
     }
-    setInterviews((all) => all.map((i) => (i.event_id === interview.event_id ? { ...i, outcome } : i)));
+    setInterviews((all) => all.map((i) => (i.event_id === interview.event_id ? { ...i, status } : i)));
   };
 
   const list = (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 300, maxWidth: 380 }}>
       {interviews.map((i) => {
         const editable = isSuperAdmin || i.created_by === userId;
-        const tag = OUTCOME[i.outcome ?? "scheduled"];
+        const tag = STATUS[i.status ?? "pending"];
         return (
           <div key={i.event_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -68,13 +68,13 @@ export function InterviewCell({
               </Typography.Text>
             </div>
             {editable ? (
-              <Select
+              <Select<InterviewStatus>
                 size="small"
-                value={i.outcome ?? "scheduled"}
+                value={i.status ?? "pending"}
                 loading={saving === i.event_id}
                 onChange={(v) => mark(i, v)}
                 style={{ width: 118 }}
-                options={Object.entries(OUTCOME).map(([value, o]) => ({ value, label: o.label }))}
+                options={Object.entries(STATUS).map(([value, o]) => ({ value: value as InterviewStatus, label: o.label }))}
               />
             ) : (
               <Tag color={tag.color} bordered={false} style={{ margin: 0 }}>

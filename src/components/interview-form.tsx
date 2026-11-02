@@ -7,12 +7,12 @@ import { useRef, useState } from "react";
 import type { InterviewRow } from "@/components/interviews-sheet";
 import {
   findApplications,
-  INTERVIEW_OUTCOMES,
+  INTERVIEW_STATUSES,
   interviewTitle,
-  OUTCOME,
   saveInterview,
+  STATUS,
   type ApplicationChoice,
-  type InterviewOutcome,
+  type InterviewStatus,
 } from "@/lib/interviews";
 import { applicationNo } from "@/lib/numbers";
 
@@ -34,7 +34,8 @@ type Values = {
   location?: string;
   notes?: string;
   applicationId?: string;
-  outcome: InterviewOutcome;
+  interviewer?: string;
+  status: InterviewStatus;
 };
 
 const WEB = /^https?:\/\/\S+$/i;
@@ -61,7 +62,7 @@ function initialValues(row: InterviewRow | null, booking: Booking): Values {
       end: start.add(1, "hour"),
       company: "",
       role: "",
-      outcome: "scheduled",
+      status: "pending",
     };
   }
   // An all-day event has no times to show; it gets these if it's saved.
@@ -79,7 +80,8 @@ function initialValues(row: InterviewRow | null, booking: Booking): Values {
     location: row.location ?? undefined,
     notes: row.description ?? undefined,
     applicationId: row.application_id ?? undefined,
-    outcome: row.outcome ?? "scheduled",
+    interviewer: row.interviewer ?? undefined,
+    status: row.status ?? "pending",
   };
 }
 
@@ -201,7 +203,8 @@ export function InterviewForm({
         location: text(values.location),
         notes: text(values.notes),
         applicationId: values.applicationId ?? null,
-        outcome: values.outcome,
+        interviewer: text(values.interviewer),
+        status: values.status,
       },
       row?.event_id,
     );
@@ -323,6 +326,10 @@ export function InterviewForm({
           </Form.Item>
         </div>
 
+        <Form.Item name="interviewer" label="Interviewer" rules={[{ max: 200 }]}>
+          <Input placeholder="Optional — who is interviewing" />
+        </Form.Item>
+
         <Form.Item name="profileId" label="Candidate">
           <Select allowClear showSearch={{ optionFilterProp: "label" }} placeholder="Optional" options={profileOptions} />
         </Form.Item>
@@ -360,13 +367,13 @@ export function InterviewForm({
           />
         </Form.Item>
 
-        <Form.Item name="outcome" label="Outcome">
-          <Select<InterviewOutcome>
-            options={INTERVIEW_OUTCOMES.map((o) => ({
+        <Form.Item name="status" label="Status">
+          <Select<InterviewStatus>
+            options={INTERVIEW_STATUSES.map((o) => ({
               value: o,
               label: (
-                <Tag color={OUTCOME[o].color} bordered={false} style={{ margin: 0 }}>
-                  {OUTCOME[o].label}
+                <Tag color={STATUS[o].color} bordered={false} style={{ margin: 0 }}>
+                  {STATUS[o].label}
                 </Tag>
               ),
             }))}

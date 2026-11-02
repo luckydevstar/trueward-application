@@ -2,19 +2,20 @@ import { applicationNo, parseRecordNo } from "@/lib/numbers";
 import { createClient } from "@/lib/supabase/client";
 
 /*
- * Interviews are Trueward Calendar's events with an outcome. Most are linked
- * to an application; some are booked in their own right on the Interviews
- * page — one scheduled by email, with no application behind it — and say
- * what they are for themselves (the interview_* fields). The tracker reads
+ * Interviews are Trueward Calendar's interview-type events. Some are linked
+ * to the application they came from; others — one scheduled by email, say —
+ * say what they are for themselves (the interview_* fields). Either kind is
+ * added on the calendar or on the Interviews page here. The tracker reads
  * them through application_interviews() (the calendar's schema), which shows
- * a linked interview to whoever can see its application and one booked in
- * its own right to the calendar's users and whoever may use its candidate,
- * and writes them on the event itself — so the calendar, the Applications
- * grid and the Interviews page always agree.
+ * a linked interview to whoever can see its application and any other to
+ * the calendar's users and whoever may use its candidate, and writes them on
+ * the event itself — so the calendar, the Applications grid and the
+ * Interviews page always agree.
  */
 
-export const INTERVIEW_OUTCOMES = ["scheduled", "passed", "failed", "follow_up", "cancelled"] as const;
-export type InterviewOutcome = (typeof INTERVIEW_OUTCOMES)[number];
+/** How an interview went — the calendar's status, which every event has. */
+export const INTERVIEW_STATUSES = ["pending", "done", "pass", "fail"] as const;
+export type InterviewStatus = (typeof INTERVIEW_STATUSES)[number];
 
 /** One interview, as application_interviews() returns it. */
 export type Interview = {
@@ -24,29 +25,34 @@ export type Interview = {
   title: string;
   starts_at: string;
   ends_at: string;
-  outcome: InterviewOutcome | null;
+  status: InterviewStatus;
   created_by: string | null;
+  /** Whoever booked it, by name — read by the function, as the definer. */
+  handler: string | null;
   /** Added with the Interviews page; absent until the calendar's schema is re-run. */
   location?: string | null;
   description?: string | null;
   all_day?: boolean | null;
   /**
-   * What an interview booked in its own right is for. Null on a linked one,
-   * which reads all of this from its application; absent until the
-   * calendar's schema is re-run.
+   * What the interview is for, and who is interviewing. A linked one may
+   * leave company and role empty and read them from its application.
    */
   interview_company?: string | null;
   interview_role?: string | null;
   interview_profile_id?: string | null;
   interview_job_url?: string | null;
+  interviewer?: string | null;
 };
 
-export const OUTCOME: Record<InterviewOutcome, { label: string; color: string }> = {
-  scheduled: { label: "Scheduled", color: "blue" },
-  passed: { label: "Passed", color: "green" },
-  failed: { label: "Failed", color: "red" },
-  follow_up: { label: "Follow up", color: "gold" },
-  cancelled: { label: "Cancelled", color: "default" },
+/**
+ * Each status's label and tag colour. Pass green, fail red and done grey are
+ * the colours the calendar labels a past event with, so the two read alike.
+ */
+export const STATUS: Record<InterviewStatus, { label: string; color: string }> = {
+  pending: { label: "Pending", color: "blue" },
+  done: { label: "Done", color: "default" },
+  pass: { label: "Pass", color: "green" },
+  fail: { label: "Fail", color: "red" },
 };
 
 export const CALENDAR_URL = process.env.NEXT_PUBLIC_CALENDAR_URL ?? "https://calendar.trueward.guru";
@@ -71,7 +77,7 @@ function calendarProblem(error: { code?: string; message: string }): string {
     return "The job link has to start with http:// or https://.";
   }
   if (error.code === "23514") {
-    return "The calendar doesn't know that outcome yet — run the calendar's schema.sql again.";
+    return "The calendar doesn't know that status yet — run the calendar's schema.sql again.";
   }
   if (error.code === "23503") return "That calendar, application or candidate isn't there any more. Reload and try again.";
   if (error.code === "42501") return "Only subadmins and the super admin can book interviews on the calendar.";
@@ -82,10 +88,10 @@ function calendarProblem(error: { code?: string; message: string }): string {
  * Marks how an interview went, on the calendar event. The calendar's own
  * policy decides who may: the event's creator, or the super admin.
  */
-export async function markInterview(eventId: string, outcome: InterviewOutcome): Promise<string | null> {
+export async function markInterview(eventId: string, status: InterviewStatus): Promise<string | null> {
   const { data, error } = await createClient()
     .from("calendar_event" as never)
-    .update({ interview_outcome: outcome } as never)
+    .update({ status } as never)
     .eq("id", eventId)
     .select("id");
   if (error) return calendarProblem(error);
@@ -107,7 +113,8 @@ export type InterviewInput = {
   location: string | null;
   notes: string | null;
   applicationId: string | null;
-  outcome: InterviewOutcome;
+  interviewer: string | null;
+  status: InterviewStatus;
 };
 
 /**
@@ -127,7 +134,9 @@ export async function saveInterview(input: InterviewInput, eventId?: string): Pr
     location: input.location,
     description: input.notes,
     application_id: input.applicationId,
-    interview_outcome: input.outcome,
+    event_type: "interview",
+    status: input.status,
+    interviewer: input.interviewer,
     interview_company: input.company,
     interview_role: input.role,
     interview_profile_id: input.profileId,
