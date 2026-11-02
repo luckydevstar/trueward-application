@@ -901,18 +901,18 @@ export function renderResumePdf(
    *
    * inline  "• Languages: Go, TypeScript, …", wrapping under the name
    * grid    the name in a column of its own, its skills beside it
-   * tags    every skill in its own box or underlined, in rows
-   * flow    every skill in one paragraph, " • " between them
-   * columns every skill in a grid of columns, each with a dot
+   * tags    the name in a column of its own, its skills as boxed or
+   *         underlined tags beside it
+   * flow    "Languages: Go • TypeScript • …", a category to a line
+   * columns the name on a line of its own, its skills in columns beneath
    *
-   * The last three drop the categories: the designs they come from list
-   * skills, not groups of them.
+   * Every one keeps the categories: a resume's skills are always grouped,
+   * whatever the style — never one undivided list.
    */
   const skills = (flow: Flow) => {
     const size = 9 * s.fontScale;
     const lineHeight = size * s.lineSpacing;
     const dotGap = 9;
-    const all = content.skills.flatMap((g) => g.items);
 
     if (spec.skills === "grid") {
       // As wide as the longest category name needs, within reason: short
@@ -936,63 +936,88 @@ export function renderResumePdf(
       return;
     }
 
-    if (spec.skills === "flow") {
-      block(flow, wrap(all.join("  •  "), size, flow.width), size);
-      return;
-    }
-
     if (spec.skills === "tags") {
+      // The category in a column, as in the grid, and its tags flowing in
+      // rows beside it. Laid out before drawing, so a category's rows are
+      // reserved together and never split across a page.
       const boxed = spec.tags !== "underline";
       const padX = boxed ? 6 : 0;
       const gapX = boxed ? 6 : 13;
       const rowHeight = size + (boxed ? 11 : 10);
-      let x = flow.x;
-      advance(flow, rowHeight);
-      on(flow);
-      for (const item of all) {
-        const w = Math.min(measure(item, size) + padX * 2, flow.width);
-        if (x > flow.x && x + w > flow.x + flow.width) {
-          x = flow.x;
-          flow.y += rowHeight;
-          advance(flow, rowHeight);
-          on(flow);
+      const longest = Math.max(...content.skills.map((g) => measure(g.name, size, true)));
+      const labelWidth = Math.min(Math.max(longest + 14, 72), flow.width * 0.3);
+      const left = flow.x + labelWidth;
+      const right = flow.x + flow.width;
+      for (const group of content.skills) {
+        const rows: Array<Array<{ item: string; x: number; w: number }>> = [[]];
+        let x = left;
+        for (const item of group.items) {
+          const w = Math.min(measure(item, size) + padX * 2, right - left);
+          if (x > left && x + w > right) {
+            rows.push([]);
+            x = left;
+          }
+          rows[rows.length - 1].push({ item, x, w });
+          x += w + gapX;
         }
-        if (boxed) {
-          pdf.setDrawColor(...tint(s.accent, 0.55));
-          pdf.setLineWidth(0.6);
-          pdf.roundedRect(x, flow.y - size * 0.85 - 2.5, w, size + 5, 2, 2, "S");
-        } else {
-          pdf.setDrawColor(...tint(s.accent, 0.35));
-          pdf.setLineWidth(0.8);
-          pdf.line(x, flow.y + 3, x + w, flow.y + 3);
-        }
-        write(item, x + padX, flow.y, size);
-        x += w + gapX;
-      }
-      flow.y += lineHeight + 2;
-      return;
-    }
-
-    if (spec.skills === "columns") {
-      const cols = flow.width > 420 ? 4 : 3;
-      const colWidth = flow.width / cols;
-      for (let i = 0; i < all.length; i += cols) {
-        const row = all.slice(i, i + cols).map((item) => wrap(item, size, colWidth - dotGap - 6));
-        const height = Math.max(...row.map((lines) => lines.length)) * lineHeight;
+        const label = wrap(group.name, size, labelWidth - 10, true);
+        const height = Math.max(rows.length * rowHeight, label.length * lineHeight);
         advance(flow, height);
         on(flow);
-        row.forEach((lines, j) => {
-          const x = flow.x + j * colWidth;
-          dot(x + 2.2, flow.y, size, s.accent, 1.3);
-          write(lines, x + dotGap, flow.y, size);
+        write(label, flow.x, flow.y, size, { bold: true });
+        rows.forEach((row, r) => {
+          const y = flow.y + r * rowHeight;
+          for (const { item, x: tx, w } of row) {
+            if (boxed) {
+              pdf.setDrawColor(...tint(s.accent, 0.55));
+              pdf.setLineWidth(0.6);
+              pdf.roundedRect(tx, y - size * 0.85 - 2.5, w, size + 5, 2, 2, "S");
+            } else {
+              pdf.setDrawColor(...tint(s.accent, 0.35));
+              pdf.setLineWidth(0.8);
+              pdf.line(tx, y + 3, tx + w, y + 3);
+            }
+            write(item, tx + padX, y, size);
+          }
         });
         flow.y += height + 2;
       }
       return;
     }
 
-    // inline — with or without the accent dot before each category.
-    const dotted = spec.skillDots !== false;
+    if (spec.skills === "columns") {
+      // The category on a line of its own, then its skills in columns.
+      const cols = flow.width > 420 ? 4 : 3;
+      const colWidth = flow.width / cols;
+      for (const group of content.skills) {
+        const firstRow = group.items.slice(0, cols).map((item) => wrap(item, size, colWidth - dotGap - 6));
+        // The name is reserved with the first row, so it never ends a page alone.
+        advance(flow, lineHeight + Math.max(1, ...firstRow.map((lines) => lines.length)) * lineHeight);
+        on(flow);
+        write(group.name, flow.x, flow.y, size, { bold: true });
+        flow.y += lineHeight;
+        for (let i = 0; i < group.items.length; i += cols) {
+          const row = group.items.slice(i, i + cols).map((item) => wrap(item, size, colWidth - dotGap - 6));
+          const height = Math.max(...row.map((lines) => lines.length)) * lineHeight;
+          advance(flow, height);
+          on(flow);
+          row.forEach((lines, j) => {
+            const x = flow.x + j * colWidth;
+            dot(x + 2.2, flow.y, size, s.accent, 1.3);
+            write(lines, x + dotGap, flow.y, size);
+          });
+          flow.y += height + 1.5;
+        }
+        flow.y += 3;
+      }
+      return;
+    }
+
+    // inline — with or without the accent dot before each category — and
+    // flow, which is inline with " • " between skills and no dot.
+    const flowing = spec.skills === "flow";
+    const separator = flowing ? "  •  " : ", ";
+    const dotted = !flowing && spec.skillDots !== false;
     const x = flow.x + (dotted ? dotGap : 0);
     const width = flow.width - (dotted ? dotGap : 0);
     for (const group of content.skills) {
@@ -1005,7 +1030,7 @@ export function renderResumePdf(
       // under it. The 0.35 floor stops a long category name squeezing the
       // first line to a few characters.
       const firstWidth = Math.max(width - labelWidth, width * 0.35);
-      const items = wrap(group.items.join(", "), size, firstWidth);
+      const items = wrap(group.items.join(separator), size, firstWidth);
       const first = items.shift() ?? "";
       const rest = items.length ? wrap(items.join(" "), size, width) : [];
 

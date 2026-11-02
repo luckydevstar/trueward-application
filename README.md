@@ -150,8 +150,10 @@ spec chooses:
 - **Entries:** role first (company and place below); company first (role and
   dates on the second row); stacked (role, company, then dates and place); or
   dates and place in a left column.
-- **Skills:** by category inline or in a grid, or as tags, one flowing list,
-  or columns.
+- **Skills:** always by category, in one of five arrangements: inline
+  ("Category: a, b, c"), a grid, tags beside the category, a " • " list per
+  category, or columns under each category name. No template prints skills
+  as one undivided list.
 - **Layout:** one column, the section names in a left margin, or a timeline
   line with a dot at each heading. A template can also reorder the sections.
 - **Icons:** small drawn icons beside the contact details and the dates and

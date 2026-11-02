@@ -52,11 +52,14 @@ export type TemplateSpec = {
    */
   heading: "chip" | "bar" | "inline" | "band" | "rule" | "center" | "fill" | "tab" | "dash" | "underline" | "text";
   /**
+   * Always by category — a resume's skills are never one undivided list.
+   *
    * inline  — "• Category: a, b, c", wrapping under the label
    * grid    — the category in a column of its own, its skills beside it
-   * tags    — every skill in its own small box (or underlined), in rows
-   * flow    — every skill in one paragraph, " • " between them
-   * columns — every skill in a column grid, each with a dot
+   * tags    — the category in a column, its skills as small boxed (or
+   *           underlined) tags beside it
+   * flow    — "Category: a • b • c", a category to a line
+   * columns — the category on its own line, its skills in columns beneath
    */
   skills: "inline" | "grid" | "tags" | "flow" | "columns";
   /** Multiplier on the name, for templates that want a louder or quieter one. */
