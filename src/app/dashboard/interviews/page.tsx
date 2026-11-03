@@ -1,6 +1,6 @@
 import { InterviewsSheet, type InterviewRow } from "@/components/interviews-sheet";
 import { requireActor } from "@/lib/actor";
-import type { Interview } from "@/lib/interviews";
+import type { Handler, Interview } from "@/lib/interviews";
 import { profileReach, scopeToReach } from "@/lib/profile-scope";
 import { isAdminRole } from "@/lib/roles";
 import { teamIdFor } from "@/lib/scope";
@@ -46,7 +46,7 @@ export default async function InterviewsPage({ searchParams }: PageProps<"/dashb
   // src/lib/profile-scope.ts. Asked only for someone who books.
   const reach = books ? await profileReach(supabase, actor, teamIdFor(actor) ?? "") : null;
 
-  const [{ data }, calendars, profiles] = await Promise.all([
+  const [{ data }, calendars, profiles, handlers] = await Promise.all([
     // Empty, not an error, until the calendar's schema has been run.
     supabase.rpc("application_interviews" as never),
     // In the calendar's own sidebar order. Not in this app's types.
@@ -58,6 +58,9 @@ export default async function InterviewsPage({ searchParams }: PageProps<"/dashb
           .order("created_at" as never)
       : null,
     reach ? scopeToReach(supabase.from("candidate_profile").select("id, full_name").order("full_name"), reach, "id") : null,
+    // Every account, for the Handler dropdown — the function returns them only
+    // to the calendar's users, who are the ones who can change a handler.
+    books ? supabase.rpc("interview_handlers" as never) : null,
   ]);
   const interviews = (data ?? []) as Interview[];
 
@@ -137,6 +140,7 @@ export default async function InterviewsPage({ searchParams }: PageProps<"/dashb
     <InterviewsSheet
       rows={rows}
       focus={focus}
+      handlers={((handlers?.data ?? []) as Handler[])}
       canOpenCalendar={isAdminRole(actor.role)}
       booking={
         books

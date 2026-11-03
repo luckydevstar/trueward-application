@@ -27,7 +27,8 @@ export type Interview = {
   ends_at: string;
   status: InterviewStatus;
   created_by: string | null;
-  /** Whoever booked it, by name — read by the function, as the definer. */
+  /** Whoever handles it — the one picked, or whoever booked it — and their name. */
+  handler_id: string | null;
   handler: string | null;
   /** Added with the Interviews page; absent until the calendar's schema is re-run. */
   location?: string | null;
@@ -96,6 +97,25 @@ export async function markInterview(eventId: string, status: InterviewStatus): P
     .select("id");
   if (error) return calendarProblem(error);
   if (!(data as unknown[] | null)?.length) return "Only the event's creator or the super admin can mark it.";
+  return null;
+}
+
+/** Someone an interview can be handed to: any account, from interview_handlers(). */
+export type Handler = { id: string; name: string; role: string };
+
+/**
+ * Hands an interview to someone. Only the handler changes — who booked it,
+ * and so who may change the event, stays as it was. The calendar's policy
+ * decides who may: the event's creator, or the super admin.
+ */
+export async function setHandler(eventId: string, handlerId: string): Promise<string | null> {
+  const { data, error } = await createClient()
+    .from("calendar_event" as never)
+    .update({ handler_id: handlerId } as never)
+    .eq("id", eventId)
+    .select("id");
+  if (error) return calendarProblem(error);
+  if (!(data as unknown[] | null)?.length) return "Only the event's creator or the super admin can change its handler.";
   return null;
 }
 

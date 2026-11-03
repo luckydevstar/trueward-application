@@ -13,10 +13,12 @@ import {
 } from "@ant-design/icons";
 import { App, Button, Card, Dropdown, Empty, Input, Modal, Select, Table, Tag, Tooltip } from "antd";
 import type { MenuProps } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { EXACT_WIDTH_CLASS, EXACT_WIDTH_CSS, ResizableTitle } from "@/components/grid/resizable-title";
 import { InterviewForm, type Booking } from "@/components/interview-form";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -24,10 +26,13 @@ import {
   deleteInterview,
   INTERVIEW_STATUSES,
   markInterview,
+  setHandler,
   STATUS,
+  type Handler,
   type Interview,
   type InterviewStatus,
 } from "@/lib/interviews";
+import { useColumnWidths } from "@/lib/column-widths";
 import { applicationNo } from "@/lib/numbers";
 import { applyOverlay, resolveOverlay, type Overlay } from "@/lib/overlay";
 import { createClient } from "@/lib/supabase/client";
@@ -73,6 +78,21 @@ const about = (r: InterviewRow) => ({
   role: r.interview_role || r.application?.title || "",
 });
 
+/** Each column's width until it's dragged, and the key it's remembered under in this browser. */
+const WIDTH_STORAGE_KEY = "tw.interviews.columnWidths";
+const DEFAULT_WIDTHS: Record<string, number> = {
+  date: 120,
+  time: 150,
+  role: 220,
+  company: 170,
+  interviewer: 150,
+  location: 160,
+  handler: 160,
+  status: 128,
+};
+/** The menu column: fixed, with no handle to drag. */
+const MENU_WIDTH = 48;
+
 /** Clicks on these act for themselves, not for the row they sit in. */
 const OWN_CLICK = "a, button, input, .ant-select, .ant-dropdown-trigger";
 
@@ -92,6 +112,7 @@ export function InterviewsSheet({
   canOpenCalendar,
   booking,
   focus,
+  handlers,
 }: {
   rows: InterviewRow[];
   canOpenCalendar: boolean;
@@ -99,6 +120,8 @@ export function InterviewsSheet({
   booking: Booking | null;
   /** The interview to show — from the calendar's link back to this page. */
   focus: string | null;
+  /** Everyone an interview can be handed to; empty for a bidder, who hands nothing. */
+  handlers: Handler[];
 }) {
   const router = useRouter();
   const { message, modal } = App.useApp();
@@ -113,6 +136,7 @@ export function InterviewsSheet({
     setOverlay((previous) => applyOverlay(previous, initial, next));
   const [query, setQuery] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
+  const [widths, setWidth] = useColumnWidths(WIDTH_STORAGE_KEY, DEFAULT_WIDTHS);
   const [description, setDescription] = useState<{ jobId: string; text: string | null | undefined } | null>(null);
 
   // The form is mounted while it's showing, and dropped once it has closed.
@@ -165,6 +189,43 @@ export function InterviewsSheet({
       : about(row).company || "The interview";
     message.success(`${name} marked ${STATUS[status].label.toLowerCase()}.`);
   };
+
+  /** Hands the interview to someone else; who booked it, and owns the event, stays the same. */
+  const assign = async (row: InterviewRow, handlerId: string) => {
+    setSaving(`handler:${row.event_id}`);
+    const problem = await setHandler(row.event_id, handlerId);
+    setSaving(null);
+    if (problem) {
+      message.error(problem);
+      return;
+    }
+    const name = handlers.find((h) => h.id === handlerId)?.name ?? null;
+    change((all) =>
+      all.map((r) => (r.event_id === row.event_id ? { ...r, handler_id: handlerId, handler: name } : r)),
+    );
+    message.success(`Handed to ${name ?? "them"}.`);
+  };
+
+  /**
+   * Each column at the width this browser last dragged it to — the menu
+   * column aside, which has nothing to show wider.
+   */
+  const sized = (columns: ColumnsType<InterviewRow>) =>
+    columns.map((col) => {
+      const key = String(col.key);
+      if (!(key in DEFAULT_WIDTHS)) return col;
+      const width = widths[key] ?? DEFAULT_WIDTHS[key];
+      return {
+        ...col,
+        width,
+        onHeaderCell: () => ({
+          width,
+          onResize: (_e: unknown, { size }: { size: { width: number } }) => setWidth(key, size.width),
+        }),
+      };
+    }) as ColumnsType<InterviewRow>;
+  const totalWidth =
+    Object.keys(DEFAULT_WIDTHS).reduce((sum, key) => sum + (widths[key] ?? DEFAULT_WIDTHS[key]), 0) + MENU_WIDTH;
 
   /** Deletes the event itself — the calendar's policy decides who may. */
   const remove = (row: InterviewRow) =>
@@ -263,14 +324,17 @@ export function InterviewsSheet({
 
       <Card variant="borderless" styles={{ body: { padding: 0 } }}>
         <Table<InterviewRow>
-          className="tw-sheet"
+          className={`${EXACT_WIDTH_CLASS} tw-sheet`}
           rowKey="event_id"
           size="middle"
+          // Fixed, with a numeric scroll width: a column can then be dragged
+          // narrower than its longest cell, which simply ellipses.
           tableLayout="fixed"
           dataSource={shown}
           pagination={false}
           sticky
-          scroll={{ x: 1180 }}
+          components={{ header: { cell: ResizableTitle } }}
+          scroll={{ x: totalWidth }}
           rowClassName={(r) =>
             [
               r.event_id === focus ? "tw-focus" : "",
@@ -303,17 +367,15 @@ export function InterviewsSheet({
               />
             ),
           }}
-          columns={[
+          columns={sized([
             {
               title: "Date",
               key: "date",
-              width: 120,
               render: (_, r) => <span style={{ fontWeight: 600 }}>{dayjs(r.starts_at).format("ddd, MMM D")}</span>,
             },
             {
               title: "Time",
               key: "time",
-              width: 150,
               render: (_, r) =>
                 r.all_day ? "All day" : `${dayjs(r.starts_at).format("h:mm A")} – ${dayjs(r.ends_at).format("h:mm A")}`,
             },
@@ -342,12 +404,11 @@ export function InterviewsSheet({
                 </Tooltip>
               ),
             },
-            { title: "Company", key: "company", width: 170, ellipsis: true, render: (_, r) => about(r).company || "—" },
-            { title: "Interviewer", key: "interviewer", width: 150, ellipsis: true, render: (_, r) => r.interviewer || "—" },
+            { title: "Company", key: "company", ellipsis: true, render: (_, r) => about(r).company || "—" },
+            { title: "Interviewer", key: "interviewer", ellipsis: true, render: (_, r) => r.interviewer || "—" },
             {
               title: "Location",
               key: "location",
-              width: 160,
               ellipsis: true,
               render: (_, r) =>
                 !r.location ? (
@@ -360,11 +421,34 @@ export function InterviewsSheet({
                   <span title={r.location}>{r.location}</span>
                 ),
             },
-            { title: "Handler", key: "handler", width: 130, ellipsis: true, render: (_, r) => r.handler || "—" },
+            {
+              title: "Handler",
+              key: "handler",
+              ellipsis: true,
+              // Whoever booked it until someone else is picked. Changed by
+              // those who may change the event; read by everyone else.
+              render: (_, r) =>
+                r.canMark && handlers.length ? (
+                  <Select
+                    size="small"
+                    variant="borderless"
+                    value={r.handler_id ?? undefined}
+                    placeholder={r.handler ?? "Pick someone"}
+                    loading={saving === `handler:${r.event_id}`}
+                    onChange={(id: string) => assign(r, id)}
+                    showSearch={{ optionFilterProp: "label" }}
+                    popupMatchSelectWidth={220}
+                    style={{ width: "100%" }}
+                    aria-label="Handler"
+                    options={handlers.map((h) => ({ value: h.id, label: h.name }))}
+                  />
+                ) : (
+                  r.handler || "—"
+                ),
+            },
             {
               title: "Status",
               key: "status",
-              width: 128,
               render: (_, r) => {
                 const value = r.status ?? "pending";
                 return r.canMark ? (
@@ -374,7 +458,7 @@ export function InterviewsSheet({
                     value={value}
                     loading={saving === r.event_id}
                     onChange={(next) => mark(r, next)}
-                    style={{ width: 108 }}
+                    style={{ width: "100%" }}
                     aria-label="Status"
                     options={INTERVIEW_STATUSES.map((o) => ({
                       value: o,
@@ -397,14 +481,14 @@ export function InterviewsSheet({
             {
               title: "",
               key: "more",
-              width: 48,
+              width: MENU_WIDTH,
               render: (_, r) => (
                 <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items: menu(r) }}>
                   <Button type="text" size="small" icon={<MoreOutlined />} aria-label="More for this interview" />
                 </Dropdown>
               ),
             },
-          ]}
+          ])}
         />
       </Card>
 
@@ -453,8 +537,11 @@ export function InterviewsSheet({
       )}
 
       <style>{`
-        /* One line a row, so every row is the same height. */
-        .tw-sheet td { white-space: nowrap; }
+        ${EXACT_WIDTH_CSS}
+        /* One line a row, so every row is the same height — and a column
+           dragged narrow ellipses rather than wrapping. */
+        .tw-sheet td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .tw-sheet .react-resizable-handle { touch-action: none; }
         .tw-sheet .tw-link { cursor: pointer; }
         .tw-today > td { background: #faf5ff !important; }
         .tw-focus > td { background: #fef9c3 !important; }

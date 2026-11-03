@@ -726,8 +726,11 @@ it: the token is the admin's own and RLS still decides what it reads.
 
 `/dashboard/interviews` is the sheet of them, all on one list, newest first,
 one line a row: date, time, role, company, interviewer, location, handler
-(whoever booked it) and status — pending, done, pass or fail — marked right
-there. A row opens its slot on the calendar; the calendar's **Open on the
+and status — pending, done, pass or fail — marked right there. The handler
+is whoever booked it until someone else is picked from the dropdown, which
+lists every account (`interview_handlers()`); handing it over doesn't change
+who may change the event. Columns are dragged wider or narrower by their
+header edge, remembered in this browser like the Applications grid's. A row opens its slot on the calendar; the calendar's **Open on the
 Interviews page** comes back to the row (`?event=<id>`), scrolled to and lit.
 The posting, the resume that was sent, the job description, and changing or
 deleting the interview are in the menu at the end of each row. It reads
