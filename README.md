@@ -126,8 +126,8 @@ template, so a layout change can be checked without clicking through the UI.
 **One server path:** the Chrome extension's **Download & track** has no
 browser page to draw in, so `src/lib/pdf/server.ts` runs the same renderer in
 the function, reading the embedded fonts from `public/fonts/` on disk. Those
-files reach the function only because `next.config.ts` lists the two routes
-that render (`/api/ext/apply`, `/api/resume-jobs/[id]/pdf`) in
+files reach the function only because `next.config.ts` lists the routes
+that render (`/api/ext/apply`, `/api/ext/record`, `/api/resume-jobs/[id]/pdf`) in
 `outputFileTracingIncludes` — a new route that renders must be added there.
 It is still jsPDF, not a browser: no binary, no cold boot worth the name.
 
@@ -208,8 +208,23 @@ accent, font and the rest. Switching candidate switches to theirs; one not
 styled yet starts from the last style used on any profile. Each generation
 also stores the style it was made in, and the builder keeps that in step as
 you restyle an open one — so a resume downloaded from the Chrome extension,
-rendered on the server from that row, looks like the builder's preview, and
-the extension's batches follow the profile's last style.
+rendered on the server from that row, looks like the builder's preview.
+
+The builder also saves each profile's style to the person's account (their
+Supabase user metadata, `resumeStyles`, keyed by profile — see
+`src/lib/resume-style.ts`), a moment after it settles. That is the style the
+server renders in when there is no builder page: the extension's pasted
+resumes and its batches (`profileStyle()` in `src/lib/jobs/style.ts`, which
+falls back to the style last used for the profile, then the default).
+
+**Content markup.** Summary, bullets and project text may wrap words in
+`<b>…</b>` (or `<strong>`) to set them in bold (`src/lib/document/rich.ts`);
+anywhere else the markup is dropped rather than printed. The summary may run
+to several paragraphs — line breaks in the string, or an array — and an
+optional `projects` list (`name`, `role`, `url`, `period`, `technologies`,
+`description`, `bullets`; common aliases such as `title`, `explanation`,
+`tech` and `highlights` are read too) prints a Projects section after
+Experience. Models aren't asked for projects; they come from pasted JSON.
 
 This is enforced in the UI, not the database: it is a style guideline, and
 treating a cosmetic field as a boundary would mean validating it on every write.
@@ -678,9 +693,14 @@ job number.
 ### Chrome extension
 
 [trueward-extension](https://github.com/luckydevstar/trueward-extension) is a
-side panel for applying: pick a profile and copy its contact details, pick a
-job (its posting opens), **Download & track** its resume, add the posting
-you're on as a job, and answer screening questions. It installs from
+side panel for applying: pick a profile and copy its contact details;
+**Check** the posting in the tab (company, title, link and description read
+off the page, with earlier bids to that company and the blocklist —
+`/api/ext/check`), paste resume JSON to download it as a PDF in the profile's
+saved style (`/api/ext/resume`, kept as a ready generation for the job), and
+**Done** records the bid with that PDF attached (`/api/ext/record`). Or pick a
+job from the list (its posting opens), **Download & track** its resume, add
+the posting you're on as a job, and answer screening questions. It installs from
 <https://extension.trueward.guru>, linked from the Jobs page. Its screens load
 from that site on every open, so a push to its repo updates every installed
 copy; see its README for how the installed half and the hosted half talk.

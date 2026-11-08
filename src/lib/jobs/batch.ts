@@ -8,6 +8,7 @@ import { openRouterConfigured } from "@/lib/ai/openrouter";
 import { profileSchema } from "@/lib/document/schema";
 import { generationsLastHour, HOURLY_LIMIT, NOT_ASSIGNED, worksProfile } from "@/lib/jobs/work";
 import { templateSpec } from "@/lib/pdf/templates";
+import { cleanStyle } from "@/lib/resume-style";
 import type { Actor } from "@/lib/roles";
 import type { Db } from "@/lib/supabase/request";
 import type { ResumeJobRow, ResumeStyle } from "@/lib/supabase/types";
@@ -19,12 +20,7 @@ export type BatchResult =
   | { ok: true; started: number; queued: number; skipped: number; jobs: ResumeJobRow[] }
   | { ok: false; error: string };
 
-/** The style fields a PDF is rendered from — anything else in a request is dropped. */
-export function cleanStyle(style: ResumeStyle | null | undefined): ResumeStyle | null {
-  if (!style) return null;
-  const { fontScale, headerPosition, accent, lineSpacing, justify, header, font } = style;
-  return { fontScale, headerPosition, accent, lineSpacing, justify, header, font };
-}
+export { cleanStyle };
 
 /**
  * Generates a resume for each chosen job, for one profile.

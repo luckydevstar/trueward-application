@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 
 import { DEFAULT_STYLE } from "@/components/resume-style-toolbar";
 import { usePersistentState } from "@/lib/persistent-state";
+import { cleanStyle, STYLES_KEY, type SavedStyle } from "@/lib/resume-style";
+import { createClient } from "@/lib/supabase/client";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
 /** Template and styling, remembered together so they can't fall out of step. */
@@ -59,4 +61,33 @@ export function useProfileStyle(userId: string, profileId: string | null) {
   );
 
   return [preset, setPreset] as const;
+}
+
+/**
+ * Keeps the account's copy of this profile's style in step with the builder
+ * (see src/lib/resume-style.ts), so what the server renders — the Chrome
+ * extension's pasted resumes and batches — looks like the preview here.
+ *
+ * Written a moment after the style settles, and only when it differs from
+ * what the account already holds, so dragging a slider is one write and
+ * opening the page is none.
+ */
+export function useSyncedProfileStyle(profileId: string | null, preset: Preset, enabled: boolean) {
+  const signature = JSON.stringify(preset);
+  useEffect(() => {
+    if (!enabled || !profileId) return;
+    const timer = setTimeout(async () => {
+      const next: SavedStyle = { template: preset.template, style: cleanStyle(preset.style) ?? {} };
+      const supabase = createClient();
+      const { data } = await supabase.auth.getUser();
+      if (!data.user) return;
+      const all = (data.user.user_metadata?.[STYLES_KEY] ?? {}) as Record<string, SavedStyle>;
+      if (JSON.stringify(all[profileId]) === JSON.stringify(next)) return;
+      // Best effort: the browser keeps its own copy either way.
+      await supabase.auth.updateUser({ data: { [STYLES_KEY]: { ...all, [profileId]: next } } }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+    // `signature` stands for `preset`, so an equal style re-created doesn't restart the timer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, profileId, signature]);
 }

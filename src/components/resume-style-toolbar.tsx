@@ -26,6 +26,7 @@ import {
   HEADER_FIELD_LABELS,
   resolveHeaderFields,
 } from "@/lib/resume-header";
+import { DEFAULT_STYLE } from "@/lib/resume-style";
 import type { ResumeStyle } from "@/lib/supabase/types";
 
 /**
@@ -36,13 +37,8 @@ import type { ResumeStyle } from "@/lib/supabase/types";
 export { TEMPLATES };
 export const ACCENTS = ACCENT_NAMES;
 
-export const DEFAULT_STYLE: ResumeStyle = {
-  fontScale: 100,
-  headerPosition: "center",
-  accent: "slate",
-  lineSpacing: 1.4,
-  justify: false,
-};
+/** Defined beside the server's style helpers, which need it too; re-exported for the builder. */
+export { DEFAULT_STYLE };
 
 type Props = {
   template: string;

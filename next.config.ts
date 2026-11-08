@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
    */
   outputFileTracingIncludes: {
     "/api/ext/apply": ["./public/fonts/**/*"],
+    "/api/ext/record": ["./public/fonts/**/*"],
     "/api/resume-jobs/*/pdf": ["./public/fonts/**/*"],
     "/api/resume-jobs/\\[id\\]/pdf": ["./public/fonts/**/*"],
   },

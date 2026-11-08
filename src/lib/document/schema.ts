@@ -280,16 +280,127 @@ export const experienceContentSchema = z.object({
   bullets: z.array(bulletSchema).default([]),
 });
 
-export const contentSchema = z.object({
-  targetTitle: z.string().min(1),
-  summary: z
-    .string()
-    .min(1)
-    .refine((s) => !s.trim().includes("\n\n"), "summary must be a single paragraph")
-    .transform((s) => s.split(/\s+/).filter(Boolean).join(" ")),
-  skills: z.array(skillCategorySchema).default([]),
-  experiences: z.array(experienceContentSchema).default([]),
-});
+/**
+ * Prose of one or more paragraphs: a string, where any line break starts a new
+ * paragraph, or an array with a paragraph in each element. Normalised to the
+ * paragraphs joined by a blank line, each with its whitespace collapsed — so
+ * parse(parse(x)) == parse(x), which the editor's client-then-server
+ * validation relies on (see `monthYear` above).
+ */
+const paragraphs = (value: unknown) =>
+  (Array.isArray(value) ? value.filter((p) => typeof p === "string").join("\n") : value);
+
+const normaliseParagraphs = (text: string) =>
+  text
+    .split(/\n+/)
+    .map((p) => p.split(/\s+/).filter(Boolean).join(" "))
+    .filter(Boolean)
+    .join("\n\n");
+
+/** The paragraphs of a summary or description, as normalised above. */
+export const paragraphsOf = (text: string | null | undefined): string[] =>
+  (text ?? "").split(/\n\n+/).filter(Boolean);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+/** A list given as an array, or as one comma-separated string. */
+const textList = z.preprocess(
+  (value) => (typeof value === "string" ? value.split(/[,;|]/) : (value ?? [])),
+  z.array(z.string()).transform((items) => items.map((i) => i.trim()).filter(Boolean)),
+);
+
+/** A bullet given as `{ text }` or as a bare string. */
+const looseBullets = z.preprocess(
+  (value) =>
+    Array.isArray(value)
+      ? value
+          .filter((b) => !(typeof b === "string" && !b.trim()))
+          .map((b) => (typeof b === "string" ? { text: b } : b))
+      : (value ?? []),
+  z.array(bulletSchema),
+);
+
+/**
+ * A project — side work, open source, a notable piece of delivery. Optional,
+ * and authored with the rest of the content: it names no employer, so there
+ * is nothing on the profile for it to contradict.
+ *
+ * Lenient about how it is written, since pasted JSON comes from whatever tool
+ * wrote it: `title` for `name`, `link` for `url`, `tech`/`stack` for
+ * `technologies` (an array or "a, b, c"), `explanation`/`summary` for
+ * `description` (a string or paragraphs), `highlights`/`achievements` for
+ * `bullets` (objects or strings), and `startDate`/`endDate` or `date` for
+ * `period`, which prints as written. All of these normalise to the canonical
+ * keys, so a parsed project parses to itself.
+ */
+export const projectSchema = z.preprocess(
+  (raw) => {
+    if (!isRecord(raw)) return raw;
+    const pick = (...keys: string[]) =>
+      keys.map((k) => raw[k]).find((v) => v !== undefined && v !== null && v !== "");
+    const start = pick("startDate", "start");
+    const end = pick("endDate", "end");
+    const range =
+      typeof start === "string" ? `${start} – ${typeof end === "string" ? end : "Present"}` : undefined;
+
+    let description = pick("description", "explanation", "summary", "overview", "details");
+    let bullets = pick("bullets", "highlights", "achievements", "points", "responsibilities");
+    // A description written as a list is a list of bullets.
+    if (Array.isArray(description) && bullets === undefined) {
+      bullets = description;
+      description = undefined;
+    }
+    return {
+      name: pick("name", "title", "projectName"),
+      role: pick("role", "position"),
+      url: pick("url", "link", "website", "repo", "github"),
+      period: pick("period", "date", "dates", "duration", "timeline") ?? range,
+      technologies: pick("technologies", "tech", "techStack", "stack", "tools", "skills"),
+      description,
+      bullets,
+    };
+  },
+  z.object({
+    name: z.string().min(1),
+    role: z.string().nullish(),
+    url: z.string().nullish(),
+    period: z.string().nullish(),
+    technologies: textList,
+    description: z.preprocess(paragraphs, z.string().transform(normaliseParagraphs).nullish()),
+    bullets: looseBullets,
+  }),
+);
+
+export const contentSchema = z.preprocess(
+  // `project` and friends are read as `projects`; a single project object as a list of one.
+  (raw) => {
+    if (!isRecord(raw)) return raw;
+    const given = Array.isArray(raw.projects) ? raw.projects.length > 0 : raw.projects != null;
+    if (given) return raw;
+    const alias = raw.project ?? raw.personalProjects ?? raw.keyProjects;
+    return alias === undefined ? raw : { ...raw, projects: alias };
+  },
+  z.object({
+    targetTitle: z.string().min(1),
+    /**
+     * One paragraph or several. It used to be held to exactly one, which
+     * rejected any pasted summary with a line break in it; now each paragraph
+     * prints as its own block.
+     */
+    summary: z.preprocess(
+      paragraphs,
+      z.string().transform(normaliseParagraphs).pipe(z.string().min(1, "summary is empty")),
+    ),
+    skills: z.array(skillCategorySchema).default([]),
+    experiences: z.array(experienceContentSchema).default([]),
+    /** Printed after Experience, when there are any. */
+    projects: z.preprocess(
+      (value) => (value == null ? [] : isRecord(value) ? [value] : value),
+      z.array(projectSchema),
+    ),
+  }),
+);
 
 // ===========================================================================
 // document — the join
@@ -383,6 +494,7 @@ export type ResumeProfile = z.infer<typeof profileSchema>;
 export type Bullet = z.infer<typeof bulletSchema>;
 export type SkillCategory = z.infer<typeof skillCategorySchema>;
 export type ExperienceContent = z.infer<typeof experienceContentSchema>;
+export type Project = z.infer<typeof projectSchema>;
 export type ResumeContent = z.infer<typeof contentSchema>;
 export type ResumeDocument = z.infer<typeof resumeDocumentSchema>;
 

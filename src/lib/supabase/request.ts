@@ -39,8 +39,14 @@ export function tokenClient(token: string): Db {
   );
 }
 
-/** The signed-in person behind a request, or null — never a redirect, for API routes. */
-export async function requestActor(request: Request): Promise<{ db: Db; actor: CurrentActor } | null> {
+/**
+ * The signed-in person behind a request, or null — never a redirect, for API
+ * routes. `token` is the bearer token the request carried, if any — what
+ * `db.auth.getUser(token)` needs to read the account itself.
+ */
+export async function requestActor(
+  request: Request,
+): Promise<{ db: Db; actor: CurrentActor; token: string | null } | null> {
   const { db, token } = await requestClient(request);
   const { data: auth } = await db.auth.getClaims(token ?? undefined);
   const userId = auth?.claims?.sub;
@@ -55,6 +61,7 @@ export async function requestActor(request: Request): Promise<{ db: Db; actor: C
 
   return {
     db,
+    token,
     actor: {
       id: data.id,
       email: data.email,

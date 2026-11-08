@@ -105,7 +105,8 @@ export function buildMessages(input: {
  * resolve — the most common reason pasted JSON used to fail.
  *
  * The answer is still validated against resumeDocumentSchema afterwards;
- * ordering and the one-paragraph summary are rules a JSON schema can't state.
+ * experience ordering is a rule a JSON schema can't state. Projects aren't
+ * asked of the model — they are optional, and come from pasted content.
  */
 export function contentJsonSchema(employmentIds: string[]): Record<string, unknown> {
   return {

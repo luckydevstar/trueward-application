@@ -7,8 +7,11 @@ export type RGB = [number, number, number];
  */
 export type Tone = "accent" | "ink" | "muted" | "highlight";
 
-/** The sections a resume can print, in an order a template may change. */
-export type SectionId = "summary" | "skills" | "experience" | "education";
+/**
+ * The sections a resume can print, in an order a template may change.
+ * Projects go straight after Experience unless a template places them.
+ */
+export type SectionId = "summary" | "skills" | "experience" | "projects" | "education";
 
 /**
  * How a template differs from the others.

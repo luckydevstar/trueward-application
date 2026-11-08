@@ -1,8 +1,10 @@
 import type { jsPDF as JsPdf } from "jspdf";
 
+import { plainText, richRuns } from "@/lib/document/rich";
 import {
   educationYears,
   formatMonthYear,
+  paragraphsOf,
   renderedExperiences,
   type ResumeDocument,
 } from "@/lib/document/schema";
@@ -100,6 +102,13 @@ function resolve(pdf: JsPdf, style: ResumeStyle, template: string): Resolved {
 /** A column of text with its own vertical cursor and page. */
 type Flow = { x: number; width: number; y: number; page: number };
 
+/** A stretch of text in one weight. */
+type Fragment = { text: string; bold: boolean };
+/** A word, as fragments set without space between them — "<b>React</b>," is two. */
+type RichWord = Fragment[];
+/** One laid-out line of mixed-weight text, and how wide it is unstretched. */
+type RichLine = { words: RichWord[]; width: number };
+
 export function renderResumePdf(
   pdf: JsPdf,
   doc: ResumeDocument,
@@ -113,6 +122,9 @@ export function renderResumePdf(
   const bottom = pageHeight - spec.margin;
 
   const { profile, content } = doc;
+  // Bold is drawn in the summary, bullets and projects; everywhere else the
+  // markup is dropped, so a stray <b> never prints as text.
+  const skillGroups = content.skills.map((g) => ({ name: plainText(g.name), items: g.items.map(plainText) }));
   const fields = resolveHeaderFields(style.header);
   const contactParts = headerSegments(profile.contact, fields);
   const experiences = renderedExperiences(doc);
@@ -348,6 +360,121 @@ export function renderResumePdf(
   };
 
   /**
+   * Text with `<b>` runs, broken into lines that fit `width`, or null when
+   * none of it is bold — that text takes the plain path below, unchanged.
+   *
+   * jsPDF sets one font per call, so mixed weights are laid out here: words
+   * measured in the weight of each of their fragments, broken greedily.
+   */
+  /**
+   * How wide text is as drawn. getTextWidth applies the base-14 fonts' kerning
+   * pairs, which a PDF Tj does not, so on a long run it comes up short and the
+   * next run — a bold word — would start early. jsPDF measures the same way
+   * when it aligns its own text.
+   */
+  const drawn = (text: string, size: number, bold = false) => {
+    pdf.setFont(s.font, bold ? "bold" : "normal");
+    pdf.setFontSize(size);
+    return (pdf.getStringUnitWidth(text, { doKerning: false }) * size) / pdf.internal.scaleFactor;
+  };
+
+  const layoutRich = (text: string, size: number, width: number): RichLine[] | null => {
+    const runs = richRuns(text);
+    if (!runs.some((run) => run.bold)) return null;
+
+    const words: RichWord[] = [];
+    let current: RichWord = [];
+    for (const run of runs) {
+      for (const part of run.text.split(/(\s+)/)) {
+        if (!part) continue;
+        if (/^\s+$/.test(part)) {
+          if (current.length) words.push(current);
+          current = [];
+        } else current.push({ text: part, bold: run.bold });
+      }
+    }
+    if (current.length) words.push(current);
+
+    const space = drawn(" ", size);
+    const lines: RichLine[] = [];
+    let line: RichWord[] = [];
+    let used = 0;
+    for (const word of words) {
+      const w = word.reduce((sum, f) => sum + drawn(f.text, size, f.bold), 0);
+      if (line.length && used + space + w > width) {
+        lines.push({ words: line, width: used });
+        line = [];
+        used = 0;
+      }
+      used += (line.length ? space : 0) + w;
+      line.push(word);
+    }
+    if (line.length) lines.push({ words: line, width: used });
+    return lines;
+  };
+
+  /**
+   * Draws laid-out rich lines from baseline `y`, one leading apart like
+   * jsPDF's own multi-line text.
+   *
+   * Unjustified, each run of one weight goes out in one call with its spaces,
+   * so the text an applicant-tracking system extracts reads as written.
+   * Justified, every line but the last is stretched by widening the gaps
+   * between words, which means placing each word by hand.
+   */
+  const drawRich = (lines: RichLine[], x: number, y: number, size: number, color: RGB, width: number) => {
+    const space = drawn(" ", size);
+    lines.forEach((line, i) => {
+      const baseline = y + i * size * s.lineSpacing;
+      const stretch = s.justify && i < lines.length - 1 && line.words.length > 1;
+      if (stretch) {
+        const gap = space + (width - line.width) / (line.words.length - 1);
+        let cursor = x;
+        for (const word of line.words) {
+          for (const f of word) {
+            write(f.text, cursor, baseline, size, { bold: f.bold, color });
+            cursor += drawn(f.text, size, f.bold);
+          }
+          cursor += gap;
+        }
+        return;
+      }
+      const segments: Fragment[] = [];
+      line.words.forEach((word, w) =>
+        word.forEach((f, j) => {
+          const text = (w > 0 && j === 0 ? " " : "") + f.text;
+          const previous = segments[segments.length - 1];
+          if (previous && previous.bold === f.bold) previous.text += text;
+          else segments.push({ text, bold: f.bold });
+        }),
+      );
+      let cursor = x;
+      for (const segment of segments) {
+        write(segment.text, cursor, baseline, size, { bold: segment.bold, color });
+        cursor += drawn(segment.text, size, segment.bold);
+      }
+    });
+  };
+
+  /**
+   * A paragraph of body copy that may carry bold — the rich path when it
+   * does, the plain block otherwise.
+   */
+  const paragraph = (flow: Flow, text: string, size: number, color: RGB = INK, indent = 0) => {
+    const width = flow.width - indent;
+    const rich = layoutRich(text, size, width);
+    if (!rich) {
+      block(flow, wrap(plainText(text), size, width), size, color, indent);
+      return;
+    }
+    const height = rich.length * size * s.lineSpacing;
+    advance(flow, height);
+    on(flow);
+    drawRich(rich, flow.x + indent, flow.y, size, color, width);
+    flow.y += height;
+  };
+
+  /**
    * A block of body copy, justified when the style asks for it.
    *
    * The whole array goes to jsPDF in one call. That is load-bearing: jsPDF
@@ -559,18 +686,23 @@ export function renderResumePdf(
   const bullet = (flow: Flow, text: string, color = INK, offset = 0) => {
     const size = 9 * s.fontScale;
     const indent = offset + 13;
-    const lines = wrap(text, size, flow.width - indent - 4);
+    const width = flow.width - indent - 4;
+    const rich = layoutRich(text, size, width);
+    const lines = rich ?? wrap(plainText(text), size, width);
     const height = lines.length * size * s.lineSpacing + 3;
     advance(flow, height);
     on(flow);
 
     // On the middle of the x-height, in the accent when the template asks.
     dot(flow.x + offset + 3, flow.y, size, spec.accentBullets ? s.accent : color, 1.25);
-    write(lines, flow.x + indent, flow.y, size, {
-      color,
-      justify: s.justify,
-      maxWidth: flow.width - indent - 4,
-    });
+    if (rich) drawRich(rich, flow.x + indent, flow.y, size, color, width);
+    else {
+      write(lines as string[], flow.x + indent, flow.y, size, {
+        color,
+        justify: s.justify,
+        maxWidth: width,
+      });
+    }
     flow.y += height;
   };
 
@@ -687,7 +819,8 @@ export function renderResumePdf(
   const align = centered ? "center" : "left";
 
   const nameText = spec.name?.upper ? profile.fullName.toUpperCase() : profile.fullName;
-  const titleText = spec.title?.upper ? content.targetTitle.toUpperCase() : content.targetTitle;
+  const targetTitle = plainText(content.targetTitle);
+  const titleText = spec.title?.upper ? targetTitle.toUpperCase() : targetTitle;
 
   const drawName = (x: number, y: number, color: RGB) =>
     writeSpaced(nameText, x, y, nameSize, {
@@ -889,9 +1022,14 @@ export function renderResumePdf(
   }
 
   const summary = () => {
-    if (!content.summary) return;
+    const parts = paragraphsOf(content.summary);
+    if (!parts.length) return;
     heading(main, "Summary");
-    block(main, wrap(content.summary, 9.5 * s.fontScale, main.width), 9.5 * s.fontScale);
+    const size = 9.5 * s.fontScale;
+    parts.forEach((text, i) => {
+      if (i) main.y += size * 0.45;
+      paragraph(main, text, size);
+    });
   };
 
   /**
@@ -920,9 +1058,9 @@ export function renderResumePdf(
       // wraps rather than squeezing the skills into a sliver.
       pdf.setFont(s.font, "bold");
       pdf.setFontSize(size);
-      const longest = Math.max(...content.skills.map((g) => pdf.getTextWidth(g.name)));
+      const longest = Math.max(...skillGroups.map((g) => pdf.getTextWidth(g.name)));
       const labelWidth = Math.min(Math.max(longest + dotGap + 14, 80), flow.width * 0.3);
-      for (const group of content.skills) {
+      for (const group of skillGroups) {
         const label = wrap(group.name, size, labelWidth - dotGap - 8, true);
         const items = wrap(group.items.join(", "), size, flow.width - labelWidth);
         const height = Math.max(label.length, items.length) * lineHeight;
@@ -944,11 +1082,11 @@ export function renderResumePdf(
       const padX = boxed ? 6 : 0;
       const gapX = boxed ? 6 : 13;
       const rowHeight = size + (boxed ? 11 : 10);
-      const longest = Math.max(...content.skills.map((g) => measure(g.name, size, true)));
+      const longest = Math.max(...skillGroups.map((g) => measure(g.name, size, true)));
       const labelWidth = Math.min(Math.max(longest + 14, 72), flow.width * 0.3);
       const left = flow.x + labelWidth;
       const right = flow.x + flow.width;
-      for (const group of content.skills) {
+      for (const group of skillGroups) {
         const rows: Array<Array<{ item: string; x: number; w: number }>> = [[]];
         let x = left;
         for (const item of group.items) {
@@ -989,7 +1127,7 @@ export function renderResumePdf(
       // The category on a line of its own, then its skills in columns.
       const cols = flow.width > 420 ? 4 : 3;
       const colWidth = flow.width / cols;
-      for (const group of content.skills) {
+      for (const group of skillGroups) {
         const firstRow = group.items.slice(0, cols).map((item) => wrap(item, size, colWidth - dotGap - 6));
         // The name is reserved with the first row, so it never ends a page alone.
         advance(flow, lineHeight + Math.max(1, ...firstRow.map((lines) => lines.length)) * lineHeight);
@@ -1020,7 +1158,7 @@ export function renderResumePdf(
     const dotted = !flowing && spec.skillDots !== false;
     const x = flow.x + (dotted ? dotGap : 0);
     const width = flow.width - (dotted ? dotGap : 0);
-    for (const group of content.skills) {
+    for (const group of skillGroups) {
       const label = `${group.name}: `;
       pdf.setFont(s.font, "bold");
       pdf.setFontSize(size);
@@ -1049,7 +1187,7 @@ export function renderResumePdf(
   };
 
   const skillSection = () => {
-    if (!content.skills.length) return;
+    if (!skillGroups.length) return;
     heading(main, "Skills");
     skills(main);
   };
@@ -1164,9 +1302,65 @@ export function renderResumePdf(
         employment.endDate ?? null,
         "Present",
       )}`;
-      const indent = entryHead(title, employment.company, employment.location, period);
+      const indent = entryHead(plainText(title), employment.company, employment.location, period);
       for (const b of bullets) bullet(main, b.text, INK, indent);
       clearFloor();
+      main.y += 5;
+    }
+  };
+
+  /**
+   * Projects, when the content has any: the name in bold with its period
+   * against the right margin, the role and link beneath in the company's
+   * colour, then the description, its bullets, and the technologies used.
+   * Laid out the same in every template — a project has no employer or
+   * place for the templates' entry arrangements to rearrange.
+   */
+  const projects = () => {
+    const list = content.projects ?? [];
+    if (!list.length) return;
+    heading(main, "Projects");
+    const headSize = 10 * s.fontScale;
+    const metaSize = 8.5 * s.fontScale;
+    const bodySize = 9 * s.fontScale;
+    const right = main.x + main.width;
+
+    for (const project of list) {
+      const name = plainText(project.name);
+      const period = project.period ? plainText(project.period) : "";
+      const role = project.role ? plainText(project.role) : "";
+      const url = project.url ? plainText(project.url) : "";
+      const sub = [role, url].filter(Boolean).join(" · ");
+
+      const nameWidth = main.width - (period ? measure(period, metaSize) + 14 : 0);
+      const nameLines = wrap(name, headSize, nameWidth, true);
+      // The head is kept with the first line of what follows it.
+      advance(main, (nameLines.length * headSize + (sub ? metaSize : 0) + bodySize) * s.lineSpacing + 2);
+      on(main);
+      if (period) write(period, right, main.y, metaSize, { color: MUTED, align: "right" });
+      write(nameLines, main.x, main.y, headSize, { bold: true });
+      main.y += nameLines.length * headSize * s.lineSpacing;
+
+      if (sub) {
+        write(sub, main.x, main.y, metaSize, { color: companyColor });
+        if (url) {
+          const before = role ? measure(`${role} · `, metaSize) : 0;
+          const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+          pdf.link(main.x + before, main.y - metaSize, measure(url, metaSize), metaSize * 1.2, { url: href });
+        }
+        main.y += metaSize * s.lineSpacing;
+      }
+      main.y += 2;
+
+      paragraphsOf(project.description).forEach((text, i) => {
+        if (i) main.y += bodySize * 0.4;
+        paragraph(main, text, bodySize);
+      });
+      if (project.description && project.bullets.length) main.y += 2;
+      for (const b of project.bullets) bullet(main, b.text);
+      if (project.technologies.length) {
+        paragraph(main, `<b>Technologies:</b> ${project.technologies.map(plainText).join(", ")}`, metaSize, MUTED);
+      }
       main.y += 5;
     }
   };
@@ -1208,9 +1402,15 @@ export function renderResumePdf(
     summary,
     skills: skillSection,
     experience,
+    projects,
     education,
   };
-  for (const id of spec.order ?? DEFAULT_ORDER) sections[id]();
+  const order = [...(spec.order ?? DEFAULT_ORDER)];
+  if (!order.includes("projects")) {
+    const after = order.indexOf("experience");
+    order.splice(after < 0 ? order.length : after + 1, 0, "projects");
+  }
+  for (const id of order) sections[id]();
 
   /**
    * The timeline: a line down the left of every page the sections reach, and
@@ -1305,7 +1505,7 @@ export async function renderResumePdfBlob(
 /** "Jane Doe — Senior Engineer.pdf", without characters a filesystem refuses. */
 export function resumeFileName(doc: ResumeDocument): string {
   const safe = (value: string) => value.replace(/[\\/:*?"<>|]+/g, "").trim();
-  return `${safe(doc.profile.fullName) || "Resume"} — ${safe(doc.content.targetTitle)}.pdf`;
+  return `${safe(doc.profile.fullName) || "Resume"} — ${safe(plainText(doc.content.targetTitle))}.pdf`;
 }
 
 /** Hands a file to the browser's download. */
@@ -1334,9 +1534,7 @@ export async function downloadResumePdf(
   const pdf = await newResumePdf(style, template);
   renderResumePdf(pdf, doc, style, template);
 
-  const safeName =
-    doc.profile.fullName.replace(/[\\/:*?"<>|]+/g, "").trim() || "Resume";
-  const fileName = `${safeName} — ${doc.content.targetTitle}.pdf`;
+  const fileName = resumeFileName(doc);
 
   const savePicker = (
     window as unknown as {

@@ -77,7 +77,8 @@ import { applicationNo, jobNo } from "@/lib/numbers";
 import { headerSegments, resolveHeaderFields } from "@/lib/resume-header";
 import { templateSpec, type TemplateSpec } from "@/lib/pdf/templates";
 import { usePersistentState } from "@/lib/persistent-state";
-import { DEFAULT_PRESET, useProfileStyle } from "@/lib/profile-style";
+import { DEFAULT_PRESET, useProfileStyle, useSyncedProfileStyle } from "@/lib/profile-style";
+import { plainText } from "@/lib/document/rich";
 import { coerceChoice } from "@/lib/style-access";
 import { createClient } from "@/lib/supabase/client";
 import { useUploadThing } from "@/lib/uploadthing";
@@ -355,6 +356,11 @@ export function ResumeBuilder({
   /** Viewing without being able to save or track: a super admin, on a profile not assigned to them. */
   const reviewOnly = readOnly && !selectedProfile?.workable;
   const profileDocuments = documents.filter((d) => d.profile_id === profileId);
+
+  // The profile's style, saved to the account too: the extension renders pasted
+  // resumes in it.
+  const shownPreset = useMemo(() => ({ template, style }), [template, style]);
+  useSyncedProfileStyle(profileId, shownPreset, !isExample && !reviewOnly && Boolean(selectedProfile?.profile));
 
   /*
    * Whether "Save" overwrites the open resume or files a new one.
@@ -897,7 +903,7 @@ export function ResumeBuilder({
     if (!title.trim()) {
       try {
         const target = JSON.parse(result.content)?.targetTitle;
-        if (typeof target === "string" && target.trim()) setTitle(target.trim());
+        if (typeof target === "string" && target.trim()) setTitle(plainText(target).trim());
       } catch {
         // A title is a convenience; the content is what matters.
       }
@@ -922,7 +928,7 @@ export function ResumeBuilder({
     try {
       const recorded = await recordApplication({
         profileId,
-        title: jobTitle.trim() || doc.content.targetTitle,
+        title: jobTitle.trim() || plainText(doc.content.targetTitle),
         company,
         jobUrl,
         jobId: openJob?.job_id ?? null,
@@ -1365,7 +1371,9 @@ export function ResumeBuilder({
                   )}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1, minWidth: 180 }}>
-                      Paste or write the content JSON in step 3.
+                      Paste or write the content JSON in step 3. Wrap words in{" "}
+                      <code>&lt;b&gt;…&lt;/b&gt;</code> to set them in bold; a <code>projects</code> list
+                      prints a Projects section; the summary may run to several paragraphs.
                     </Typography.Text>
                     <Tooltip title="Fill in the skeleton — employment ids in the right order, ready to edit or paste over">
                       <Button
@@ -1560,11 +1568,12 @@ export function ResumeBuilder({
                 <Alert
                   type="success"
                   showIcon
-                  title={`Ready — ${parsed.document.content.targetTitle}`}
+                  title={`Ready — ${plainText(parsed.document.content.targetTitle)}`}
                   description={(() => {
-                    const { experiences, skills } = parsed.document.content;
+                    const { experiences, skills, projects } = parsed.document.content;
                     const bullets = experiences.reduce((n, x) => n + x.bullets.length, 0);
-                    return `${experiences.length} role${experiences.length === 1 ? "" : "s"} · ${bullets} bullet${bullets === 1 ? "" : "s"} · ${skills.length} skill group${skills.length === 1 ? "" : "s"}. Check the preview, then save or download.`;
+                    const extra = projects.length ? ` · ${projects.length} project${projects.length === 1 ? "" : "s"}` : "";
+                    return `${experiences.length} role${experiences.length === 1 ? "" : "s"} · ${bullets} bullet${bullets === 1 ? "" : "s"} · ${skills.length} skill group${skills.length === 1 ? "" : "s"}${extra}. Check the preview, then save or download.`;
                   })()}
                 />
               )}
@@ -1585,7 +1594,7 @@ export function ResumeBuilder({
                     </Col>
                     <Col xs={24} sm={12}>
                       <Input
-                        placeholder={`Job title — ${parsed.document.content.targetTitle}`}
+                        placeholder={`Job title — ${plainText(parsed.document.content.targetTitle)}`}
                         value={jobTitle}
                         onChange={(e) => setJobTitle(e.target.value)}
                         disabled={reviewOnly}
@@ -1908,7 +1917,7 @@ function jobLabel(job: BuilderJob, withCompany = true): string {
     job.content && typeof job.content === "object" && "targetTitle" in job.content
       ? String((job.content as { targetTitle: unknown }).targetTitle ?? "")
       : "";
-  const title = job.job?.title?.trim() || target.trim() || "Job";
+  const title = job.job?.title?.trim() || plainText(target).trim() || "Job";
   if (!withCompany) return title;
   const numbered = job.job ? `${jobNo(job.job.no)} ${title}` : title;
   return job.job?.company ? `${numbered} · ${job.job.company}` : numbered;
@@ -1972,6 +1981,8 @@ function GenerationsList({
             : failed
               ? (job.error ?? "Failed")
               : [
+                  // Pasted from the extension: no model ran, so no cost or time to show.
+                  ready && !job.model ? "Pasted" : null,
                   job.valid ? null : "Needs a fix",
                   job.cost_usd !== null ? `$${Number(job.cost_usd).toFixed(4)}` : null,
                   job.latency_ms ? `${Math.round(job.latency_ms / 1000)}s` : null,

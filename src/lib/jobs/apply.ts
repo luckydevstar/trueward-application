@@ -24,7 +24,13 @@ export type ApplyResult =
  * takes its number. A resume already tracked isn't tracked twice; its file is
  * handed back again.
  */
-export async function applyJob(db: Db, actor: Actor, jobId: string): Promise<ApplyResult> {
+export async function applyJob(
+  db: Db,
+  actor: Actor,
+  jobId: string,
+  /** What to record instead of the job's own title, company and link — the extension's edited fields. */
+  details?: { title?: string | null; company?: string | null; url?: string | null },
+): Promise<ApplyResult> {
   const { data: row } = await db
     .from("resume_job")
     .select("*, job:job_id(title, company, url)")
@@ -60,9 +66,9 @@ export async function applyJob(db: Db, actor: Actor, jobId: string): Promise<App
 
   const recorded = await trackApplication(db, actor, {
     profileId: job.profile_id,
-    title: job.job?.title ?? "",
-    company: job.job?.company ?? "",
-    jobUrl: job.job?.url ?? "",
+    title: details?.title?.trim() || job.job?.title || "",
+    company: details?.company?.trim() || job.job?.company || "",
+    jobUrl: details?.url?.trim() || job.job?.url || "",
     jobId: job.job_id,
   });
   if (!recorded.ok) return recorded;
