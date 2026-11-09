@@ -7,14 +7,21 @@ import { requestActor } from "@/lib/supabase/request";
 
 /**
  * Pasted resume JSON, for the job on the page: validated against the profile
- * and kept as a ready generation in the profile's saved style, so the panel
- * can download it (/api/resume-jobs/:id/pdf) and Done can attach it. A
- * refusal lists what's wrong, field by field.
+ * and kept as a ready generation in the profile's saved style (or the
+ * template picked in the panel), so the panel can download it
+ * (/api/resume-jobs/:id/pdf) and Done can attach it. A refusal lists what's
+ * wrong, field by field.
  */
 export async function POST(request: Request) {
   const ctx = await requestActor(request);
   if (!ctx) return UNAUTHORIZED();
-  const input = await body<{ profileId?: string; content?: unknown; job?: JobFieldsInput; resumeJobId?: string }>(request);
+  const input = await body<{
+    profileId?: string;
+    content?: unknown;
+    job?: JobFieldsInput;
+    resumeJobId?: string;
+    template?: string;
+  }>(request);
   if (!input?.profileId) return fail("Choose a profile first.");
   if (input.content === undefined || input.content === "") return fail("Paste the resume JSON first.");
   if (typeof input.content === "string" && input.content.length > 100_000) return fail("That resume JSON is too long.");
@@ -24,6 +31,7 @@ export async function POST(request: Request) {
     content: input.content,
     job: input.job ?? {},
     resumeJobId: input.resumeJobId ?? null,
+    template: typeof input.template === "string" ? input.template : null,
   });
   if (result.ok) return NextResponse.json(result);
   return NextResponse.json({ error: result.error, problems: result.problems ?? [] }, { status: 400 });

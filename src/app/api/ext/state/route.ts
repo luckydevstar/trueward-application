@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { UNAUTHORIZED } from "@/lib/ext-http";
+import { profileStyle } from "@/lib/jobs/style";
 import { applicationNo, jobNo } from "@/lib/numbers";
-import { TEMPLATES } from "@/lib/pdf/templates";
 import { assignedProfileIds } from "@/lib/profile-scope";
 import { canSelfAssign } from "@/lib/scope";
+import { allowedTemplates } from "@/lib/style-access";
 import { requestActor } from "@/lib/supabase/request";
 
 const CONTACT =
@@ -15,9 +16,9 @@ const JOB_LIMIT = 300;
 
 /**
  * Everything the extension's panel shows, in one round trip: who is signed
- * in, the profiles they can work, the chosen one's contact details, their
- * jobs, and for each job where its resume and application stand for that
- * profile.
+ * in, the profiles they can work, the chosen one's contact details and saved
+ * resume style, the templates they may use, their jobs, and for each job
+ * where its resume and application stand for that profile.
  *
  * Profiles are the ones the person may *work* — a bidder's assigned ones, a
  * subadmin's team, a super admin's own assignments. Never the SSN.
@@ -25,7 +26,7 @@ const JOB_LIMIT = 300;
 export async function GET(request: Request) {
   const ctx = await requestActor(request);
   if (!ctx) return UNAUTHORIZED();
-  const { db, actor } = ctx;
+  const { db, actor, token } = ctx;
   const wanted = new URL(request.url).searchParams.get("profileId");
 
   const [{ data: allProfiles }, { data: jobs }] = await Promise.all([
@@ -45,6 +46,8 @@ export async function GET(request: Request) {
     profiles = profiles.filter((p) => mine.has(p.id));
   }
   const profile = profiles.find((p) => p.id === wanted) ?? profiles[0] ?? null;
+
+  const style = profile ? await profileStyle(db, actor, profile.id, token) : null;
 
   const resumes = new Map<string, { id: string; status: string; valid: boolean | null; error: string | null; tracked: boolean }>();
   const applied = new Map<string, { no: string; status: string }>();
@@ -97,7 +100,8 @@ export async function GET(request: Request) {
           github: profile.github_url,
         }
       : null,
-    templates: TEMPLATES.map((t) => ({ id: t.id, label: t.label })),
+    templates: allowedTemplates(actor.allowedTemplates).map((t) => ({ id: t.id, label: t.label })),
+    style: style ? { template: style.template, source: style.source } : null,
     jobs: (jobs ?? []).map((j) => ({
       id: j.id,
       no: jobNo(j.no),

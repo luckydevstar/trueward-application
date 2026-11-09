@@ -8,6 +8,8 @@ import { findOrCreateJob } from "@/lib/jobs/jobs";
 import { profileStyle } from "@/lib/jobs/style";
 import { NOT_ASSIGNED, trackApplication, worksProfile } from "@/lib/jobs/work";
 import { applicationNo, jobNo } from "@/lib/numbers";
+import { templateSpec } from "@/lib/pdf/templates";
+import { allowedTemplates } from "@/lib/style-access";
 import type { Db } from "@/lib/supabase/request";
 
 /*
@@ -35,14 +37,16 @@ const unfence = (value: string) =>
 
 /**
  * Validates pasted resume JSON against the profile and keeps it, for the job
- * on the page, in the profile's saved style. Pasting again for the same job
- * replaces the earlier paste rather than adding another.
+ * on the page, in the profile's saved style — or in `template`, when the
+ * person picked one, with the rest of the profile's style (accent, font,
+ * spacing). Saving again for the same job replaces the earlier paste rather
+ * than adding another.
  */
 export async function savePastedResume(
   db: Db,
   actor: CurrentActor,
   token: string | null,
-  input: { profileId: string; content: unknown; job: JobFieldsInput; resumeJobId?: string | null },
+  input: { profileId: string; content: unknown; job: JobFieldsInput; resumeJobId?: string | null; template?: string | null },
 ): Promise<PastedResume> {
   let value = input.content;
   if (typeof value === "string") {
@@ -78,13 +82,17 @@ export async function savePastedResume(
   if (!found.ok) return found;
 
   const style = await profileStyle(db, actor, profile.id, token);
+  // A template picked in the panel, if the account may use it; else the profile's.
+  const picked = input.template?.trim();
+  const template =
+    picked && allowedTemplates(actor.allowedTemplates).some((t) => t.id === picked) ? templateSpec(picked).id : style.template;
   const now = new Date().toISOString();
   const row = {
     content: doc.data.content,
     valid: true,
     error: null,
     job_id: found.job.id,
-    template: style.template,
+    template,
     style: style.style,
     updated_at: now,
     finished_at: now,
@@ -125,8 +133,8 @@ export async function savePastedResume(
     ok: true,
     resumeJobId,
     job: { id: found.job.id, no: jobNo(found.job.no) },
-    template: style.template,
-    styleSource: style.source,
+    template,
+    styleSource: picked && template !== style.template ? "picked" : style.source,
   };
 }
 
