@@ -696,11 +696,14 @@ job number.
 side panel for applying: pick a profile and copy its contact details;
 **Check** the posting in the tab (company, title, link and description read
 off the page, with earlier bids to that company and the blocklist —
-`/api/ext/check`), paste resume JSON to download it as a PDF in the profile's
-saved style (`/api/ext/resume`, kept as a ready generation for the job), and
-**Done** records the bid with that PDF attached (`/api/ext/record`). Or pick a
-job from the list (its posting opens), **Download & track** its resume, add
-the posting you're on as a job, and answer screening questions. It installs from
+`/api/ext/check`; a page without a structured posting is cleaned by the
+generation model, which picks the title, hiring company and the description's
+lines out of the page text — `/api/ext/clean`, logged as source `clean`),
+paste resume JSON, pick a template, and **Save PDF** downloads it named for
+the profile (`/api/ext/resume`, kept as a ready generation for the job), and
+**Done** records the bid with that PDF attached (`/api/ext/record`). The job
+list, batch generation and screening questions are switched off in the panel
+for now; their routes remain. It installs from
 <https://extension.trueward.guru>, linked from the Jobs page. Its screens load
 from that site on every open, so a push to its repo updates every installed
 copy; see its README for how the installed half and the hosted half talk.

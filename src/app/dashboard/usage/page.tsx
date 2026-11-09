@@ -109,13 +109,14 @@ export default async function UsagePage({ searchParams }: PageProps<"/dashboard/
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to);
-      // "Real usage" is resumes generated in the builder plus the follow-up
-      // questions asked about them; "lab" is the super admin's model tests.
+      // "Real usage" is resumes generated in the builder, the follow-up
+      // questions asked about them, and the extension's job-page cleanings;
+      // "lab" is the super admin's model tests.
       return source === "all"
         ? query
         : source === "lab"
           ? query.eq("source", "lab")
-          : query.in("source", ["builder", "followup"]);
+          : query.in("source", ["builder", "followup", "clean"]);
     }),
     supabase.from("app_user").select("id, name, email, role"),
     supabase.from("candidate_profile").select("id, full_name"),
