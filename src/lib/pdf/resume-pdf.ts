@@ -9,6 +9,7 @@ import {
   type ResumeDocument,
 } from "@/lib/document/schema";
 import { headerSegments, resolveHeaderFields, type HeaderSegment } from "@/lib/resume-header";
+import { afmUnits } from "@/lib/pdf/afm";
 import { pdfFamily, prepareFont, type FontLoader } from "@/lib/pdf/fonts";
 import {
   mix,
@@ -367,15 +368,19 @@ export function renderResumePdf(
    * measured in the weight of each of their fragments, broken greedily.
    */
   /**
-   * How wide text is as drawn. getTextWidth applies the base-14 fonts' kerning
-   * pairs, which a PDF Tj does not, so on a long run it comes up short and the
-   * next run — a bold word — would start early. jsPDF measures the same way
-   * when it aligns its own text.
+   * How wide text is as drawn, so the next run — a bold word — starts where
+   * this one really ends. Without kerning: getTextWidth applies the base-14
+   * fonts' kerning pairs, which a PDF Tj does not. And for Helvetica and Times
+   * by Adobe's own widths (src/lib/pdf/afm.ts), not jsPDF's rounded copies of
+   * them, which come up about 1% short along a line.
    */
   const drawn = (text: string, size: number, bold = false) => {
     pdf.setFont(s.font, bold ? "bold" : "normal");
     pdf.setFontSize(size);
-    return (pdf.getStringUnitWidth(text, { doKerning: false }) * size) / pdf.internal.scaleFactor;
+    const units =
+      afmUnits(s.font, bold, text, (ch) => pdf.getStringUnitWidth(ch, { doKerning: false }) * 1000) ??
+      pdf.getStringUnitWidth(text, { doKerning: false }) * 1000;
+    return ((units / 1000) * size) / pdf.internal.scaleFactor;
   };
 
   const layoutRich = (text: string, size: number, width: number): RichLine[] | null => {
